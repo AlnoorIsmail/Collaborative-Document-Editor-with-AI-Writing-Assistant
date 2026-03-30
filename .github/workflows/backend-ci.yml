@@ -17,9 +17,7 @@ jobs:
         with:
           filters: |
             backend:
-              - 'backend/**'
-              - '!backend/reference/**'
-              - '!backend/docs/**'
+              - 'apps/backend/**'
               - '!**/*.md'
               - '!**/*.pdf'
               - '!**/*.txt'
@@ -37,18 +35,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r backend/requirements.txt
-          pip install pytest ruff
+          pip install -r apps/backend/requirements.txt
 
       - name: Lint
-        run: ruff check backend
+        run: ruff check apps/backend
 
       - name: Run tests
-        run: pytest backend/tests || true
+        run: pytest apps/backend/tests
 
   noop:
     needs: changes
     if: needs.changes.outputs.backend != 'true'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Only docs/reference/pdf/txt files changed. Skipping backend checks."
+      - run: echo "Only non-backend files changed. Skipping backend checks."
