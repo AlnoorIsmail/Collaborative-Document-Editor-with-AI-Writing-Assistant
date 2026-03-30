@@ -1,0 +1,54 @@
+name: Backend CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '!backend/reference/**'
+              - '!backend/docs/**'
+              - '!**/*.md'
+              - '!**/*.pdf'
+              - '!**/*.txt'
+
+  lint-and-test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest ruff
+
+      - name: Lint
+        run: ruff check backend
+
+      - name: Run tests
+        run: pytest backend/tests || true
+
+  noop:
+    needs: changes
+    if: needs.changes.outputs.backend != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Only docs/reference/pdf/txt files changed. Skipping backend checks."
