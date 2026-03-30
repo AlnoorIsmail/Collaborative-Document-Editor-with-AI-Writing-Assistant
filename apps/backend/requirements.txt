@@ -1,0 +1,6 @@
+fastapi
+httpx
+pydantic-settings
+pytest
+ruff
+uvicorn
