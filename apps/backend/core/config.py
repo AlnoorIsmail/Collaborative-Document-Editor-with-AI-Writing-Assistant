@@ -1,0 +1,31 @@
+"""Centralized application settings."""
+
+from functools import lru_cache
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Runtime settings loaded through environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AI_COLLAB_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    app_name: str = "AI Collaborative Document Editor Backend"
+    api_v1_prefix: str = "/v1"
+    environment: str = "development"
+    realtime_url: str = "wss://api.example.com/realtime"
+    jwt_secret: str = "change-me"
+    jwt_algorithm: str = "HS256"
+    allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Cache settings so dependencies share a single config snapshot."""
+
+    return Settings()
