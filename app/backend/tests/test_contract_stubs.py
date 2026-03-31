@@ -23,7 +23,9 @@ def create_ai_interaction(client, auth_headers, document_id: str = "doc_101") ->
     return response.json()
 
 
-def test_session_bootstrap_returns_contract_shaped_response(client, auth_headers) -> None:
+def test_session_bootstrap_returns_contract_shaped_response(
+    client, auth_headers
+) -> None:
     response = client.post(
         "/v1/documents/doc_101/sessions",
         headers=auth_headers,

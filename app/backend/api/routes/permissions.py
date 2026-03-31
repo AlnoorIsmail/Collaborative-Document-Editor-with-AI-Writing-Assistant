@@ -21,7 +21,11 @@ def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
     )
 
 
-@router.post("/{documentId}/permissions", response_model=PermissionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{documentId}/permissions",
+    response_model=PermissionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def grant_permission(
     documentId: int,
     payload: PermissionGrantRequest,
@@ -35,7 +39,9 @@ def grant_permission(
     )
 
 
-@router.delete("/{documentId}/permissions/{permissionId}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{documentId}/permissions/{permissionId}", status_code=status.HTTP_204_NO_CONTENT
+)
 def revoke_permission(
     documentId: int,
     permissionId: int,

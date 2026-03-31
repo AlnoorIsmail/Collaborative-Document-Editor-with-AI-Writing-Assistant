@@ -142,7 +142,9 @@ def test_unauthenticated_access_rejected() -> None:
 def test_non_owner_access_rejected() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
-    _, stranger_token = create_user_and_token(client, "stranger@example.com", "Stranger")
+    _, stranger_token = create_user_and_token(
+        client, "stranger@example.com", "Stranger"
+    )
     create_response = client.post(
         "/v1/documents",
         json={"title": "Owner Doc", "initial_content": "Secret"},

@@ -7,7 +7,13 @@ from app.backend.core.database import get_db
 from app.backend.core.errors import ApiError
 from app.backend.models.user import User
 from app.backend.repositories.user_repository import UserRepository
-from app.backend.schemas.auth import LoginRequest, LoginResponse, MeResponse, RegisterRequest, RegisterResponse
+from app.backend.schemas.auth import (
+    LoginRequest,
+    LoginResponse,
+    MeResponse,
+    RegisterRequest,
+    RegisterResponse,
+)
 from app.backend.services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -61,7 +67,9 @@ def get_optional_authenticated_user(
     return auth_service.get_current_user(token)
 
 
-@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED
+)
 def register(
     payload: RegisterRequest,
     auth_service: AuthService = Depends(get_auth_service),

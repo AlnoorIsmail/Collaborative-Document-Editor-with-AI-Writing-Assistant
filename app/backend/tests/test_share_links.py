@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+from app.backend.core.contracts import utc_now
 from app.backend.models.document_permission import DocumentPermission
 from app.backend.models.share_link import ShareLink
 from app.backend.tests.conftest import create_test_client
@@ -7,7 +8,12 @@ from app.backend.tests.test_documents import create_user_and_token
 
 
 def _future_timestamp(days=5):
-    return (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        (datetime.now(timezone.utc) + timedelta(days=days))
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def test_owner_can_create_share_link() -> None:
@@ -42,7 +48,9 @@ def test_owner_can_create_share_link() -> None:
 def test_non_owner_cannot_create_share_link() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
-    _, stranger_token = create_user_and_token(client, "stranger@example.com", "Stranger")
+    _, stranger_token = create_user_and_token(
+        client, "stranger@example.com", "Stranger"
+    )
     create_document = client.post(
         "/v1/documents",
         json={"title": "Doc", "initial_content": ""},
@@ -87,7 +95,9 @@ def test_redeem_works_for_non_sign_in_link() -> None:
         headers={"Authorization": "Bearer {token}".format(token=owner_token)},
     )
 
-    response = client.post("/v1/share-links/{token}/redeem".format(token=create_link.json()["token"]))
+    response = client.post(
+        "/v1/share-links/{token}/redeem".format(token=create_link.json()["token"])
+    )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -116,7 +126,9 @@ def test_redeem_requires_auth_when_require_sign_in_true() -> None:
         headers={"Authorization": "Bearer {token}".format(token=owner_token)},
     )
 
-    response = client.post("/v1/share-links/{token}/redeem".format(token=create_link.json()["token"]))
+    response = client.post(
+        "/v1/share-links/{token}/redeem".format(token=create_link.json()["token"])
+    )
 
     assert response.status_code == 401
     assert response.json() == {
@@ -148,13 +160,15 @@ def test_expired_link_is_rejected() -> None:
     db = client.session_factory()
     try:
         share_link = db.query(ShareLink).filter(ShareLink.id == 1).first()
-        share_link.expires_at = datetime.utcnow() - timedelta(minutes=1)
+        share_link.expires_at = utc_now() - timedelta(minutes=1)
         db.add(share_link)
         db.commit()
     finally:
         db.close()
 
-    response = client.post("/v1/share-links/{token}/redeem".format(token=create_link.json()["token"]))
+    response = client.post(
+        "/v1/share-links/{token}/redeem".format(token=create_link.json()["token"])
+    )
 
     assert response.status_code == 400
     assert response.json() == {
@@ -192,7 +206,9 @@ def test_revoked_link_is_rejected() -> None:
     finally:
         db.close()
 
-    response = client.post("/v1/share-links/{token}/redeem".format(token=create_link.json()["token"]))
+    response = client.post(
+        "/v1/share-links/{token}/redeem".format(token=create_link.json()["token"])
+    )
 
     assert response.status_code == 400
     assert response.json() == {
@@ -202,10 +218,14 @@ def test_revoked_link_is_rejected() -> None:
     }
 
 
-def test_authenticated_redeem_updates_or_creates_permission_when_require_sign_in_true() -> None:
+def test_authenticated_redeem_updates_or_creates_permission_when_require_sign_in_true() -> (
+    None
+):
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
-    invited_user, invited_token = create_user_and_token(client, "viewer@example.com", "Viewer")
+    invited_user, invited_token = create_user_and_token(
+        client, "viewer@example.com", "Viewer"
+    )
     create_document = client.post(
         "/v1/documents",
         json={"title": "Doc", "initial_content": ""},
@@ -238,7 +258,10 @@ def test_authenticated_redeem_updates_or_creates_permission_when_require_sign_in
     try:
         permission = (
             db.query(DocumentPermission)
-            .filter(DocumentPermission.document_id == 1, DocumentPermission.user_id == invited_user["user_id"])
+            .filter(
+                DocumentPermission.document_id == 1,
+                DocumentPermission.user_id == invited_user["user_id"],
+            )
             .first()
         )
         assert permission is not None

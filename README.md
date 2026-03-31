@@ -1,8 +1,8 @@
 # Collaborative Document Editor Backend PoC
 
-This repository contains a collaborative document editor project with both frontend and backend workstreams. This README is intentionally backend-focused because my assigned part of the PoC was the backend only.
+This repository contains a collaborative document editor project with both frontend and backend workstreams.
 
-The goal of this PoC is to prove that:
+The goal of this PoC is to prove that (backend):
 
 - the FastAPI backend boots and exposes the expected API surface
 - a client can authenticate and communicate with the backend end to end
@@ -91,16 +91,22 @@ source .venv/bin/activate
 2. Install the minimal dependencies.
 
 ```bash
-pip install fastapi uvicorn sqlalchemy pydantic-settings pytest httpx
+pip install -r requirements.txt
 ```
 
-3. Start the backend from the repository root.
+3. Optionally copy the example environment file.
+
+```bash
+cp .env.example .env
+```
+
+4. Start the backend from the repository root.
 
 ```bash
 uvicorn app.backend.main:app --reload
 ```
 
-4. Open the generated docs or OpenAPI contract.
+5. Open the generated docs or OpenAPI contract.
 
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
@@ -117,6 +123,14 @@ pytest app/backend/tests/test_poc_backend.py -q
 To run the full backend suite:
 
 ```bash
+pytest app/backend/tests -q
+```
+
+You can also run the same checks used by CI:
+
+```bash
+ruff check app
+black --check app
 pytest app/backend/tests -q
 ```
 

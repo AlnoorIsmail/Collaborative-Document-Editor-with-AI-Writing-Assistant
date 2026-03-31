@@ -8,7 +8,11 @@ from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.invitation_repository import InvitationRepository
 from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.user_repository import UserRepository
-from app.backend.schemas.invitation import InvitationAcceptResponse, InvitationCreateRequest, InvitationCreateResponse
+from app.backend.schemas.invitation import (
+    InvitationAcceptResponse,
+    InvitationCreateRequest,
+    InvitationCreateResponse,
+)
 from app.backend.services.invitation_service import InvitationService
 
 router = APIRouter(tags=["invitations"])
@@ -23,7 +27,11 @@ def get_invitation_service(db: Session = Depends(get_db)) -> InvitationService:
     )
 
 
-@router.post("/documents/{documentId}/invitations", response_model=InvitationCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/documents/{documentId}/invitations",
+    response_model=InvitationCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def send_invitation(
     documentId: int,
     payload: InvitationCreateRequest,
@@ -37,7 +45,9 @@ def send_invitation(
     )
 
 
-@router.post("/invitations/{invitationId}/accept", response_model=InvitationAcceptResponse)
+@router.post(
+    "/invitations/{invitationId}/accept", response_model=InvitationAcceptResponse
+)
 def accept_invitation(
     invitationId: str,
     current_user: User = Depends(get_current_authenticated_user),

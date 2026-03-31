@@ -20,7 +20,9 @@ from app.backend.services.realtime.session_service import SessionService
 
 
 def get_current_principal(
-    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)],
+    credentials: Annotated[
+        Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)
+    ],
 ) -> AuthenticatedPrincipal:
     return get_principal_from_credentials(credentials)
 
