@@ -30,7 +30,9 @@ class PermissionService:
         current_user: User,
     ) -> PermissionResponse:
         document = self.document_repository.get_by_id(document_id)
-        self.document_service._ensure_owner_access(document=document, current_user=current_user)
+        self.document_service._ensure_owner_access(
+            document=document, current_user=current_user
+        )
 
         if payload.grantee_type != "user":
             raise ApiError(
@@ -71,9 +73,13 @@ class PermissionService:
         self.permission_repository.db.commit()
         return self._to_permission_response(permission)
 
-    def revoke_permission(self, *, document_id: int, permission_id: int, current_user: User) -> None:
+    def revoke_permission(
+        self, *, document_id: int, permission_id: int, current_user: User
+    ) -> None:
         document = self.document_repository.get_by_id(document_id)
-        self.document_service._ensure_owner_access(document=document, current_user=current_user)
+        self.document_service._ensure_owner_access(
+            document=document, current_user=current_user
+        )
 
         permission = self.permission_repository.get_by_id(permission_id)
         if permission is None or permission.document_id != document.id:

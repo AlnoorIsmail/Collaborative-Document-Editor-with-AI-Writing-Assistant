@@ -1,7 +1,14 @@
 from sqlalchemy import create_engine, inspect
 
 from app.backend.core.database import Base
-from app.backend.models import Document, DocumentPermission, DocumentVersion, Invitation, ShareLink, User
+from app.backend.models import (
+    Document,
+    DocumentPermission,
+    DocumentVersion,
+    Invitation,
+    ShareLink,
+    User,
+)
 
 
 def test_model_metadata_creates_expected_tables() -> None:

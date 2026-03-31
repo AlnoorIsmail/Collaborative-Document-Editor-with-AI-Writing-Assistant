@@ -24,10 +24,14 @@ def list_versions(
     current_user: User = Depends(get_current_authenticated_user),
     version_service: VersionService = Depends(get_version_service),
 ) -> List[VersionResponse]:
-    return version_service.list_versions(document_id=documentId, current_user=current_user)
+    return version_service.list_versions(
+        document_id=documentId, current_user=current_user
+    )
 
 
-@router.post("/{documentId}/versions/{versionId}/restore", response_model=VersionRestoreResponse)
+@router.post(
+    "/{documentId}/versions/{versionId}/restore", response_model=VersionRestoreResponse
+)
 def restore_version(
     documentId: int,
     versionId: int,

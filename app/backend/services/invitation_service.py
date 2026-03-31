@@ -1,16 +1,20 @@
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from fastapi import status
 
-from app.backend.core.contracts import parse_prefixed_id, prefixed_id, utc_z
+from app.backend.core.contracts import parse_prefixed_id, prefixed_id, utc_now, utc_z
 from app.backend.core.errors import ApiError
 from app.backend.models.user import User
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.invitation_repository import InvitationRepository
 from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.user_repository import UserRepository
-from app.backend.schemas.invitation import InvitationAcceptResponse, InvitationCreateRequest, InvitationCreateResponse
+from app.backend.schemas.invitation import (
+    InvitationAcceptResponse,
+    InvitationCreateRequest,
+    InvitationCreateResponse,
+)
 from app.backend.services.document_service import DocumentService
 
 INVITATION_EXPIRY_DAYS = 2
@@ -38,9 +42,11 @@ class InvitationService:
         current_user: User,
     ) -> InvitationCreateResponse:
         document = self.document_repository.get_by_id(document_id)
-        self.document_service._ensure_owner_access(document=document, current_user=current_user)
+        self.document_service._ensure_owner_access(
+            document=document, current_user=current_user
+        )
 
-        expires_at = datetime.utcnow() + timedelta(days=INVITATION_EXPIRY_DAYS)
+        expires_at = utc_now() + timedelta(days=INVITATION_EXPIRY_DAYS)
         invitation = self.invitation_repository.create(
             document_id=document.id,
             email=payload.invited_email.lower(),
@@ -74,7 +80,7 @@ class InvitationService:
                 message="Invitation has already been processed.",
             )
 
-        if invitation.expires_at < datetime.utcnow():
+        if invitation.expires_at < utc_now():
             raise ApiError(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 error_code="INVITATION_EXPIRED",
@@ -110,7 +116,7 @@ class InvitationService:
         updated_invitation = self.invitation_repository.update(
             invitation,
             status="accepted",
-            accepted_at=datetime.utcnow(),
+            accepted_at=utc_now(),
         )
         self.invitation_repository.db.commit()
         return InvitationAcceptResponse(

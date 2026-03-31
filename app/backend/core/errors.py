@@ -46,8 +46,12 @@ class ApiError(HTTPException):
         )
 
 
-def _error_body(error_code: Union[ErrorCode, str], message: str, retryable: bool = False) -> dict[str, Any]:
-    serialized_error_code = error_code.value if isinstance(error_code, ErrorCode) else str(error_code)
+def _error_body(
+    error_code: Union[ErrorCode, str], message: str, retryable: bool = False
+) -> dict[str, Any]:
+    serialized_error_code = (
+        error_code.value if isinstance(error_code, ErrorCode) else str(error_code)
+    )
     return ErrorResponse(
         error_code=serialized_error_code,
         message=message,
@@ -64,7 +68,9 @@ async def handle_app_error(_: Request, exc: AppError) -> JSONResponse:
 
 async def handle_http_exception(_: Request, exc: HTTPException) -> JSONResponse:
     detail = exc.detail
-    if isinstance(detail, dict) and {"error_code", "message", "retryable"} <= set(detail.keys()):
+    if isinstance(detail, dict) and {"error_code", "message", "retryable"} <= set(
+        detail.keys()
+    ):
         payload = _error_body(
             detail["error_code"],
             detail["message"],
@@ -75,9 +81,15 @@ async def handle_http_exception(_: Request, exc: HTTPException) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content=payload)
 
 
-async def handle_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
-    first_error = exc.errors()[0] if exc.errors() else {"msg": "Request validation failed."}
-    location = ".".join(str(part) for part in first_error.get("loc", []) if part != "body")
+async def handle_validation_error(
+    _: Request, exc: RequestValidationError
+) -> JSONResponse:
+    first_error = (
+        exc.errors()[0] if exc.errors() else {"msg": "Request validation failed."}
+    )
+    location = ".".join(
+        str(part) for part in first_error.get("loc", []) if part != "body"
+    )
     detail = first_error.get("msg", "Request validation failed.")
     prefix = f"{location}: " if location else ""
     return JSONResponse(

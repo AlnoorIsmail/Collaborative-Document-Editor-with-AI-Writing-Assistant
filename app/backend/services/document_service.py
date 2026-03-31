@@ -25,7 +25,9 @@ class DocumentService:
         self.document_repository = document_repository
         self.version_repository = version_repository
 
-    def create_document(self, *, payload: DocumentCreate, current_user: User) -> DocumentCreateResponse:
+    def create_document(
+        self, *, payload: DocumentCreate, current_user: User
+    ) -> DocumentCreateResponse:
         document = self.document_repository.create(
             title=payload.title,
             content=payload.initial_content,
@@ -34,9 +36,13 @@ class DocumentService:
             owner_id=current_user.id,
         )
         self.document_repository.db.commit()
-        return self._to_document_create_response(self.document_repository.get_by_id(document.id))
+        return self._to_document_create_response(
+            self.document_repository.get_by_id(document.id)
+        )
 
-    def get_document(self, *, document_id: int, current_user: User) -> DocumentDetailResponse:
+    def get_document(
+        self, *, document_id: int, current_user: User
+    ) -> DocumentDetailResponse:
         document = self.document_repository.get_by_id(document_id)
         self._ensure_owner_access(document=document, current_user=current_user)
         return self._to_document_detail_response(document)
@@ -73,7 +79,9 @@ class DocumentService:
         document = self.document_repository.get_by_id(document_id)
         self._ensure_owner_access(document=document, current_user=current_user)
 
-        updated_document = self.document_repository.update(document, content=payload.content)
+        updated_document = self.document_repository.update(
+            document, content=payload.content
+        )
         version = self._create_version_if_needed(
             document=updated_document,
             current_user=current_user,
@@ -116,14 +124,18 @@ class DocumentService:
             return None
 
         latest_version = self.version_repository.get_latest_for_document(document.id)
-        should_create_version = force_create or latest_version is not None or bool(document.content)
+        should_create_version = (
+            force_create or latest_version is not None or bool(document.content)
+        )
 
         if not should_create_version:
             return None
 
         version = self.version_repository.create(
             document_id=document.id,
-            version_number=1 if latest_version is None else latest_version.version_number + 1,
+            version_number=(
+                1 if latest_version is None else latest_version.version_number + 1
+            ),
             content_snapshot=document.content,
             created_by=current_user.id,
             is_restore_version=mark_as_restore,

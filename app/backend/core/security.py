@@ -73,7 +73,9 @@ def create_access_token(subject: str, expires_in_minutes: Optional[int] = None) 
         "sub": subject,
         "exp": int(time.time()) + (ttl_minutes * 60),
     }
-    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
     payload_b64 = _b64encode(payload_bytes)
     signature = hmac.new(
         settings.secret_key.encode("utf-8"),

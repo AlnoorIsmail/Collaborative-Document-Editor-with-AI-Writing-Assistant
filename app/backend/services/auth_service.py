@@ -2,16 +2,28 @@ from fastapi import status
 
 from app.backend.core.contracts import utc_z
 from app.backend.core.errors import ApiError
-from app.backend.core.security import create_access_token, decode_access_token, get_password_hash, verify_password
+from app.backend.core.security import (
+    create_access_token,
+    decode_access_token,
+    get_password_hash,
+    verify_password,
+)
 from app.backend.repositories.user_repository import UserRepository
-from app.backend.schemas.auth import AuthUserResponse, LoginResponse, MeResponse, RegisterResponse
+from app.backend.schemas.auth import (
+    AuthUserResponse,
+    LoginResponse,
+    MeResponse,
+    RegisterResponse,
+)
 
 
 class AuthService:
     def __init__(self, user_repository: UserRepository):
         self.user_repository = user_repository
 
-    def register(self, *, email: str, display_name: str, password: str) -> RegisterResponse:
+    def register(
+        self, *, email: str, display_name: str, password: str
+    ) -> RegisterResponse:
         normalized_email = email.strip().lower()
         if self.user_repository.get_by_email(normalized_email):
             raise ApiError(
