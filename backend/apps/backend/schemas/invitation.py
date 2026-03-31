@@ -1,8 +1,11 @@
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, Field
+
+
+EmailField = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class InvitationCreateRequest(BaseModel):
-    invited_email: EmailStr
+    invited_email: str = EmailField
     role: str
 
     model_config = ConfigDict(extra="forbid")
@@ -11,7 +14,7 @@ class InvitationCreateRequest(BaseModel):
 class InvitationCreateResponse(BaseModel):
     invitation_id: str
     document_id: str
-    invited_email: EmailStr
+    invited_email: str = EmailField
     role: str
     status: str
     expires_at: str

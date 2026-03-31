@@ -1,14 +1,17 @@
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, Field
+
+
+EmailField = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class AuthUserResponse(BaseModel):
     user_id: int
-    email: EmailStr
+    email: str = EmailField
     display_name: str
 
 
 class RegisterRequest(BaseModel):
-    email: EmailStr
+    email: str = EmailField
     display_name: str
     password: str
 
@@ -16,7 +19,7 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str = EmailField
     password: str
 
     model_config = ConfigDict(extra="forbid")
@@ -24,7 +27,7 @@ class LoginRequest(BaseModel):
 
 class RegisterResponse(BaseModel):
     user_id: int
-    email: EmailStr
+    email: str = EmailField
     display_name: str
     account_status: str
     created_at: str
@@ -38,6 +41,6 @@ class LoginResponse(BaseModel):
 
 class MeResponse(BaseModel):
     user_id: int
-    email: EmailStr
+    email: str = EmailField
     display_name: str
     account_status: str
