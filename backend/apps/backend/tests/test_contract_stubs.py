@@ -12,6 +12,17 @@ CREATE_AI_PAYLOAD = {
 }
 
 
+def create_ai_interaction(client, auth_headers, document_id: str = "doc_101") -> dict:
+    response = client.post(
+        f"/v1/documents/{document_id}/ai/interactions",
+        headers=auth_headers,
+        json=CREATE_AI_PAYLOAD,
+    )
+
+    assert response.status_code == 202
+    return response.json()
+
+
 def test_session_bootstrap_returns_contract_shaped_response(client, auth_headers) -> None:
     response = client.post(
         "/v1/documents/doc_101/sessions",
@@ -30,14 +41,9 @@ def test_session_bootstrap_returns_contract_shaped_response(client, auth_headers
 
 
 def test_create_ai_interaction_returns_pending_stub(client, auth_headers) -> None:
-    response = client.post(
-        "/v1/documents/doc_101/ai/interactions",
-        headers=auth_headers,
-        json=CREATE_AI_PAYLOAD,
-    )
+    response = create_ai_interaction(client, auth_headers)
 
-    assert response.status_code == 202
-    assert response.json() == {
+    assert response == {
         "interaction_id": "ai_1",
         "status": "pending",
         "document_id": "doc_101",
@@ -47,6 +53,8 @@ def test_create_ai_interaction_returns_pending_stub(client, auth_headers) -> Non
 
 
 def test_list_ai_interactions_returns_history_stub(client, auth_headers) -> None:
+    create_ai_interaction(client, auth_headers)
+
     response = client.get(
         "/v1/documents/doc_101/ai/interactions",
         headers=auth_headers,
@@ -65,8 +73,10 @@ def test_list_ai_interactions_returns_history_stub(client, auth_headers) -> None
 
 
 def test_get_ai_interaction_returns_suggestion_stub(client, auth_headers) -> None:
+    interaction = create_ai_interaction(client, auth_headers)
+
     response = client.get(
-        "/v1/ai/interactions/ai_1",
+        f"/v1/ai/interactions/{interaction['interaction_id']}",
         headers=auth_headers,
     )
 
@@ -86,17 +96,24 @@ def test_get_ai_interaction_returns_suggestion_stub(client, auth_headers) -> Non
 
 
 def test_accept_reject_and_apply_edited_suggestion_stubs(client, auth_headers) -> None:
+    interaction = create_ai_interaction(client, auth_headers)
+    detail_response = client.get(
+        f"/v1/ai/interactions/{interaction['interaction_id']}",
+        headers=auth_headers,
+    )
+    suggestion_id = detail_response.json()["suggestion"]["suggestion_id"]
+
     accept_response = client.post(
-        "/v1/ai/suggestions/sug_1/accept",
+        f"/v1/ai/suggestions/{suggestion_id}/accept",
         headers=auth_headers,
         json={"apply_to_range": {"start": 100, "end": 180}},
     )
     reject_response = client.post(
-        "/v1/ai/suggestions/sug_1/reject",
+        f"/v1/ai/suggestions/{suggestion_id}/reject",
         headers=auth_headers,
     )
     apply_response = client.post(
-        "/v1/ai/suggestions/sug_1/apply-edited",
+        f"/v1/ai/suggestions/{suggestion_id}/apply-edited",
         headers=auth_headers,
         json={
             "edited_output": "User-modified version of the suggestion",
@@ -106,7 +123,7 @@ def test_accept_reject_and_apply_edited_suggestion_stubs(client, auth_headers) -
 
     assert accept_response.status_code == 200
     assert accept_response.json() == {
-        "suggestion_id": "sug_1",
+        "suggestion_id": suggestion_id,
         "outcome": "accepted",
         "applied": True,
         "new_revision": 23,
@@ -114,13 +131,13 @@ def test_accept_reject_and_apply_edited_suggestion_stubs(client, auth_headers) -
 
     assert reject_response.status_code == 200
     assert reject_response.json() == {
-        "suggestion_id": "sug_1",
+        "suggestion_id": suggestion_id,
         "outcome": "rejected",
     }
 
     assert apply_response.status_code == 200
     assert apply_response.json() == {
-        "suggestion_id": "sug_1",
+        "suggestion_id": suggestion_id,
         "outcome": "modified",
         "applied": True,
         "new_revision": 23,
