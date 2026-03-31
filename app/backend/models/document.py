@@ -4,6 +4,7 @@ from typing import List, Optional
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.backend.core.contracts import utc_now
 from app.backend.core.database import Base
 
 
@@ -13,15 +14,21 @@ class Document(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     content: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    content_format: Mapped[str] = mapped_column(String(50), default="plain_text", nullable=False)
-    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    content_format: Mapped[str] = mapped_column(
+        String(50), default="plain_text", nullable=False
+    )
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), index=True, nullable=False
+    )
     ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     latest_version_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("document_versions.id"),
         nullable=True,
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utc_now, onupdate=utc_now
+    )
 
     owner: Mapped["User"] = relationship(
         "User",

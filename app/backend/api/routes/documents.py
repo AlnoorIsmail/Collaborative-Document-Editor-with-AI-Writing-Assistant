@@ -24,7 +24,9 @@ def get_document_service(db: Session = Depends(get_db)) -> DocumentService:
     return DocumentService(DocumentRepository(db), VersionRepository(db))
 
 
-@router.post("", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=DocumentCreateResponse, status_code=status.HTTP_201_CREATED
+)
 def create_document(
     payload: DocumentCreate,
     current_user: User = Depends(get_current_authenticated_user),
@@ -39,7 +41,9 @@ def get_document(
     current_user: User = Depends(get_current_authenticated_user),
     document_service: DocumentService = Depends(get_document_service),
 ) -> DocumentDetailResponse:
-    return document_service.get_document(document_id=documentId, current_user=current_user)
+    return document_service.get_document(
+        document_id=documentId, current_user=current_user
+    )
 
 
 @router.patch("/{documentId}", response_model=DocumentMetadataResponse)

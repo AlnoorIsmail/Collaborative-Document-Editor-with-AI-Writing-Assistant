@@ -16,7 +16,9 @@ class PermissionRepository:
             .first()
         )
 
-    def get_by_document_and_user(self, *, document_id: int, user_id: int) -> Optional[DocumentPermission]:
+    def get_by_document_and_user(
+        self, *, document_id: int, user_id: int
+    ) -> Optional[DocumentPermission]:
         return (
             self.db.query(DocumentPermission)
             .filter(

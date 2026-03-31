@@ -1,15 +1,24 @@
 import secrets
-from datetime import datetime
 
 from fastapi import status
 
-from app.backend.core.contracts import parse_prefixed_id, parse_utc_datetime, prefixed_id, utc_z
+from app.backend.core.contracts import (
+    parse_prefixed_id,
+    parse_utc_datetime,
+    prefixed_id,
+    utc_now,
+    utc_z,
+)
 from app.backend.core.errors import ApiError
 from app.backend.models.user import User
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.share_link_repository import ShareLinkRepository
-from app.backend.schemas.share_link import ShareLinkCreateRequest, ShareLinkCreateResponse, ShareLinkRedeemResponse
+from app.backend.schemas.share_link import (
+    ShareLinkCreateRequest,
+    ShareLinkCreateResponse,
+    ShareLinkRedeemResponse,
+)
 from app.backend.services.document_service import DocumentService
 
 
@@ -33,7 +42,9 @@ class ShareLinkService:
     ) -> ShareLinkCreateResponse:
         document_id = parse_prefixed_id(payload.document_id, "doc")
         document = self.document_repository.get_by_id(document_id)
-        self.document_service._ensure_owner_access(document=document, current_user=current_user)
+        self.document_service._ensure_owner_access(
+            document=document, current_user=current_user
+        )
 
         expires_at = parse_utc_datetime(payload.expires_at)
         share_link = self.share_link_repository.create(
@@ -68,7 +79,7 @@ class ShareLinkService:
                 message="Share link has been revoked.",
             )
 
-        if share_link.expires_at is not None and share_link.expires_at < datetime.utcnow():
+        if share_link.expires_at is not None and share_link.expires_at < utc_now():
             raise ApiError(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 error_code="SHARE_LINK_EXPIRED",
