@@ -9,10 +9,6 @@ The goal of this PoC is to prove that (backend):
 - the request and response JSON contracts are stable in code
 - the project is organized using the layered backend structure from the architecture plan
 
-## Frontend Scope
-
----
-
 ## What the PoC Demonstrates
 
 - `POST /v1/auth/register` and `POST /v1/auth/login` for a minimal client session
