@@ -11,7 +11,7 @@ The goal of this PoC is to prove that (backend):
 
 ## Frontend Scope
 
-A frontend exists as part of the wider project, but this README leaves that section intentionally empty because it was not part of my implementation scope. The only thing this backend PoC assumes is that a frontend client can call the documented REST endpoints and receive the contract-shaped JSON responses shown in tests.
+
 
 ## What the PoC Demonstrates
 
