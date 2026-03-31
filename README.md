@@ -1,8 +1,8 @@
 # Collaborative Document Editor Backend PoC
 
-This repository contains a collaborative document editor project with both frontend and backend workstreams. This README is intentionally backend-focused because my assigned part of the PoC was the backend only.
+This repository contains a collaborative document editor project with both frontend and backend workstreams.
 
-The goal of this PoC is to prove that:
+The goal of this PoC is to prove that (backend):
 
 - the FastAPI backend boots and exposes the expected API surface
 - a client can authenticate and communicate with the backend end to end
@@ -11,7 +11,7 @@ The goal of this PoC is to prove that:
 
 ## Frontend Scope
 
-A frontend exists as part of the wider project, but this README leaves that section intentionally empty because it was not part of my implementation scope. The only thing this backend PoC assumes is that a frontend client can call the documented REST endpoints and receive the contract-shaped JSON responses shown in tests.
+---
 
 ## What the PoC Demonstrates
 
@@ -47,7 +47,6 @@ These are the main backend decisions made for the PoC:
 
 Some backend work was intentionally left incomplete because this is a proof of concept rather than a full implementation:
 
-- Full frontend documentation is omitted here because that was outside my assigned backend scope.
 - A true websocket collaboration server was not implemented yet. For the PoC, the important part was proving the session bootstrap contract and keeping realtime concerns separate from REST APIs.
 - AI calls are mocked instead of hitting a real provider. This keeps the PoC deterministic, testable, and free from external service dependencies.
 - Full quota enforcement and persistent AI audit logging were not completed yet because they are production concerns beyond the minimum PoC requirement.
