@@ -1,6 +1,6 @@
 # Collaborative Document Editor Backend PoC
 
-This repository currently delivers a backend-focused proof of concept for an AI-supported collaborative document editor. The frontend is intentionally not included in this PoC pass.
+This repository contains a collaborative document editor project with both frontend and backend workstreams. This README is intentionally backend-focused because my assigned part of the PoC was the backend only.
 
 The goal of this PoC is to prove that:
 
@@ -8,6 +8,10 @@ The goal of this PoC is to prove that:
 - a client can authenticate and communicate with the backend end to end
 - the request and response JSON contracts are stable in code
 - the project is organized using the layered backend structure from the architecture plan
+
+## Frontend Scope
+
+A frontend exists as part of the wider project, but this README leaves that section intentionally empty because it was not part of my implementation scope. The only thing this backend PoC assumes is that a frontend client can call the documented REST endpoints and receive the contract-shaped JSON responses shown in tests.
 
 ## What the PoC Demonstrates
 
@@ -24,13 +28,38 @@ The goal of this PoC is to prove that:
   - `POST /v1/ai/suggestions/{suggestionId}/reject`
   - `POST /v1/ai/suggestions/{suggestionId}/apply-edited`
 
+## Backend Decisions
+
+These are the main backend decisions made for the PoC:
+
+- `FastAPI` was kept as the backend framework to match the architecture requirement.
+- The backend was organized as a layered modular monolith under `app/backend/`.
+- Route handlers stay thin and mainly handle transport and dependency wiring.
+- Business behavior is pushed into `services/`.
+- Data access is kept in `repositories/`.
+- Request and response formats are defined with explicit Pydantic schemas in `schemas/`.
+- Realtime traffic is represented separately through the session bootstrap contract instead of mixing it into document CRUD routes.
+- AI remains suggestion-based, with separate interaction and suggestion endpoints rather than automatic document mutation.
+- The PoC uses lightweight stubbed repositories for realtime session bootstrapping and AI generation so the contracts can be validated without introducing a production-ready websocket server or live LLM dependency.
+- The backend package was moved under `app/backend` so the repository structure matches the decision to treat `app` as the application root folder.
+
+## What Was Left Out and Why
+
+Some backend work was intentionally left incomplete because this is a proof of concept rather than a full implementation:
+
+- Full frontend documentation is omitted here because that was outside my assigned backend scope.
+- A true websocket collaboration server was not implemented yet. For the PoC, the important part was proving the session bootstrap contract and keeping realtime concerns separate from REST APIs.
+- AI calls are mocked instead of hitting a real provider. This keeps the PoC deterministic, testable, and free from external service dependencies.
+- Full quota enforcement and persistent AI audit logging were not completed yet because they are production concerns beyond the minimum PoC requirement.
+- Reconnect, resync, and conflict handling are represented at the contract level, but not yet built out as a complete live synchronization engine.
+- Authentication is sufficient for PoC validation, but not yet hardened as a production auth system.
+
 ## What Is Intentionally Minimal
 
-- no frontend UI is included in this submission
+- the focus is backend contract validation, not product completeness
 - realtime websocket transport is only represented by the session bootstrap contract, not a full live collaboration server
 - AI generation is mocked through a lightweight in-memory repository/provider seam
-- quota enforcement, persistent AI audit storage, and production auth hardening are not fully implemented yet
-- the PoC focuses on contract validation and backend skeleton quality, not product completeness
+- some backend concerns are left as future work so the PoC stays small, testable, and aligned with the assignment scope
 
 ## Repository Shape
 
