@@ -20,7 +20,9 @@ class VersionService:
 
     def list_versions(self, *, document_id: int, current_user: User):
         document = self.document_repository.get_by_id(document_id)
-        self.document_service._ensure_owner_access(document=document, current_user=current_user)
+        self.document_service._ensure_owner_access(
+            document=document, current_user=current_user
+        )
 
         versions = self.version_repository.list_for_document(document_id)
         return [
@@ -42,7 +44,9 @@ class VersionService:
         current_user: User,
     ) -> VersionRestoreResponse:
         document = self.document_repository.get_by_id(document_id)
-        self.document_service._ensure_owner_access(document=document, current_user=current_user)
+        self.document_service._ensure_owner_access(
+            document=document, current_user=current_user
+        )
 
         version = self.version_repository.get_by_id(version_id)
         if version is None:

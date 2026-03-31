@@ -6,7 +6,10 @@ from fastapi import APIRouter, Depends, status
 
 from app.backend.api.deps import get_current_principal, get_session_service
 from app.backend.core.security import AuthenticatedPrincipal
-from app.backend.schemas.realtime import SessionBootstrapRequest, SessionBootstrapResponse
+from app.backend.schemas.realtime import (
+    SessionBootstrapRequest,
+    SessionBootstrapResponse,
+)
 from app.backend.services.realtime.session_service import SessionService
 
 router = APIRouter(prefix="/documents/{document_id}/sessions", tags=["sessions"])

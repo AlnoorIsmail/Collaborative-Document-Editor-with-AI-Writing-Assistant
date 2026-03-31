@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
+from app.backend.core.contracts import utc_now
 from app.backend.models.document_permission import DocumentPermission
 from app.backend.models.invitation import Invitation
 from app.backend.tests.conftest import create_test_client
@@ -34,7 +35,9 @@ def test_owner_can_send_invitation() -> None:
 def test_non_owner_cannot_send_invitation() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
-    _, stranger_token = create_user_and_token(client, "stranger@example.com", "Stranger")
+    _, stranger_token = create_user_and_token(
+        client, "stranger@example.com", "Stranger"
+    )
     create_response = client.post(
         "/v1/documents",
         json={"title": "Doc", "initial_content": ""},
@@ -59,7 +62,9 @@ def test_non_owner_cannot_send_invitation() -> None:
 def test_invited_user_with_matching_email_can_accept() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
-    invited_user, invited_token = create_user_and_token(client, "editor@example.com", "Editor")
+    invited_user, invited_token = create_user_and_token(
+        client, "editor@example.com", "Editor"
+    )
     create_response = client.post(
         "/v1/documents",
         json={"title": "Doc", "initial_content": ""},
@@ -91,7 +96,10 @@ def test_invited_user_with_matching_email_can_accept() -> None:
     try:
         permission = (
             db.query(DocumentPermission)
-            .filter(DocumentPermission.document_id == document_id, DocumentPermission.user_id == invited_user["user_id"])
+            .filter(
+                DocumentPermission.document_id == document_id,
+                DocumentPermission.user_id == invited_user["user_id"],
+            )
             .first()
         )
         assert permission is not None
@@ -104,7 +112,9 @@ def test_invited_user_with_matching_email_can_accept() -> None:
 def test_wrong_user_cannot_accept() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
-    _, stranger_token = create_user_and_token(client, "stranger@example.com", "Stranger")
+    _, stranger_token = create_user_and_token(
+        client, "stranger@example.com", "Stranger"
+    )
     create_user_and_token(client, "editor@example.com", "Editor")
     create_response = client.post(
         "/v1/documents",
@@ -152,7 +162,7 @@ def test_expired_invitation_is_rejected() -> None:
     db = client.session_factory()
     try:
         invitation = db.query(Invitation).filter(Invitation.id == 1).first()
-        invitation.expires_at = datetime.utcnow() - timedelta(minutes=1)
+        invitation.expires_at = utc_now() - timedelta(minutes=1)
         db.add(invitation)
         db.commit()
     finally:

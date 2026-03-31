@@ -30,11 +30,15 @@ class AIRepository(ABC):
         """Create an AI interaction record."""
 
     @abstractmethod
-    def list_interactions(self, *, document_id: str, user_id: str) -> list[AIInteractionHistoryRecord]:
+    def list_interactions(
+        self, *, document_id: str, user_id: str
+    ) -> list[AIInteractionHistoryRecord]:
         """List historical AI interactions for a document."""
 
     @abstractmethod
-    def get_interaction(self, *, interaction_id: str, user_id: str) -> AIInteractionRecord:
+    def get_interaction(
+        self, *, interaction_id: str, user_id: str
+    ) -> AIInteractionRecord:
         """Fetch an AI interaction and its latest suggestion state."""
 
     @abstractmethod
@@ -49,7 +53,9 @@ class AIRepository(ABC):
         """Record acceptance of an AI suggestion."""
 
     @abstractmethod
-    def reject_suggestion(self, *, suggestion_id: str, user_id: str) -> SuggestionOutcomeRecord:
+    def reject_suggestion(
+        self, *, suggestion_id: str, user_id: str
+    ) -> SuggestionOutcomeRecord:
         """Record rejection of an AI suggestion."""
 
     @abstractmethod
@@ -106,7 +112,9 @@ class StubAIRepository(AIRepository):
         self._suggestion_to_interaction[suggestion_id] = interaction_id
         return record
 
-    def list_interactions(self, *, document_id: str, user_id: str) -> list[AIInteractionHistoryRecord]:
+    def list_interactions(
+        self, *, document_id: str, user_id: str
+    ) -> list[AIInteractionHistoryRecord]:
         records = [
             AIInteractionHistoryRecord(
                 interaction_id=record.interaction_id,
@@ -115,11 +123,15 @@ class StubAIRepository(AIRepository):
                 status=record.status,
                 created_at=record.created_at,
             )
-            for record in self._complete_matching_interactions(document_id=document_id, user_id=user_id)
+            for record in self._complete_matching_interactions(
+                document_id=document_id, user_id=user_id
+            )
         ]
         return sorted(records, key=lambda record: record.created_at)
 
-    def get_interaction(self, *, interaction_id: str, user_id: str) -> AIInteractionRecord:
+    def get_interaction(
+        self, *, interaction_id: str, user_id: str
+    ) -> AIInteractionRecord:
         self._ensure_owned_interaction(interaction_id=interaction_id, user_id=user_id)
         return self._complete_interaction(interaction_id)
 
@@ -143,7 +155,9 @@ class StubAIRepository(AIRepository):
             new_revision=interaction.base_revision + 1,
         )
 
-    def reject_suggestion(self, *, suggestion_id: str, user_id: str) -> SuggestionOutcomeRecord:
+    def reject_suggestion(
+        self, *, suggestion_id: str, user_id: str
+    ) -> SuggestionOutcomeRecord:
         self._get_interaction_for_suggestion(
             suggestion_id=suggestion_id,
             user_id=user_id,
@@ -187,7 +201,10 @@ class StubAIRepository(AIRepository):
             for interaction_id, record in self._interactions.items()
             if record.document_id == document_id and record.user_id == user_id
         ]
-        return [self._complete_interaction(interaction_id) for interaction_id in matching_ids]
+        return [
+            self._complete_interaction(interaction_id)
+            for interaction_id in matching_ids
+        ]
 
     def _complete_interaction(self, interaction_id: str) -> AIInteractionRecord:
         record = self._interactions[interaction_id]
@@ -223,7 +240,9 @@ class StubAIRepository(AIRepository):
                 message="You are not allowed to access this AI interaction.",
             )
 
-    def _get_interaction_for_suggestion(self, *, suggestion_id: str, user_id: str) -> AIInteractionRecord:
+    def _get_interaction_for_suggestion(
+        self, *, suggestion_id: str, user_id: str
+    ) -> AIInteractionRecord:
         interaction_id = self._suggestion_to_interaction.get(suggestion_id)
         if interaction_id is None:
             raise AppError(

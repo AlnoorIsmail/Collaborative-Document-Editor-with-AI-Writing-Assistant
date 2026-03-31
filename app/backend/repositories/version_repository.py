@@ -31,13 +31,19 @@ class VersionRepository:
         return version
 
     def get_by_id(self, version_id: int) -> Optional[DocumentVersion]:
-        return self.db.query(DocumentVersion).filter(DocumentVersion.id == version_id).first()
+        return (
+            self.db.query(DocumentVersion)
+            .filter(DocumentVersion.id == version_id)
+            .first()
+        )
 
     def list_for_document(self, document_id: int) -> List[DocumentVersion]:
         return (
             self.db.query(DocumentVersion)
             .filter(DocumentVersion.document_id == document_id)
-            .order_by(DocumentVersion.version_number.desc(), DocumentVersion.created_at.desc())
+            .order_by(
+                DocumentVersion.version_number.desc(), DocumentVersion.created_at.desc()
+            )
             .all()
         )
 
@@ -45,6 +51,8 @@ class VersionRepository:
         return (
             self.db.query(DocumentVersion)
             .filter(DocumentVersion.document_id == document_id)
-            .order_by(DocumentVersion.version_number.desc(), DocumentVersion.created_at.desc())
+            .order_by(
+                DocumentVersion.version_number.desc(), DocumentVersion.created_at.desc()
+            )
             .first()
         )

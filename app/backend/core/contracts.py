@@ -5,6 +5,10 @@ from fastapi import status
 from app.backend.core.errors import ApiError
 
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def parse_prefixed_id(value: str, prefix: str) -> int:
     expected_prefix = prefix + "_"
     if not value.startswith(expected_prefix):
@@ -14,7 +18,7 @@ def parse_prefixed_id(value: str, prefix: str) -> int:
             message="Invalid identifier format.",
         )
     try:
-        return int(value[len(expected_prefix):])
+        return int(value[len(expected_prefix) :])
     except ValueError as exc:
         raise ApiError(
             status_code=status.HTTP_400_BAD_REQUEST,

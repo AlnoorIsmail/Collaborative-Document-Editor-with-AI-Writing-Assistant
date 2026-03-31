@@ -3,7 +3,10 @@
 from app.backend.core.config import Settings
 from app.backend.core.security import AuthenticatedPrincipal
 from app.backend.repositories.sessions import SessionRepository
-from app.backend.schemas.realtime import SessionBootstrapRequest, SessionBootstrapResponse
+from app.backend.schemas.realtime import (
+    SessionBootstrapRequest,
+    SessionBootstrapResponse,
+)
 
 
 class SessionService:

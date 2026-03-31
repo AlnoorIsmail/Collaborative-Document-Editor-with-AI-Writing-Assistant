@@ -12,12 +12,16 @@ class GeneratedSuggestion:
 
 class AIProviderClient(ABC):
     @abstractmethod
-    def generate_suggestion(self, *, feature_type: str, prompt: str) -> GeneratedSuggestion:
+    def generate_suggestion(
+        self, *, feature_type: str, prompt: str
+    ) -> GeneratedSuggestion:
         """Generate a reviewable suggestion from an external AI provider."""
 
 
 class StubAIProviderClient(AIProviderClient):
-    def generate_suggestion(self, *, feature_type: str, prompt: str) -> GeneratedSuggestion:
+    def generate_suggestion(
+        self, *, feature_type: str, prompt: str
+    ) -> GeneratedSuggestion:
         # TODO: Replace with provider-specific retry, timeout, and error mapping logic.
         del feature_type, prompt
         return GeneratedSuggestion(

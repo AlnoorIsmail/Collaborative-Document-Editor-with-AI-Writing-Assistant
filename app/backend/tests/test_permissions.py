@@ -38,7 +38,9 @@ def test_owner_can_grant_permission() -> None:
 def test_non_owner_cannot_grant_permission() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
-    _, stranger_token = create_user_and_token(client, "stranger@example.com", "Stranger")
+    _, stranger_token = create_user_and_token(
+        client, "stranger@example.com", "Stranger"
+    )
     grantee, _ = create_user_and_token(client, "editor@example.com", "Editor")
     create_response = client.post(
         "/v1/documents",
@@ -103,7 +105,9 @@ def test_owner_can_revoke_permission() -> None:
 def test_non_owner_cannot_revoke_permission() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
-    _, stranger_token = create_user_and_token(client, "stranger@example.com", "Stranger")
+    _, stranger_token = create_user_and_token(
+        client, "stranger@example.com", "Stranger"
+    )
     grantee, _ = create_user_and_token(client, "editor@example.com", "Editor")
     create_response = client.post(
         "/v1/documents",
@@ -196,6 +200,9 @@ def test_duplicate_permission_updates_existing_record() -> None:
 
     assert first_response.status_code == 201
     assert second_response.status_code == 201
-    assert second_response.json()["permission_id"] == first_response.json()["permission_id"]
+    assert (
+        second_response.json()["permission_id"]
+        == first_response.json()["permission_id"]
+    )
     assert second_response.json()["role"] == "editor"
     assert second_response.json()["ai_allowed"] is True

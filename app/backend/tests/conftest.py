@@ -12,7 +12,11 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from app.backend.api.deps import get_ai_provider, get_ai_repository, get_session_repository
+from app.backend.api.deps import (
+    get_ai_provider,
+    get_ai_repository,
+    get_session_repository,
+)
 from app.backend.core.database import Base, get_db
 from app.backend.main import create_app
 

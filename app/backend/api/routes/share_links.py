@@ -1,13 +1,20 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.backend.api.routes.auth import get_current_authenticated_user, get_optional_authenticated_user
+from app.backend.api.routes.auth import (
+    get_current_authenticated_user,
+    get_optional_authenticated_user,
+)
 from app.backend.core.database import get_db
 from app.backend.models.user import User
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.share_link_repository import ShareLinkRepository
-from app.backend.schemas.share_link import ShareLinkCreateRequest, ShareLinkCreateResponse, ShareLinkRedeemResponse
+from app.backend.schemas.share_link import (
+    ShareLinkCreateRequest,
+    ShareLinkCreateResponse,
+    ShareLinkRedeemResponse,
+)
 from app.backend.services.share_link_service import ShareLinkService
 
 router = APIRouter(prefix="/share-links", tags=["share-links"])
@@ -21,13 +28,17 @@ def get_share_link_service(db: Session = Depends(get_db)) -> ShareLinkService:
     )
 
 
-@router.post("", response_model=ShareLinkCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=ShareLinkCreateResponse, status_code=status.HTTP_201_CREATED
+)
 def create_share_link(
     payload: ShareLinkCreateRequest,
     current_user: User = Depends(get_current_authenticated_user),
     share_link_service: ShareLinkService = Depends(get_share_link_service),
 ) -> ShareLinkCreateResponse:
-    return share_link_service.create_share_link(payload=payload, current_user=current_user)
+    return share_link_service.create_share_link(
+        payload=payload, current_user=current_user
+    )
 
 
 @router.post("/{token}/redeem", response_model=ShareLinkRedeemResponse)
