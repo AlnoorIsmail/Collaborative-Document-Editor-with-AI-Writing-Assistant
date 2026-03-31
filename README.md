@@ -37,7 +37,7 @@ The goal of this PoC is to prove that:
 The backend keeps the layered modular-monolith structure required by the architecture:
 
 ```text
-backend/apps/backend/
+app/backend/
 ├── api/routes        # transport layer only
 ├── core              # config, auth, shared errors, db
 ├── integrations      # external provider seams
@@ -65,11 +65,10 @@ source .venv/bin/activate
 pip install fastapi uvicorn sqlalchemy pydantic-settings pytest httpx
 ```
 
-3. Start the backend from the `backend` directory.
+3. Start the backend from the repository root.
 
 ```bash
-cd backend
-uvicorn apps.backend.main:app --reload
+uvicorn app.backend.main:app --reload
 ```
 
 4. Open the generated docs or OpenAPI contract.
@@ -80,16 +79,16 @@ uvicorn apps.backend.main:app --reload
 
 ## Running the PoC Validation Tests
 
-From the `backend` directory:
+From the repository root:
 
 ```bash
-pytest apps/backend/tests/test_poc_backend.py -q
+pytest app/backend/tests/test_poc_backend.py -q
 ```
 
 To run the full backend suite:
 
 ```bash
-pytest apps/backend/tests -q
+pytest app/backend/tests -q
 ```
 
 ## Suggested Demo Flow
@@ -108,6 +107,6 @@ If you want a short manual demo without a frontend:
 
 The most assignment-relevant backend validation is in:
 
-- `backend/apps/backend/tests/test_poc_backend.py`
+- `app/backend/tests/test_poc_backend.py`
 
 That file checks that a client can authenticate, create/load/save a document, bootstrap a realtime session, and exercise the AI contract flow with the expected JSON shapes.
