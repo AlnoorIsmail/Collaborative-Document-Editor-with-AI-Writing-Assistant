@@ -6,7 +6,7 @@ This document describes the backend proof of concept as it is currently implemen
 
 - The project is a monorepo.
 - The implemented PoC in this repository is backend-focused.
-- A frontend may exist in the wider project, but frontend implementation details are intentionally out of scope here.
+- 
 - The goal of this PoC is to prove backend contracts, layering, and end-to-end API behavior rather than deliver a production-ready collaboration platform.
 
 ## Current Repository Shape
