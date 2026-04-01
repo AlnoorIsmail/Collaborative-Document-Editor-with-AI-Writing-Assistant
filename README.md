@@ -133,18 +133,6 @@ black --check app
 pytest app/backend/tests -q
 ```
 
-## Suggested Demo Flow
-
-If you want a short manual demo without a frontend:
-
-1. Register a user.
-2. Log in and capture the bearer token.
-3. Create a document.
-4. Load the document back with `GET /v1/documents/{documentId}`.
-5. Save updated content with `PATCH /v1/documents/{documentId}/content`.
-6. Call the session bootstrap endpoint.
-7. Call the AI interaction endpoint and inspect the resulting suggestion detail.
-
 ## Main Test File for the Assignment
 
 The most assignment-relevant backend validation is in:
