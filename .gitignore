@@ -3,4 +3,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.pyc
+.env
+dist/
 collab_editor.db
+node_modules/
