@@ -12,6 +12,6 @@ class SessionBootstrapRequest(AppSchema):
 class SessionBootstrapResponse(AppSchema):
     session_id: str
     session_token: str
-    document_id: str
+    document_id: int
     revision: int = Field(ge=0)
     realtime_url: str

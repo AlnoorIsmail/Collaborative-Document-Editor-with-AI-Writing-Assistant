@@ -12,7 +12,7 @@ from app.backend.schemas.realtime import (
 )
 from app.backend.services.realtime.session_service import SessionService
 
-router = APIRouter(prefix="/documents/{document_id}/sessions", tags=["sessions"])
+router = APIRouter(prefix="/documents/{documentId}/sessions", tags=["sessions"])
 
 
 @router.post(
@@ -21,13 +21,13 @@ router = APIRouter(prefix="/documents/{document_id}/sessions", tags=["sessions"]
     status_code=status.HTTP_201_CREATED,
 )
 def create_or_join_session(
-    document_id: str,
+    documentId: str,
     payload: SessionBootstrapRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     service: Annotated[SessionService, Depends(get_session_service)],
 ) -> SessionBootstrapResponse:
     return service.create_or_join_session(
-        document_id=document_id,
+        document_id=documentId,
         principal=principal,
         payload=payload,
     )

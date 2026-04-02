@@ -16,8 +16,8 @@ class AISuggestionRecord:
 @dataclass(frozen=True)
 class AIInteractionRecord:
     interaction_id: str
-    document_id: str
-    user_id: str
+    document_id: int
+    user_id: int
     feature_type: str
     scope_type: str
     status: str
@@ -30,7 +30,7 @@ class AIInteractionRecord:
 class AIInteractionHistoryRecord:
     interaction_id: str
     feature_type: str
-    user_id: str
+    user_id: int
     status: str
     created_at: datetime
 

@@ -33,7 +33,10 @@ class DocumentRepository:
     def get_by_id(self, document_id: int) -> Optional[Document]:
         return (
             self.db.query(Document)
-            .options(joinedload(Document.owner))
+            .options(
+                joinedload(Document.owner),
+                joinedload(Document.latest_version),
+            )
             .filter(Document.id == document_id)
             .first()
         )

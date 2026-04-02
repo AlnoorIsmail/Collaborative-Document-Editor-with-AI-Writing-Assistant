@@ -33,7 +33,7 @@ def get_invitation_service(db: Session = Depends(get_db)) -> InvitationService:
     status_code=status.HTTP_201_CREATED,
 )
 def send_invitation(
-    documentId: int,
+    documentId: str,
     payload: InvitationCreateRequest,
     current_user: User = Depends(get_current_authenticated_user),
     invitation_service: InvitationService = Depends(get_invitation_service),

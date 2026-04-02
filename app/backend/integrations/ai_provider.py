@@ -4,6 +4,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 
+class AIProviderTimeoutError(Exception):
+    pass
+
+
+class AIProviderUnavailableError(Exception):
+    pass
+
+
 @dataclass(frozen=True)
 class GeneratedSuggestion:
     generated_output: str

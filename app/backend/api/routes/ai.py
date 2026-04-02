@@ -23,102 +23,102 @@ router = APIRouter(tags=["ai"])
 
 
 @router.post(
-    "/documents/{document_id}/ai/interactions",
+    "/documents/{documentId}/ai/interactions",
     response_model=AIInteractionAcceptedResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
 def create_ai_interaction(
-    document_id: str,
+    documentId: str,
     payload: AIInteractionCreateRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     service: Annotated[AIService, Depends(get_ai_service)],
 ) -> AIInteractionAcceptedResponse:
     return service.create_interaction(
-        document_id=document_id,
+        document_id=documentId,
         principal=principal,
         payload=payload,
     )
 
 
 @router.get(
-    "/documents/{document_id}/ai/interactions",
+    "/documents/{documentId}/ai/interactions",
     response_model=list[AIInteractionHistoryItem],
     status_code=status.HTTP_200_OK,
 )
 def list_ai_interactions(
-    document_id: str,
+    documentId: str,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     service: Annotated[AIService, Depends(get_ai_service)],
 ) -> list[AIInteractionHistoryItem]:
     return service.list_interactions(
-        document_id=document_id,
+        document_id=documentId,
         principal=principal,
     )
 
 
 @router.get(
-    "/ai/interactions/{interaction_id}",
+    "/ai/interactions/{interactionId}",
     response_model=AIInteractionDetailResponse,
     status_code=status.HTTP_200_OK,
 )
 def get_ai_interaction(
-    interaction_id: str,
+    interactionId: str,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     service: Annotated[AIService, Depends(get_ai_service)],
 ) -> AIInteractionDetailResponse:
     return service.get_interaction(
-        interaction_id=interaction_id,
+        interaction_id=interactionId,
         principal=principal,
     )
 
 
 @router.post(
-    "/ai/suggestions/{suggestion_id}/accept",
+    "/ai/suggestions/{suggestionId}/accept",
     response_model=AcceptSuggestionResponse,
     status_code=status.HTTP_200_OK,
 )
 def accept_ai_suggestion(
-    suggestion_id: str,
+    suggestionId: str,
     payload: AcceptSuggestionRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     service: Annotated[AIService, Depends(get_ai_service)],
 ) -> AcceptSuggestionResponse:
     return service.accept_suggestion(
-        suggestion_id=suggestion_id,
+        suggestion_id=suggestionId,
         principal=principal,
         payload=payload,
     )
 
 
 @router.post(
-    "/ai/suggestions/{suggestion_id}/reject",
+    "/ai/suggestions/{suggestionId}/reject",
     response_model=RejectSuggestionResponse,
     status_code=status.HTTP_200_OK,
 )
 def reject_ai_suggestion(
-    suggestion_id: str,
+    suggestionId: str,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     service: Annotated[AIService, Depends(get_ai_service)],
 ) -> RejectSuggestionResponse:
     return service.reject_suggestion(
-        suggestion_id=suggestion_id,
+        suggestion_id=suggestionId,
         principal=principal,
     )
 
 
 @router.post(
-    "/ai/suggestions/{suggestion_id}/apply-edited",
+    "/ai/suggestions/{suggestionId}/apply-edited",
     response_model=ApplyEditedSuggestionResponse,
     status_code=status.HTTP_200_OK,
 )
 def apply_edited_ai_suggestion(
-    suggestion_id: str,
+    suggestionId: str,
     payload: ApplyEditedSuggestionRequest,
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     service: Annotated[AIService, Depends(get_ai_service)],
 ) -> ApplyEditedSuggestionResponse:
     return service.apply_edited_suggestion(
-        suggestion_id=suggestion_id,
+        suggestion_id=suggestionId,
         principal=principal,
         payload=payload,
     )

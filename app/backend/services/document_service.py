@@ -1,9 +1,13 @@
+import json
+import re
+
 from fastapi import status
 
 from app.backend.core.errors import ApiError
 from app.backend.models.document import Document
 from app.backend.models.user import User
 from app.backend.repositories.document_repository import DocumentRepository
+from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.version_repository import VersionRepository
 from app.backend.schemas.document import (
     DocumentContentSaveRequest,
@@ -11,9 +15,14 @@ from app.backend.schemas.document import (
     DocumentCreate,
     DocumentCreateResponse,
     DocumentDetailResponse,
+    DocumentExportRequest,
+    DocumentExportResponse,
     DocumentMetadataResponse,
+    DocumentOwnerResponse,
     DocumentUpdate,
+    LatestVersionReference,
 )
+from app.backend.services.access_service import DocumentAccess, DocumentAccessService
 
 
 class DocumentService:
@@ -21,9 +30,14 @@ class DocumentService:
         self,
         document_repository: DocumentRepository,
         version_repository: VersionRepository,
-    ):
+        permission_repository: PermissionRepository,
+    ) -> None:
         self.document_repository = document_repository
         self.version_repository = version_repository
+        self.access_service = DocumentAccessService(
+            document_repository,
+            permission_repository,
+        )
 
     def create_document(
         self, *, payload: DocumentCreate, current_user: User
@@ -36,137 +50,280 @@ class DocumentService:
             owner_id=current_user.id,
         )
         self.document_repository.db.commit()
+        refreshed_document = self.document_repository.get_by_id(document.id)
         return self._to_document_create_response(
-            self.document_repository.get_by_id(document.id)
+            refreshed_document,
+            role="owner",
+            revision=0,
         )
 
     def get_document(
-        self, *, document_id: int, current_user: User
+        self, *, document_id: str | int, current_user: User
     ) -> DocumentDetailResponse:
-        document = self.document_repository.get_by_id(document_id)
-        self._ensure_owner_access(document=document, current_user=current_user)
-        return self._to_document_detail_response(document)
+        access = self.access_service.require_read_access(
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+        return self._to_document_detail_response(access)
 
     def update_document(
         self,
         *,
-        document_id: int,
+        document_id: str | int,
         payload: DocumentUpdate,
         current_user: User,
     ) -> DocumentMetadataResponse:
-        document = self.document_repository.get_by_id(document_id)
-        self._ensure_owner_access(document=document, current_user=current_user)
+        access = self.access_service.require_owner_access(
+            document_id=document_id,
+            user_id=current_user.id,
+        )
 
         update_fields = payload.model_dump(exclude_unset=True)
-        updated_document = self.document_repository.update(document, **update_fields)
-
+        updated_document = self.document_repository.update(access.document, **update_fields)
         self.document_repository.db.commit()
-        refreshed_document = self.document_repository.get_by_id(updated_document.id)
+        refreshed_access = self.access_service.require_read_access(
+            document_id=updated_document.id,
+            user_id=current_user.id,
+        )
         return DocumentMetadataResponse(
-            document_id=refreshed_document.id,
-            title=refreshed_document.title,
-            ai_enabled=refreshed_document.ai_enabled,
-            updated_at=refreshed_document.updated_at,
+            document_id=refreshed_access.document.id,
+            title=refreshed_access.document.title,
+            ai_enabled=refreshed_access.document.ai_enabled,
+            role=refreshed_access.role,
+            updated_at=refreshed_access.document.updated_at,
         )
 
     def save_document_content(
         self,
         *,
-        document_id: int,
+        document_id: str | int,
         payload: DocumentContentSaveRequest,
         current_user: User,
     ) -> DocumentContentSaveResponse:
-        document = self.document_repository.get_by_id(document_id)
-        self._ensure_owner_access(document=document, current_user=current_user)
+        access = self.access_service.require_edit_access(
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+        self._ensure_matching_revision(
+            base_revision=payload.base_revision,
+            current_revision=access.current_revision,
+        )
 
         updated_document = self.document_repository.update(
-            document, content=payload.content
+            access.document,
+            content=payload.content,
         )
-        version = self._create_version_if_needed(
+        version = self._create_version(
             document=updated_document,
             current_user=current_user,
             mark_as_restore=False,
-            force_create=True,
         )
         self.document_repository.db.commit()
-        refreshed_document = self.document_repository.get_by_id(updated_document.id)
         return DocumentContentSaveResponse(
-            document_id=refreshed_document.id,
+            document_id=updated_document.id,
             latest_version_id=version.id,
             revision=version.version_number,
             saved_at=version.created_at,
         )
 
-    def _ensure_owner_access(self, *, document: Document, current_user: User) -> None:
-        if document is None:
-            raise ApiError(
-                status_code=status.HTTP_404_NOT_FOUND,
-                error_code="DOCUMENT_NOT_FOUND",
-                message="Document not found.",
-            )
+    def export_document(
+        self,
+        *,
+        document_id: str | int,
+        payload: DocumentExportRequest,
+        current_user: User,
+    ) -> DocumentExportResponse:
+        access = self.access_service.require_read_access(
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+        export_format = payload.format.strip().lower()
+        content_type, exported_content = self._serialize_document(
+            document=access.document,
+            revision=access.current_revision,
+            export_format=export_format,
+        )
+        filename = self._export_filename(access.document.title, export_format)
 
-        if document.owner_id != current_user.id:
-            raise ApiError(
-                status_code=status.HTTP_403_FORBIDDEN,
-                error_code="PERMISSION_DENIED",
-                message="You are not allowed to access this document.",
-            )
+        return DocumentExportResponse(
+            document_id=access.document.id,
+            title=access.document.title,
+            format=export_format,
+            content_type=content_type,
+            filename=filename,
+            exported_content=exported_content,
+            revision=access.current_revision,
+            exported_at=access.document.updated_at,
+        )
 
-    def _create_version_if_needed(
+    def ensure_restore_access(
+        self, *, document_id: str | int, current_user: User
+    ) -> DocumentAccess:
+        return self.access_service.require_restore_access(
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+
+    def ensure_read_access(
+        self, *, document_id: str | int, current_user: User
+    ) -> DocumentAccess:
+        return self.access_service.require_read_access(
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+
+    def create_version_from_snapshot(
         self,
         *,
         document: Document,
         current_user: User,
         mark_as_restore: bool,
-        force_create: bool,
     ):
-        if self.version_repository is None:
-            return None
-
-        latest_version = self.version_repository.get_latest_for_document(document.id)
-        should_create_version = (
-            force_create or latest_version is not None or bool(document.content)
+        return self._create_version(
+            document=document,
+            current_user=current_user,
+            mark_as_restore=mark_as_restore,
         )
 
-        if not should_create_version:
-            return None
-
+    def _create_version(
+        self,
+        *,
+        document: Document,
+        current_user: User,
+        mark_as_restore: bool,
+    ):
+        latest_version = self.version_repository.get_latest_for_document(document.id)
         version = self.version_repository.create(
             document_id=document.id,
-            version_number=(
-                1 if latest_version is None else latest_version.version_number + 1
-            ),
+            version_number=1 if latest_version is None else latest_version.version_number + 1,
             content_snapshot=document.content,
             created_by=current_user.id,
             is_restore_version=mark_as_restore,
         )
-        document.latest_version_id = version.id
         self.document_repository.update(document, latest_version_id=version.id)
         return version
 
-    def _to_document_create_response(self, document) -> DocumentCreateResponse:
+    def _ensure_matching_revision(self, *, base_revision: int, current_revision: int) -> None:
+        if base_revision == current_revision:
+            return
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            error_code="CONFLICT_DETECTED",
+            message="The document revision is stale. Refresh and retry.",
+        )
+
+    def _serialize_document(
+        self,
+        *,
+        document: Document,
+        revision: int,
+        export_format: str,
+    ) -> tuple[str, str]:
+        if export_format == "plain_text":
+            return "text/plain; charset=utf-8", document.content
+
+        if export_format == "markdown":
+            return "text/markdown; charset=utf-8", document.content
+
+        if export_format == "html":
+            escaped_content = (
+                document.content.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+            )
+            html = (
+                "<article data-document-id=\"{document_id}\" data-revision=\"{revision}\">"
+                "<h1>{title}</h1><pre>{content}</pre></article>"
+            ).format(
+                document_id=document.id,
+                revision=revision,
+                title=document.title,
+                content=escaped_content,
+            )
+            return "text/html; charset=utf-8", html
+
+        if export_format == "json":
+            payload = {
+                "document_id": document.id,
+                "title": document.title,
+                "content": document.content,
+                "content_format": document.content_format,
+                "revision": revision,
+                "ai_enabled": document.ai_enabled,
+            }
+            return "application/json", json.dumps(payload, sort_keys=True)
+
+        raise ApiError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="VALIDATION_ERROR",
+            message="Unsupported export format.",
+        )
+
+    def _export_filename(self, title: str, export_format: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "document"
+        extension = {
+            "plain_text": "txt",
+            "markdown": "md",
+            "html": "html",
+            "json": "json",
+        }[export_format]
+        return f"{slug}.{extension}"
+
+    def _latest_version_reference(
+        self, document: Document
+    ) -> LatestVersionReference | None:
+        latest_version = document.latest_version
+        if latest_version is None:
+            return None
+        return LatestVersionReference(
+            version_id=latest_version.id,
+            revision=latest_version.version_number,
+        )
+
+    def _owner_response(self, document: Document) -> DocumentOwnerResponse:
+        return DocumentOwnerResponse(
+            user_id=document.owner.id,
+            display_name=document.owner.display_name,
+        )
+
+    def _to_document_create_response(
+        self,
+        document: Document,
+        *,
+        role: str,
+        revision: int,
+    ) -> DocumentCreateResponse:
+        latest_version = self._latest_version_reference(document)
         return DocumentCreateResponse(
             document_id=document.id,
             title=document.title,
             current_content=document.content,
             content_format=document.content_format,
+            owner=self._owner_response(document),
             owner_user_id=document.owner_id,
-            role="owner",
+            role=role,
             ai_enabled=document.ai_enabled,
+            revision=revision,
             latest_version_id=document.latest_version_id,
+            latest_version=latest_version,
             created_at=document.created_at,
             updated_at=document.updated_at,
         )
 
-    def _to_document_detail_response(self, document) -> DocumentDetailResponse:
+    def _to_document_detail_response(self, access: DocumentAccess) -> DocumentDetailResponse:
+        latest_version = self._latest_version_reference(access.document)
         return DocumentDetailResponse(
-            document_id=document.id,
-            title=document.title,
-            current_content=document.content,
-            content_format=document.content_format,
-            owner_user_id=document.owner_id,
-            role="owner",
-            ai_enabled=document.ai_enabled,
-            latest_version_id=document.latest_version_id,
-            updated_at=document.updated_at,
+            document_id=access.document.id,
+            title=access.document.title,
+            current_content=access.document.content,
+            content_format=access.document.content_format,
+            owner=self._owner_response(access.document),
+            owner_user_id=access.document.owner_id,
+            role=access.role,
+            ai_enabled=access.document.ai_enabled,
+            revision=access.current_revision,
+            latest_version_id=access.document.latest_version_id,
+            latest_version=latest_version,
+            created_at=access.document.created_at,
+            updated_at=access.document.updated_at,
         )

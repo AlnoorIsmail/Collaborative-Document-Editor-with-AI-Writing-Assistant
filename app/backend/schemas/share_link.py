@@ -2,7 +2,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ShareLinkCreateRequest(BaseModel):
-    document_id: str
+    document_id: str | int
     role: str
     require_sign_in: bool
     expires_at: str

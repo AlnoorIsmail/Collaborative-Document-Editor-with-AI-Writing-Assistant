@@ -27,7 +27,7 @@ def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
     status_code=status.HTTP_201_CREATED,
 )
 def grant_permission(
-    documentId: int,
+    documentId: str,
     payload: PermissionGrantRequest,
     current_user: User = Depends(get_current_authenticated_user),
     permission_service: PermissionService = Depends(get_permission_service),
@@ -43,8 +43,8 @@ def grant_permission(
     "/{documentId}/permissions/{permissionId}", status_code=status.HTTP_204_NO_CONTENT
 )
 def revoke_permission(
-    documentId: int,
-    permissionId: int,
+    documentId: str,
+    permissionId: str,
     current_user: User = Depends(get_current_authenticated_user),
     permission_service: PermissionService = Depends(get_permission_service),
 ) -> Response:

@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from fastapi import status
 
-from app.backend.core.contracts import parse_prefixed_id, prefixed_id, utc_now, utc_z
+from app.backend.core.contracts import parse_resource_id, prefixed_id, utc_now, utc_z
 from app.backend.core.errors import ApiError
 from app.backend.models.user import User
 from app.backend.repositories.document_repository import DocumentRepository
@@ -15,7 +15,7 @@ from app.backend.schemas.invitation import (
     InvitationCreateRequest,
     InvitationCreateResponse,
 )
-from app.backend.services.document_service import DocumentService
+from app.backend.services.access_service import DocumentAccessService
 
 INVITATION_EXPIRY_DAYS = 2
 
@@ -27,30 +27,34 @@ class InvitationService:
         invitation_repository: InvitationRepository,
         permission_repository: PermissionRepository,
         user_repository: UserRepository,
-    ):
+    ) -> None:
         self.document_repository = document_repository
         self.invitation_repository = invitation_repository
         self.permission_repository = permission_repository
         self.user_repository = user_repository
-        self.document_service = DocumentService(document_repository, None)
+        self.access_service = DocumentAccessService(
+            document_repository,
+            permission_repository,
+        )
 
     def send_invitation(
         self,
         *,
-        document_id: int,
+        document_id: str | int,
         payload: InvitationCreateRequest,
         current_user: User,
     ) -> InvitationCreateResponse:
-        document = self.document_repository.get_by_id(document_id)
-        self.document_service._ensure_owner_access(
-            document=document, current_user=current_user
+        access = self.access_service.require_owner_access(
+            document_id=document_id,
+            user_id=current_user.id,
         )
+        role = self.access_service.validate_role(payload.role)
 
         expires_at = utc_now() + timedelta(days=INVITATION_EXPIRY_DAYS)
         invitation = self.invitation_repository.create(
-            document_id=document.id,
+            document_id=access.document.id,
             email=payload.invited_email.lower(),
-            role=payload.role,
+            role=role,
             token=secrets.token_urlsafe(24),
             invited_by=current_user.id,
             expires_at=expires_at,
@@ -61,11 +65,12 @@ class InvitationService:
     def accept_invitation(
         self,
         *,
-        invitation_id: str,
+        invitation_id: str | int,
         current_user: User,
     ) -> InvitationAcceptResponse:
-        invitation_pk = parse_prefixed_id(invitation_id, "inv")
-        invitation = self.invitation_repository.get_by_id(invitation_pk)
+        invitation = self.invitation_repository.get_by_id(
+            parse_resource_id(invitation_id, "inv")
+        )
         if invitation is None:
             raise ApiError(
                 status_code=status.HTTP_404_NOT_FOUND,

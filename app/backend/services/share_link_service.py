@@ -3,7 +3,7 @@ import secrets
 from fastapi import status
 
 from app.backend.core.contracts import (
-    parse_prefixed_id,
+    parse_resource_id,
     parse_utc_datetime,
     prefixed_id,
     utc_now,
@@ -19,7 +19,7 @@ from app.backend.schemas.share_link import (
     ShareLinkCreateResponse,
     ShareLinkRedeemResponse,
 )
-from app.backend.services.document_service import DocumentService
+from app.backend.services.access_service import DocumentAccessService
 
 
 class ShareLinkService:
@@ -28,11 +28,14 @@ class ShareLinkService:
         document_repository: DocumentRepository,
         share_link_repository: ShareLinkRepository,
         permission_repository: PermissionRepository,
-    ):
+    ) -> None:
         self.document_repository = document_repository
         self.share_link_repository = share_link_repository
         self.permission_repository = permission_repository
-        self.document_service = DocumentService(document_repository, None)
+        self.access_service = DocumentAccessService(
+            document_repository,
+            permission_repository,
+        )
 
     def create_share_link(
         self,
@@ -40,17 +43,18 @@ class ShareLinkService:
         payload: ShareLinkCreateRequest,
         current_user: User,
     ) -> ShareLinkCreateResponse:
-        document_id = parse_prefixed_id(payload.document_id, "doc")
-        document = self.document_repository.get_by_id(document_id)
-        self.document_service._ensure_owner_access(
-            document=document, current_user=current_user
+        document_id = parse_resource_id(payload.document_id, "doc")
+        access = self.access_service.require_owner_access(
+            document_id=document_id,
+            user_id=current_user.id,
         )
 
         expires_at = parse_utc_datetime(payload.expires_at)
+        role = self.access_service.validate_role(payload.role)
         share_link = self.share_link_repository.create(
-            document_id=document.id,
+            document_id=access.document.id,
             token=secrets.token_urlsafe(18),
-            role=payload.role,
+            role=role,
             require_sign_in=payload.require_sign_in,
             expires_at=expires_at,
             created_by=current_user.id,

@@ -27,15 +27,28 @@ class DocumentContentSaveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class DocumentOwnerResponse(BaseModel):
+    user_id: int
+    display_name: str
+
+
+class LatestVersionReference(BaseModel):
+    version_id: int
+    revision: int
+
+
 class DocumentCreateResponse(BaseModel):
     document_id: int
     title: str
     current_content: str
     content_format: str
+    owner: DocumentOwnerResponse
     owner_user_id: int
     role: str
     ai_enabled: bool
+    revision: int
     latest_version_id: Optional[int]
+    latest_version: Optional[LatestVersionReference]
     created_at: datetime
     updated_at: datetime
 
@@ -45,10 +58,14 @@ class DocumentDetailResponse(BaseModel):
     title: str
     current_content: str
     content_format: str
+    owner: DocumentOwnerResponse
     owner_user_id: int
     role: str
     ai_enabled: bool
+    revision: int
     latest_version_id: Optional[int]
+    latest_version: Optional[LatestVersionReference]
+    created_at: datetime
     updated_at: datetime
 
 
@@ -56,6 +73,7 @@ class DocumentMetadataResponse(BaseModel):
     document_id: int
     title: str
     ai_enabled: bool
+    role: str
     updated_at: datetime
 
 
@@ -64,3 +82,20 @@ class DocumentContentSaveResponse(BaseModel):
     latest_version_id: int
     revision: int
     saved_at: datetime
+
+
+class DocumentExportRequest(BaseModel):
+    format: str = "plain_text"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DocumentExportResponse(BaseModel):
+    document_id: int
+    title: str
+    format: str
+    content_type: str
+    filename: str
+    exported_content: str
+    revision: int
+    exported_at: datetime

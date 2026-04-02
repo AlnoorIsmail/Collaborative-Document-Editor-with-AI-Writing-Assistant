@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import status
 
@@ -25,6 +26,17 @@ def parse_prefixed_id(value: str, prefix: str) -> int:
             error_code="VALIDATION_ERROR",
             message="Invalid identifier format.",
         ) from exc
+
+
+def parse_resource_id(value: Any, prefix: str) -> int:
+    if isinstance(value, int):
+        return value
+
+    raw_value = str(value).strip()
+    if raw_value.isdigit():
+        return int(raw_value)
+
+    return parse_prefixed_id(raw_value, prefix)
 
 
 def prefixed_id(prefix: str, value: int) -> str:

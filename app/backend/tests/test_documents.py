@@ -41,10 +41,16 @@ def test_create_document_success() -> None:
     assert response.json()["title"] == "My First Document"
     assert response.json()["current_content"] == "Hello world"
     assert response.json()["content_format"] == "rich_text"
+    assert response.json()["owner"] == {
+        "user_id": owner["user_id"],
+        "display_name": "Owner",
+    }
     assert response.json()["owner_user_id"] == owner["user_id"]
     assert response.json()["role"] == "owner"
     assert response.json()["ai_enabled"] is True
+    assert response.json()["revision"] == 0
     assert response.json()["latest_version_id"] is None
+    assert response.json()["latest_version"] is None
     assert response.json()["created_at"]
     assert response.json()["updated_at"]
 
@@ -68,9 +74,14 @@ def test_get_document_success() -> None:
     assert response.json()["document_id"] == document_id
     assert response.json()["title"] == "Readable Doc"
     assert response.json()["current_content"] == "Body"
+    assert response.json()["owner"] == {
+        "user_id": owner["user_id"],
+        "display_name": "Owner",
+    }
     assert response.json()["owner_user_id"] == owner["user_id"]
     assert response.json()["role"] == "owner"
-    assert "created_at" not in response.json()
+    assert response.json()["revision"] == 0
+    assert response.json()["created_at"]
 
 
 def test_update_document_success() -> None:
@@ -96,6 +107,7 @@ def test_update_document_success() -> None:
     assert response.json()["document_id"] == document_id
     assert response.json()["title"] == "Updated"
     assert response.json()["ai_enabled"] is False
+    assert response.json()["role"] == "owner"
     assert response.json()["updated_at"]
     assert "current_content" not in response.json()
 

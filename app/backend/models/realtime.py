@@ -7,5 +7,5 @@ from dataclasses import dataclass
 class RealtimeSessionRecord:
     session_id: str
     session_token: str
-    document_id: str
+    document_id: int
     revision: int

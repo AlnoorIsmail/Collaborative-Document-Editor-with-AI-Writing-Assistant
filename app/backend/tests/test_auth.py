@@ -11,7 +11,7 @@ EXPECTED_UNAUTHORIZED = {
 
 def test_sessions_route_requires_bearer_token(client) -> None:
     response = client.post(
-        "/v1/documents/doc_101/sessions",
+        "/v1/documents/1/sessions",
         json={"last_known_revision": 22},
     )
 
@@ -20,7 +20,7 @@ def test_sessions_route_requires_bearer_token(client) -> None:
 
 
 def test_ai_route_requires_bearer_token(client) -> None:
-    response = client.get("/v1/documents/doc_101/ai/interactions")
+    response = client.get("/v1/documents/1/ai/interactions")
 
     assert response.status_code == 401
     assert response.json() == EXPECTED_UNAUTHORIZED

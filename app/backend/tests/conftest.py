@@ -60,5 +60,20 @@ def client() -> Iterator[TestClient]:
 
 
 @pytest.fixture
-def auth_headers() -> dict[str, str]:
-    return {"Authorization": "Bearer usr_test:editor"}
+def auth_headers(client) -> dict[str, str]:
+    client.post(
+        "/v1/auth/register",
+        json={
+            "email": "fixture@example.com",
+            "display_name": "Fixture User",
+            "password": "strong-password",
+        },
+    )
+    login_response = client.post(
+        "/v1/auth/login",
+        json={
+            "email": "fixture@example.com",
+            "password": "strong-password",
+        },
+    )
+    return {"Authorization": f"Bearer {login_response.json()['access_token']}"}

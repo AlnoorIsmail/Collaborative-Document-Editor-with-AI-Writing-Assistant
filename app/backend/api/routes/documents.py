@@ -5,6 +5,7 @@ from app.backend.api.routes.auth import get_current_authenticated_user
 from app.backend.core.database import get_db
 from app.backend.models.user import User
 from app.backend.repositories.document_repository import DocumentRepository
+from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.version_repository import VersionRepository
 from app.backend.schemas.document import (
     DocumentContentSaveRequest,
@@ -12,6 +13,8 @@ from app.backend.schemas.document import (
     DocumentCreate,
     DocumentCreateResponse,
     DocumentDetailResponse,
+    DocumentExportRequest,
+    DocumentExportResponse,
     DocumentMetadataResponse,
     DocumentUpdate,
 )
@@ -21,7 +24,11 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 def get_document_service(db: Session = Depends(get_db)) -> DocumentService:
-    return DocumentService(DocumentRepository(db), VersionRepository(db))
+    return DocumentService(
+        DocumentRepository(db),
+        VersionRepository(db),
+        PermissionRepository(db),
+    )
 
 
 @router.post(
@@ -37,7 +44,7 @@ def create_document(
 
 @router.get("/{documentId}", response_model=DocumentDetailResponse)
 def get_document(
-    documentId: int,
+    documentId: str,
     current_user: User = Depends(get_current_authenticated_user),
     document_service: DocumentService = Depends(get_document_service),
 ) -> DocumentDetailResponse:
@@ -48,7 +55,7 @@ def get_document(
 
 @router.patch("/{documentId}", response_model=DocumentMetadataResponse)
 def update_document(
-    documentId: int,
+    documentId: str,
     payload: DocumentUpdate,
     current_user: User = Depends(get_current_authenticated_user),
     document_service: DocumentService = Depends(get_document_service),
@@ -62,12 +69,26 @@ def update_document(
 
 @router.patch("/{documentId}/content", response_model=DocumentContentSaveResponse)
 def save_document_content(
-    documentId: int,
+    documentId: str,
     payload: DocumentContentSaveRequest,
     current_user: User = Depends(get_current_authenticated_user),
     document_service: DocumentService = Depends(get_document_service),
 ) -> DocumentContentSaveResponse:
     return document_service.save_document_content(
+        document_id=documentId,
+        payload=payload,
+        current_user=current_user,
+    )
+
+
+@router.post("/{documentId}/export", response_model=DocumentExportResponse)
+def export_document(
+    documentId: str,
+    payload: DocumentExportRequest,
+    current_user: User = Depends(get_current_authenticated_user),
+    document_service: DocumentService = Depends(get_document_service),
+) -> DocumentExportResponse:
+    return document_service.export_document(
         document_id=documentId,
         payload=payload,
         current_user=current_user,

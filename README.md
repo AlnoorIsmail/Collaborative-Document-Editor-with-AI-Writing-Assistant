@@ -6,7 +6,7 @@ The goal of this PoC is to prove that (backend):
 
 - the FastAPI backend boots and exposes the expected API surface
 - a client can authenticate and communicate with the backend end to end
-- the request and response JSON contracts are stable in code
+- the main request and response shapes are represented in code
 - the project is organized using the layered backend structure from the architecture plan
 
 ## Frontend Scope
@@ -52,12 +52,14 @@ Some backend work was intentionally left incomplete because this is a proof of c
 - Full quota enforcement and persistent AI audit logging were not completed yet because they are production concerns beyond the minimum PoC requirement.
 - Reconnect, resync, and conflict handling are represented at the contract level, but not yet built out as a complete live synchronization engine.
 - Authentication is sufficient for PoC validation, but not yet hardened as a production auth system.
+- Linting workflows, formatting gates, and broader automated validation were intentionally left out for now. The priority in this PoC was proving the backend shape and core flows, not enforcing production-ready quality gates.
 
 ## What Is Intentionally Minimal
 
 - the focus is backend contract validation, not product completeness
 - realtime websocket transport is only represented by the session bootstrap contract, not a full live collaboration server
 - AI generation is mocked through a lightweight in-memory repository/provider seam
+- linting, CI automation, and stricter validation are deferred until after the PoC stage
 - some backend concerns are left as future work so the PoC stays small, testable, and aligned with the assignment scope
 
 ## Repository Shape
@@ -111,7 +113,7 @@ uvicorn app.backend.main:app --reload
 - OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
 - Health check: `http://127.0.0.1:8000/health`
 
-## Running the PoC Validation Tests
+## Optional PoC Checks
 
 From the repository root:
 
@@ -119,21 +121,27 @@ From the repository root:
 pytest app/backend/tests/test_poc_backend.py -q
 ```
 
-To run the full backend suite:
+If you want to run the full backend test suite locally, you still can:
 
 ```bash
 pytest app/backend/tests -q
 ```
 
-You can also run the same checks used by CI:
+There is no lint or CI workflow wired up at the moment. Ruff, Black, and broader validation were left out intentionally while the project stays in proof-of-concept mode.
 
-```bash
-ruff check app
-black --check app
-pytest app/backend/tests -q
-```
+## Suggested Demo Flow
 
-## Main Test File for the Assignment
+If you want a short manual demo without a frontend:
+
+1. Register a user.
+2. Log in and capture the bearer token.
+3. Create a document.
+4. Load the document back with `GET /v1/documents/{documentId}`.
+5. Save updated content with `PATCH /v1/documents/{documentId}/content`.
+6. Call the session bootstrap endpoint.
+7. Call the AI interaction endpoint and inspect the resulting suggestion detail.
+
+## Main Backend PoC File
 
 The most assignment-relevant backend validation is in:
 

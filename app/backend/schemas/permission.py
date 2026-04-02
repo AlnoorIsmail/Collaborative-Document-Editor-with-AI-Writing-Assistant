@@ -3,7 +3,7 @@ from pydantic import BaseModel, ConfigDict
 
 class PermissionGrantRequest(BaseModel):
     grantee_type: str
-    user_id: str
+    user_id: str | int
     role: str
     ai_allowed: bool
 
