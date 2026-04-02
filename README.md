@@ -1,150 +1,252 @@
-# Collaborative Document Editor Backend PoC
+# Collaborative Document Editor with AI Writing Assistant
 
-This repository contains a collaborative document editor project with both frontend and backend workstreams.
+This repository contains a collaborative document editor with:
 
-The goal of this PoC is to prove that (backend):
+- a FastAPI backend under `app/backend`
+- a React + Vite frontend under `app/frontend`
 
-- the FastAPI backend boots and exposes the expected API surface
-- a client can authenticate and communicate with the backend end to end
-- the main request and response shapes are represented in code
-- the project is organized using the layered backend structure from the architecture plan
+The current implementation is still PoC-sized, but it already supports an end-to-end flow for authentication, document creation/loading/saving, version history, sharing/invitations, session bootstrap, and suggestion-based AI actions.
 
-## Frontend Scope
+## Current Scope
 
+### Backend
 
+The backend exposes:
 
-## What the PoC Demonstrates
+- `POST /v1/auth/register`
+- `POST /v1/auth/login`
+- `GET /v1/auth/me`
+- `POST /v1/documents`
+- `GET /v1/documents/{documentId}`
+- `PATCH /v1/documents/{documentId}`
+- `PATCH /v1/documents/{documentId}/content`
+- version listing and restore endpoints
+- permissions, invitations, and share-link endpoints
+- realtime session bootstrap through `POST /v1/documents/{documentId}/sessions`
+- AI interaction and suggestion endpoints under `/v1/documents/{documentId}/ai/*` and `/v1/ai/*`
 
-- `POST /v1/auth/register` and `POST /v1/auth/login` for a minimal client session
-- `POST /v1/documents` to create a document
-- `GET /v1/documents/{documentId}` to load document content
-- `PATCH /v1/documents/{documentId}/content` to save content and create a version
-- `POST /v1/documents/{documentId}/sessions` for realtime session bootstrap contract validation
-- AI suggestion lifecycle contract coverage through:
-  - `POST /v1/documents/{documentId}/ai/interactions`
-  - `GET /v1/documents/{documentId}/ai/interactions`
-  - `GET /v1/ai/interactions/{interactionId}`
-  - `POST /v1/ai/suggestions/{suggestionId}/accept`
-  - `POST /v1/ai/suggestions/{suggestionId}/reject`
-  - `POST /v1/ai/suggestions/{suggestionId}/apply-edited`
+Key backend decisions:
 
-## Backend Decisions
+- FastAPI was kept as the API framework.
+- The code is organized as a layered modular monolith.
+- Route handlers stay thin; services hold orchestration logic; repositories handle persistence.
+- AI is suggestion-based only. It does not silently overwrite document content.
+- Realtime is represented as a session bootstrap contract, not a full websocket sync engine yet.
 
-These are the main backend decisions made for the PoC:
+### Frontend
 
-- `FastAPI` was kept as the backend framework to match the architecture requirement.
-- The backend was organized as a layered modular monolith under `app/backend/`.
-- Route handlers stay thin and mainly handle transport and dependency wiring.
-- Business behavior is pushed into `services/`.
-- Data access is kept in `repositories/`.
-- Request and response formats are defined with explicit Pydantic schemas in `schemas/`.
-- Realtime traffic is represented separately through the session bootstrap contract instead of mixing it into document CRUD routes.
-- AI remains suggestion-based, with separate interaction and suggestion endpoints rather than automatic document mutation.
-- The PoC uses lightweight stubbed repositories for realtime session bootstrapping and AI generation so the contracts can be validated without introducing a production-ready websocket server or live LLM dependency.
-- The backend package was moved under `app/backend` so the repository structure matches the decision to treat `app` as the application root folder.
+The frontend provides a single-page client that can:
 
-## What Was Left Out and Why
+- register and sign in
+- create a new document
+- load an existing document by ID
+- edit and save document content
+- show revision and latest-version information
+- bootstrap a realtime session and display the returned session metadata
+- call the backend AI endpoints for summarize and rewrite flows
+- accept an AI rewrite suggestion back into the document
 
-Some backend work was intentionally left incomplete because this is a proof of concept rather than a full implementation:
+The frontend talks to the backend using:
 
-- A true websocket collaboration server was not implemented yet. For the PoC, the important part was proving the session bootstrap contract and keeping realtime concerns separate from REST APIs.
-- AI calls are mocked instead of hitting a real provider. This keeps the PoC deterministic, testable, and free from external service dependencies.
-- Full quota enforcement and persistent AI audit logging were not completed yet because they are production concerns beyond the minimum PoC requirement.
-- Reconnect, resync, and conflict handling are represented at the contract level, but not yet built out as a complete live synchronization engine.
-- Authentication is sufficient for PoC validation, but not yet hardened as a production auth system.
-- Linting workflows, formatting gates, and broader automated validation were intentionally left out for now. The priority in this PoC was proving the backend shape and core flows, not enforcing production-ready quality gates.
+- `VITE_API_BASE_URL`
+- default value: `http://127.0.0.1:8000/v1`
 
-## What Is Intentionally Minimal
+## Requirements
 
-- the focus is backend contract validation, not product completeness
-- realtime websocket transport is only represented by the session bootstrap contract, not a full live collaboration server
-- AI generation is mocked through a lightweight in-memory repository/provider seam
-- linting, CI automation, and stricter validation are deferred until after the PoC stage
-- some backend concerns are left as future work so the PoC stays small, testable, and aligned with the assignment scope
+### Runtime requirements
 
-## Repository Shape
+- Python 3.11+ recommended
+- Node.js 24+ recommended
+- npm 11+ recommended
 
-The backend keeps the layered modular-monolith structure required by the architecture:
+Validated locally in this repository:
+
+- Python `3.12.7`
+- Node `v24.13.0`
+- npm `11.6.2`
+
+### Backend Python dependencies
+
+The backend dependencies are listed in `requirements.txt`:
+
+- `fastapi`
+- `uvicorn`
+- `sqlalchemy`
+- `pydantic-settings`
+- `pytest`
+- `httpx`
+- `black`
+- `ruff`
+
+Formatting/lint targets are configured in `pyproject.toml`. Black and Ruff currently target Python 3.11 syntax/style.
+
+### Frontend dependencies
+
+The frontend dependencies are defined in `app/frontend/package.json`. The main stack is:
+
+- `react`
+- `react-dom`
+- `vite`
+- `eslint`
+- `@vitejs/plugin-react`
+
+## Repository Layout
 
 ```text
-app/backend/
-├── api/routes        # transport layer only
-├── core              # config, auth, shared errors, db
-├── integrations      # external provider seams
-├── models            # persistence and internal records
-├── prompts           # prompt templates
-├── repositories      # data access
-├── realtime          # realtime event definitions
-├── schemas           # request/response contracts
-├── services          # business workflows
-└── tests             # route and service validation
+.
+├── README.md
+├── requirements.txt
+├── pyproject.toml
+├── .env.example
+└── app
+    ├── backend
+    │   ├── api
+    │   ├── core
+    │   ├── integrations
+    │   ├── models
+    │   ├── prompts
+    │   ├── repositories
+    │   ├── realtime
+    │   ├── schemas
+    │   ├── services
+    │   └── tests
+    └── frontend
+        ├── public
+        ├── src
+        ├── package.json
+        └── vite.config.js
 ```
 
-## Quick Start
+## Setup
 
-1. Create and activate a virtual environment.
+### 1. Backend setup
+
+Create and activate a virtual environment:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 ```
 
-2. Install the minimal dependencies.
+Install backend dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Optionally copy the example environment file.
+Optionally copy the example environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-4. Start the backend from the repository root.
+### 2. Frontend setup
+
+Install frontend dependencies:
+
+```bash
+cd app/frontend
+npm install
+```
+
+If you want the frontend to target a different backend URL, create an `.env` file inside `app/frontend` and set:
+
+```bash
+VITE_API_BASE_URL=http://127.0.0.1:8000/v1
+```
+
+## Running the project
+
+### Start the backend
+
+From the repository root:
 
 ```bash
 uvicorn app.backend.main:app --reload
 ```
 
-5. Open the generated docs or OpenAPI contract.
+Backend URLs:
 
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
 - Health check: `http://127.0.0.1:8000/health`
 
-## Optional PoC Checks
+### Start the frontend
 
-From the repository root:
+From `app/frontend`:
 
 ```bash
-pytest app/backend/tests/test_poc_backend.py -q
+npm run dev
 ```
 
-If you want to run the full backend test suite locally, you still can:
+By default, Vite serves the frontend at:
+
+- `http://127.0.0.1:5173`
+
+## Verification
+
+The repository was rechecked locally with:
+
+### Backend tests
 
 ```bash
 pytest app/backend/tests -q
 ```
 
-There is no lint or CI workflow wired up at the moment. Ruff, Black, and broader validation were left out intentionally while the project stays in proof-of-concept mode.
+Result:
 
-## Suggested Demo Flow
+- `51 passed`
 
-If you want a short manual demo without a frontend:
+### Frontend lint
+
+```bash
+cd app/frontend
+npm run lint
+```
+
+### Frontend production build
+
+```bash
+cd app/frontend
+npm run build
+```
+
+## Suggested demo flow
+
+### Through the frontend
+
+1. Start the backend.
+2. Start the frontend.
+3. Register a user.
+4. Create a document.
+5. Edit and save the content.
+6. Run a summary or rewrite AI action.
+7. Accept a rewrite suggestion back into the document.
+
+### Through the API only
 
 1. Register a user.
 2. Log in and capture the bearer token.
 3. Create a document.
-4. Load the document back with `GET /v1/documents/{documentId}`.
-5. Save updated content with `PATCH /v1/documents/{documentId}/content`.
+4. Load it back with `GET /v1/documents/{documentId}`.
+5. Save content with `PATCH /v1/documents/{documentId}/content`.
 6. Call the session bootstrap endpoint.
-7. Call the AI interaction endpoint and inspect the resulting suggestion detail.
+7. Call the AI interaction endpoint and inspect the suggestion detail.
 
-## Main Backend PoC File
+## Intentionally minimal / future work
 
-The most assignment-relevant backend validation is in:
+This is still a proof-of-concept implementation. A few things are intentionally not production-complete yet:
+
+- realtime collaboration is represented by a bootstrap contract, not a full live sync server
+- AI provider integration is stub-friendly and remains suggestion-based
+- reconnect/resync and conflict-resolution behavior are not a complete collaboration engine yet
+- auth is suitable for PoC validation but not fully hardened for production deployment
+- broader CI and release automation are still minimal
+
+## Main backend validation file
+
+The most assignment-relevant backend contract coverage lives in:
 
 - `app/backend/tests/test_poc_backend.py`
 
-That file checks that a client can authenticate, create/load/save a document, bootstrap a realtime session, and exercise the AI contract flow with the expected JSON shapes.
+That test exercises authentication, document create/load/save, realtime session bootstrap, and the AI contract flow end to end.
