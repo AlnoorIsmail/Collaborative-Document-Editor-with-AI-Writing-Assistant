@@ -6,6 +6,29 @@ import re
 
 import httpx
 
+COMMON_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    (r"\bcan't\b", "cannot"),
+    (r"\bcant\b", "cannot"),
+    (r"\bwon't\b", "will not"),
+    (r"\bwont\b", "will not"),
+    (r"\bdon't\b", "do not"),
+    (r"\bdont\b", "do not"),
+    (r"\bi'm\b", "I am"),
+    (r"\bim\b", "I am"),
+    (r"\bit's\b", "it is"),
+)
+
+FORMAL_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    (r"\bi cannot attend\b", "I am unable to attend"),
+    (r"\bbecause I am sick\b", "because I am unwell"),
+    (
+        r"\bplease send me the notes after\b",
+        "please share the notes with me afterward",
+    ),
+    (r"\bplease send me notes after\b", "please share the notes with me afterward"),
+    (r"\bplease send me notes\b", "please share the notes with me"),
+)
+
 
 class AIProviderTimeoutError(Exception):
     pass
@@ -40,43 +63,92 @@ class StubAIProviderClient(AIProviderClient):
                 model_name="local-summary-fallback",
             )
 
-        del prompt
         return GeneratedSuggestion(
-            generated_output="More formal rewritten paragraph",
-            model_name="gpt-x",
+            generated_output=self._rewrite(prompt),
+            model_name="local-rewrite-fallback",
         )
 
     def _summarize(self, prompt: str) -> str:
-        source_text = (
-            self._extract_section(prompt, "DOCUMENT_TEXT")
-            or self._extract_section(prompt, "ADDITIONAL_CONTEXT")
-            or prompt
-        )
-        normalized = " ".join(source_text.split())
-
-        if not normalized or normalized == "Not provided.":
+        source_text = self._extract_source_text(prompt)
+        if not source_text:
             return "No document content was available to summarize."
 
-        sentences = [
-            sentence.strip()
-            for sentence in re.split(r"(?<=[.!?])\s+", normalized)
-            if sentence.strip()
-        ]
+        polished = self._polish_text(source_text)
+        sentences = self._split_sentences(polished)
         if not sentences:
-            return normalized
+            return polished
 
         selected_sentences: list[str] = []
         total_words = 0
         for sentence in sentences:
             selected_sentences.append(sentence)
             total_words += len(sentence.split())
-            if len(selected_sentences) >= 3 or total_words >= 60:
+            if len(selected_sentences) >= 2 or total_words >= 40:
                 break
 
         summary = " ".join(selected_sentences)
-        if summary == normalized:
-            return summary
-        return f"{summary}..."
+        return summary.strip()
+
+    def _rewrite(self, prompt: str) -> str:
+        source_text = self._extract_source_text(prompt)
+        if not source_text:
+            return "No document content was available to rewrite."
+
+        instruction = self._extract_instruction(prompt).lower()
+        use_formal_tone = any(
+            keyword in instruction
+            for keyword in ("formal", "professional", "polish", "clear")
+        )
+        return self._polish_text(source_text, formal=use_formal_tone)
+
+    def _extract_source_text(self, prompt: str) -> str:
+        source_text = (
+            self._extract_section(prompt, "DOCUMENT_TEXT")
+            or self._extract_section(prompt, "ADDITIONAL_CONTEXT")
+            or prompt
+        )
+        normalized = " ".join(source_text.split())
+        if not normalized or normalized == "Not provided.":
+            return ""
+        return normalized
+
+    def _extract_instruction(self, prompt: str) -> str:
+        return (
+            self._extract_section(prompt, "USER_INSTRUCTION")
+            or self._extract_section(prompt, "FOCUS_INSTRUCTION")
+            or ""
+        )
+
+    def _polish_text(self, text: str, *, formal: bool = False) -> str:
+        polished = text.strip()
+        for pattern, replacement in COMMON_REPLACEMENTS:
+            polished = re.sub(pattern, replacement, polished, flags=re.IGNORECASE)
+
+        polished = re.sub(r"\bi\b", "I", polished, flags=re.IGNORECASE)
+
+        if formal:
+            for pattern, replacement in FORMAL_REPLACEMENTS:
+                polished = re.sub(pattern, replacement, polished, flags=re.IGNORECASE)
+
+        sentences = self._split_sentences(polished)
+        if not sentences:
+            return polished
+        return " ".join(self._sentence_case(sentence) for sentence in sentences)
+
+    def _split_sentences(self, text: str) -> list[str]:
+        return [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", text)
+            if sentence.strip()
+        ]
+
+    def _sentence_case(self, sentence: str) -> str:
+        normalized = " ".join(sentence.split()).strip()
+        if not normalized:
+            return ""
+        if normalized[-1] not in ".!?":
+            normalized += "."
+        return normalized[0].upper() + normalized[1:]
 
     def _extract_section(self, prompt: str, label: str) -> str:
         pattern = rf"{label}:\n(.*?)(?:\n[A-Z_]+:\n|\Z)"

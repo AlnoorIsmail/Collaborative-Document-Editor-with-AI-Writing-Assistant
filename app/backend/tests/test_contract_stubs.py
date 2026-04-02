@@ -122,8 +122,8 @@ def test_get_ai_interaction_returns_suggestion_stub(client, auth_headers) -> Non
         "base_revision": 0,
         "suggestion": {
             "suggestion_id": "sug_1",
-            "generated_output": "More formal rewritten paragraph",
-            "model_name": "gpt-x",
+            "generated_output": "Original selected paragraph.",
+            "model_name": "local-rewrite-fallback",
             "stale": False,
         },
     }
@@ -152,7 +152,7 @@ def test_accept_suggestion_returns_applied_contract(client, auth_headers) -> Non
         headers=auth_headers,
     )
     assert document_response.status_code == 200
-    assert document_response.json()["current_content"] == "More formal rewritten paragraph"
+    assert document_response.json()["current_content"] == "Original selected paragraph."
     assert document_response.json()["revision"] == 1
 
 

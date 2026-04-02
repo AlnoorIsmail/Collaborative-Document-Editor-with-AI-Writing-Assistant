@@ -219,8 +219,8 @@ def test_backend_poc_realtime_and_ai_contracts(client) -> None:
         "base_revision": 0,
         "suggestion": {
             "suggestion_id": "sug_1",
-            "generated_output": "More formal rewritten paragraph",
-            "model_name": "gpt-x",
+            "generated_output": "First draft.",
+            "model_name": "local-rewrite-fallback",
             "stale": False,
         },
     }
