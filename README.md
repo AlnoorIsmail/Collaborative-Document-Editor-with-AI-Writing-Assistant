@@ -211,37 +211,20 @@ cd app/frontend
 npm run build
 ```
 
-## Suggested demo flow
-
-### Through the frontend
-
-1. Start the backend.
-2. Start the frontend.
-3. Register a user.
-4. Create a document.
-5. Edit and save the content.
-6. Run a summary or rewrite AI action.
-7. Accept a rewrite suggestion back into the document.
-
-### Through the API only
-
-1. Register a user.
-2. Log in and capture the bearer token.
-3. Create a document.
-4. Load it back with `GET /v1/documents/{documentId}`.
-5. Save content with `PATCH /v1/documents/{documentId}/content`.
-6. Call the session bootstrap endpoint.
-7. Call the AI interaction endpoint and inspect the suggestion detail.
 
 ## Intentionally minimal / future work
 
 This is still a proof-of-concept implementation. A few things are intentionally not production-complete yet:
 
-- realtime collaboration is represented by a bootstrap contract, not a full live sync server
-- AI provider integration is stub-friendly and remains suggestion-based
 - reconnect/resync and conflict-resolution behavior are not a complete collaboration engine yet
 - auth is suitable for PoC validation but not fully hardened for production deployment
 - broader CI and release automation are still minimal
+- Fully functional AI chat, that is personalized and customizable
+- Real-time collaboration was left at the session-bootstrap level. The app can create/join a collaboration session, but full live synchronization, presence, cursors, and conflict-free multi-user editing over websockets were intentionally deferred.
+- The AI assistant was implemented as a suggestion-based workflow, but production-grade AI concerns were left minimal. The system supports summarize/rewrite flows, and can use a fallback local provider, but streaming responses, advanced retries, cost controls, persistent AI audit logs, and full provider hardening were not completed.
+- The frontend was intentionally kept as a single end-to-end client focused on proving backend connectivity and user flows, rather than a fully modular collaboration UI with separate live-editing, presence, and sharing interfaces.
+- Authentication and authorization were implemented enough for protected routes and document access control, but not hardened to production standards such as stronger session management, secret rotation, and broader security controls.
+- Sharing, invitations, versioning, and document editing are functional, but the project does not yet include production deployment concerns such as CI/CD pipelines, observability, monitoring, and large-scale load handling.
 
 ## Main backend validation file
 
