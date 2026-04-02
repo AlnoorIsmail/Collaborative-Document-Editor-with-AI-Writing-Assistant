@@ -15,12 +15,12 @@ EXPECTED_PATHS = {
     "/v1/invitations/{invitationId}/accept": {"post"},
     "/v1/share-links": {"post"},
     "/v1/share-links/{token}/redeem": {"post"},
-    "/v1/documents/{document_id}/sessions": {"post"},
-    "/v1/documents/{document_id}/ai/interactions": {"get", "post"},
-    "/v1/ai/interactions/{interaction_id}": {"get"},
-    "/v1/ai/suggestions/{suggestion_id}/accept": {"post"},
-    "/v1/ai/suggestions/{suggestion_id}/reject": {"post"},
-    "/v1/ai/suggestions/{suggestion_id}/apply-edited": {"post"},
+    "/v1/documents/{documentId}/sessions": {"post"},
+    "/v1/documents/{documentId}/ai/interactions": {"get", "post"},
+    "/v1/ai/interactions/{interactionId}": {"get"},
+    "/v1/ai/suggestions/{suggestionId}/accept": {"post"},
+    "/v1/ai/suggestions/{suggestionId}/reject": {"post"},
+    "/v1/ai/suggestions/{suggestionId}/apply-edited": {"post"},
     "/health": {"get"},
 }
 

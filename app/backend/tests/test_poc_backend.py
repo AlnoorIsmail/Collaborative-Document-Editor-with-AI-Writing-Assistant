@@ -5,7 +5,7 @@ end to end by a client and that the JSON contracts stay stable.
 """
 
 
-def register_and_login(client) -> str:
+def register_and_login(client) -> tuple[str, int]:
     register_response = client.post(
         "/v1/auth/register",
         json={
@@ -24,11 +24,12 @@ def register_and_login(client) -> str:
         },
     )
     assert login_response.status_code == 200
-    return login_response.json()["access_token"]
+    body = login_response.json()
+    return body["access_token"], body["user"]["user_id"]
 
 
 def test_backend_poc_document_flow_contracts(client) -> None:
-    token = register_and_login(client)
+    token, user_id = register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
 
     create_response = client.post(
@@ -49,19 +50,29 @@ def test_backend_poc_document_flow_contracts(client) -> None:
         "title",
         "current_content",
         "content_format",
+        "owner",
         "owner_user_id",
         "role",
         "ai_enabled",
+        "revision",
         "latest_version_id",
+        "latest_version",
         "created_at",
         "updated_at",
     }
     assert create_body["title"] == "PoC Document"
     assert create_body["current_content"] == "First draft"
     assert create_body["content_format"] == "plain_text"
+    assert create_body["owner"] == {
+        "user_id": user_id,
+        "display_name": "PoC User",
+    }
+    assert create_body["owner_user_id"] == user_id
     assert create_body["role"] == "owner"
     assert create_body["ai_enabled"] is True
+    assert create_body["revision"] == 0
     assert create_body["latest_version_id"] is None
+    assert create_body["latest_version"] is None
 
     document_id = create_body["document_id"]
 
@@ -77,15 +88,26 @@ def test_backend_poc_document_flow_contracts(client) -> None:
         "title",
         "current_content",
         "content_format",
+        "owner",
         "owner_user_id",
         "role",
         "ai_enabled",
+        "revision",
         "latest_version_id",
+        "latest_version",
+        "created_at",
         "updated_at",
     }
     assert get_body["document_id"] == document_id
     assert get_body["title"] == "PoC Document"
     assert get_body["current_content"] == "First draft"
+    assert get_body["owner"] == {
+        "user_id": user_id,
+        "display_name": "PoC User",
+    }
+    assert get_body["owner_user_id"] == user_id
+    assert get_body["revision"] == 0
+    assert get_body["latest_version"] is None
 
     save_response = client.patch(
         f"/v1/documents/{document_id}/content",
@@ -107,15 +129,16 @@ def test_backend_poc_document_flow_contracts(client) -> None:
 
 
 def test_backend_poc_realtime_and_ai_contracts(client) -> None:
-    token = register_and_login(client)
+    token, user_id = register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
+    initial_content = "First draft"
 
     document_response = client.post(
         "/v1/documents",
         headers=headers,
         json={
             "title": "Realtime Contract Doc",
-            "initial_content": "",
+            "initial_content": initial_content,
         },
     )
     document_id = document_response.json()["document_id"]
@@ -135,7 +158,7 @@ def test_backend_poc_realtime_and_ai_contracts(client) -> None:
         "revision",
         "realtime_url",
     }
-    assert session_body["document_id"] == str(document_id)
+    assert session_body["document_id"] == document_id
     assert session_body["revision"] == 0
 
     create_ai_response = client.post(
@@ -163,7 +186,7 @@ def test_backend_poc_realtime_and_ai_contracts(client) -> None:
         "created_at",
     }
     assert create_ai_body["status"] == "pending"
-    assert create_ai_body["document_id"] == str(document_id)
+    assert create_ai_body["document_id"] == document_id
     assert create_ai_body["base_revision"] == 0
 
     list_ai_response = client.get(
@@ -177,7 +200,7 @@ def test_backend_poc_realtime_and_ai_contracts(client) -> None:
     assert list_ai_body[0] == {
         "interaction_id": create_ai_body["interaction_id"],
         "feature_type": "rewrite",
-        "user_id": "usr_1",
+        "user_id": user_id,
         "status": "completed",
         "created_at": create_ai_body["created_at"],
     }
@@ -192,7 +215,7 @@ def test_backend_poc_realtime_and_ai_contracts(client) -> None:
     assert detail_body == {
         "interaction_id": create_ai_body["interaction_id"],
         "status": "completed",
-        "document_id": str(document_id),
+        "document_id": document_id,
         "base_revision": 0,
         "suggestion": {
             "suggestion_id": "sug_1",
@@ -203,14 +226,14 @@ def test_backend_poc_realtime_and_ai_contracts(client) -> None:
     }
 
     accept_response = client.post(
-        "/v1/ai/suggestions/sug_1/accept",
+        f"/v1/ai/suggestions/{detail_body['suggestion']['suggestion_id']}/accept",
         headers=headers,
-        json={"apply_to_range": {"start": 0, "end": 11}},
+        json={"apply_to_range": {"start": 0, "end": len(initial_content)}},
     )
 
     assert accept_response.status_code == 200
     assert accept_response.json() == {
-        "suggestion_id": "sug_1",
+        "suggestion_id": detail_body["suggestion"]["suggestion_id"],
         "outcome": "accepted",
         "applied": True,
         "new_revision": 1,
