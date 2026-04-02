@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import "./App.css";
 
 const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL || "/v1"
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/v1"
 ).replace(/\/$/, "");
 
 const SESSION_STORAGE_KEY = "collabowrite.session";
@@ -56,15 +56,24 @@ function wait(ms) {
 }
 
 async function apiRequest(path, { method = "GET", body, token } = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method,
-    headers: {
-      Accept: "application/json",
-      ...(body ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let response;
+
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers: {
+        Accept: "application/json",
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (error) {
+    const message = `Cannot reach backend at ${API_BASE}. Make sure FastAPI is running.`;
+    const requestError = new Error(message);
+    requestError.cause = error;
+    throw requestError;
+  }
 
   const raw = await response.text();
   let data = null;
