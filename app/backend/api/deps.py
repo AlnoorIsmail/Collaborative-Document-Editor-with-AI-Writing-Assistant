@@ -14,7 +14,11 @@ from app.backend.core.security import (
     bearer_scheme,
     get_principal_from_credentials,
 )
-from app.backend.integrations.ai_provider import AIProviderClient, StubAIProviderClient
+from app.backend.integrations.ai_provider import (
+    AIProviderClient,
+    OpenAICompatibleAIProviderClient,
+    StubAIProviderClient,
+)
 from app.backend.repositories.ai import AIRepository, StubAIRepository
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
@@ -44,6 +48,14 @@ def get_ai_repository() -> AIRepository:
 
 @lru_cache
 def get_ai_provider() -> AIProviderClient:
+    settings = get_settings()
+    if settings.ai_api_key.strip() and settings.ai_api_url.strip():
+        return OpenAICompatibleAIProviderClient(
+            api_key=settings.ai_api_key,
+            api_url=settings.ai_api_url,
+            model_name=settings.ai_model,
+            timeout_seconds=settings.ai_request_timeout_seconds,
+        )
     return StubAIProviderClient()
 
 

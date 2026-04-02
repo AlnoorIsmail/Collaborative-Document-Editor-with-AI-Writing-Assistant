@@ -30,6 +30,7 @@ from app.backend.schemas.ai import (
 )
 from app.backend.schemas.common import ErrorCode, TextRange
 from app.backend.services.access_service import DocumentAccessService
+from app.backend.services.ai.prompt_builder import PromptTemplateRenderer
 
 AI_INTERACTION_QUOTA_PER_DOCUMENT_USER = 25
 
@@ -43,11 +44,13 @@ class AIService:
         document_repository: DocumentRepository,
         permission_repository: PermissionRepository,
         version_repository: VersionRepository,
+        prompt_renderer: PromptTemplateRenderer | None = None,
     ) -> None:
         self._repository = repository
         self._provider = provider
         self._document_repository = document_repository
         self._version_repository = version_repository
+        self._prompt_renderer = prompt_renderer or PromptTemplateRenderer()
         self._access_service = DocumentAccessService(
             document_repository,
             permission_repository,
@@ -72,9 +75,10 @@ class AIService:
         self._ensure_quota(document_id=access.document.id, user_id=user_id)
 
         try:
+            prompt = self._prompt_renderer.render(payload)
             suggestion = self._provider.generate_suggestion(
                 feature_type=payload.feature_type,
-                prompt=self._build_prompt(payload),
+                prompt=prompt,
             )
         except AIProviderTimeoutError as exc:
             raise AppError(
@@ -296,21 +300,6 @@ class AIService:
                 error_code=ErrorCode.UNAUTHORIZED,
                 message="Missing or invalid bearer token.",
             ) from exc
-
-    def _build_prompt(self, payload: AIInteractionCreateRequest) -> str:
-        parts = [
-            f"feature_type: {payload.feature_type}",
-            f"scope_type: {payload.scope_type}",
-        ]
-        if payload.selected_text_snapshot:
-            parts.append(f"selected_text: {payload.selected_text_snapshot}")
-        if payload.surrounding_context:
-            parts.append(f"context: {payload.surrounding_context}")
-        if payload.user_instruction:
-            parts.append(f"instruction: {payload.user_instruction}")
-        if payload.parameters:
-            parts.append(f"parameters: {payload.parameters}")
-        return "\n".join(parts)
 
     def _ensure_matching_revision(
         self,

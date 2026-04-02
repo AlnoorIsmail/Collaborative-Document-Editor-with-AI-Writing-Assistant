@@ -24,8 +24,18 @@ class Settings(BaseSettings):
     secret_key: str = "change-me"
     access_token_expire_minutes: int = 60
     algorithm: str = "HS256"
+    ai_api_key: str = ""
+    ai_api_url: str = ""
+    ai_model: str = "gpt-4o-mini"
+    ai_request_timeout_seconds: float = 30.0
     allowed_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3000"]
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:4173",
+            "http://127.0.0.1:4173",
+        ]
     )
 
     @property

@@ -2,6 +2,9 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import re
+
+import httpx
 
 
 class AIProviderTimeoutError(Exception):
@@ -30,9 +33,154 @@ class StubAIProviderClient(AIProviderClient):
     def generate_suggestion(
         self, *, feature_type: str, prompt: str
     ) -> GeneratedSuggestion:
-        # TODO: Replace with provider-specific retry, timeout, and error mapping logic.
-        del feature_type, prompt
+        normalized_feature = feature_type.strip().lower()
+        if normalized_feature == "summarize":
+            return GeneratedSuggestion(
+                generated_output=self._summarize(prompt),
+                model_name="local-summary-fallback",
+            )
+
+        del prompt
         return GeneratedSuggestion(
             generated_output="More formal rewritten paragraph",
             model_name="gpt-x",
         )
+
+    def _summarize(self, prompt: str) -> str:
+        source_text = (
+            self._extract_section(prompt, "DOCUMENT_TEXT")
+            or self._extract_section(prompt, "ADDITIONAL_CONTEXT")
+            or prompt
+        )
+        normalized = " ".join(source_text.split())
+
+        if not normalized or normalized == "Not provided.":
+            return "No document content was available to summarize."
+
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", normalized)
+            if sentence.strip()
+        ]
+        if not sentences:
+            return normalized
+
+        selected_sentences: list[str] = []
+        total_words = 0
+        for sentence in sentences:
+            selected_sentences.append(sentence)
+            total_words += len(sentence.split())
+            if len(selected_sentences) >= 3 or total_words >= 60:
+                break
+
+        summary = " ".join(selected_sentences)
+        if summary == normalized:
+            return summary
+        return f"{summary}..."
+
+    def _extract_section(self, prompt: str, label: str) -> str:
+        pattern = rf"{label}:\n(.*?)(?:\n[A-Z_]+:\n|\Z)"
+        match = re.search(pattern, prompt, flags=re.DOTALL)
+        if not match:
+            return ""
+        return match.group(1).strip()
+
+
+class OpenAICompatibleAIProviderClient(AIProviderClient):
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        api_url: str,
+        model_name: str,
+        timeout_seconds: float,
+    ) -> None:
+        self._api_key = api_key.strip()
+        self._api_url = api_url.strip()
+        self._model_name = model_name.strip()
+        self._timeout_seconds = timeout_seconds
+
+    def generate_suggestion(
+        self, *, feature_type: str, prompt: str
+    ) -> GeneratedSuggestion:
+        try:
+            with httpx.Client(timeout=self._timeout_seconds) as client:
+                response = client.post(
+                    self._api_url,
+                    headers={
+                        "Authorization": f"Bearer {self._api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self._model_name,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": self._system_instruction(feature_type),
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt,
+                            },
+                        ],
+                        "temperature": 0.2,
+                    },
+                )
+        except httpx.TimeoutException as exc:
+            raise AIProviderTimeoutError from exc
+        except httpx.RequestError as exc:
+            raise AIProviderUnavailableError from exc
+
+        if response.status_code >= 500:
+            raise AIProviderUnavailableError
+        if response.status_code >= 400:
+            raise AIProviderUnavailableError
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise AIProviderUnavailableError from exc
+
+        generated_output = self._extract_message_text(payload)
+        if not generated_output:
+            raise AIProviderUnavailableError
+
+        return GeneratedSuggestion(
+            generated_output=generated_output,
+            model_name=str(payload.get("model") or self._model_name),
+        )
+
+    def _system_instruction(self, feature_type: str) -> str:
+        normalized_feature = feature_type.strip().lower()
+        if normalized_feature == "summarize":
+            return (
+                "You summarize collaborative documents. Respond with the summary only, "
+                "without markdown or meta commentary."
+            )
+
+        return (
+            "You are a collaborative writing assistant. Respond with the requested "
+            "suggestion text only, without markdown or meta commentary."
+        )
+
+    def _extract_message_text(self, payload: dict) -> str:
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return ""
+
+        message = choices[0].get("message", {})
+        content = message.get("content", "")
+
+        if isinstance(content, str):
+            return content.strip()
+
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+            return "\n".join(parts).strip()
+
+        return ""
