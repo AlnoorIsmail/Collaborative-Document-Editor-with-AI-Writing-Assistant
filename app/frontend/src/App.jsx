@@ -64,27 +64,91 @@ export default function App() {
       setStatusFor("error", "Failed to save");
     }
   };
-
   const runAI = async () => {
-    if (!instruction.trim()) return;
-    setSparkle(true);
-    setAiLoading(true);
-    setAiOutput("");
+  if (!instruction.trim()) return;
+  if (!docId) {
+    setStatusFor("error", "Create or load a document first");
+    return;
+  }
 
-    try {
-      const res = await fetch(`${API_BASE}/ai/suggest`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, instruction }),
-      });
-      const data = await res.json();
-      setAiOutput(data.suggestion || data.result || JSON.stringify(data));
-    } catch {
-      setAiOutput("AI service unavailable — this is a placeholder.");
+  setSparkle(true);
+  setAiLoading(true);
+  setAiOutput("");
+  setStatusFor("loading", "Requesting AI suggestion...");
+
+  try {
+    const createRes = await fetch(`${API_BASE}/documents/${docId}/ai/interactions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Add Authorization here later if backend requires it
+        // "Authorization": `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        feature_type: "rewrite",
+        scope_type: "document",
+        selected_range: null,
+        selected_text_snapshot: content || null,
+        surrounding_context: null,
+        user_instruction: instruction,
+        base_revision: 0,
+        parameters: {}
+      }),
+    });
+
+    if (!createRes.ok) {
+      throw new Error(`Failed to create AI interaction: ${createRes.status}`);
     }
 
+    const interactionData = await createRes.json();
+    const interactionId = interactionData.interaction_id;
+
+    let detailData = null;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    while (attempts < maxAttempts) {
+      const detailRes = await fetch(`${API_BASE}/ai/interactions/${interactionId}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          // Add Authorization here later if backend requires it
+          // "Authorization": `Bearer ${token}`,
+        },
+      });
+
+      if (!detailRes.ok) {
+        throw new Error(`Failed to fetch AI result: ${detailRes.status}`);
+      }
+
+      detailData = await detailRes.json();
+
+      if (detailData.status === "completed" && detailData.suggestion) {
+        setAiOutput(detailData.suggestion.generated_output);
+        setStatusFor("success", "AI suggestion ready");
+        break;
+      }
+
+      if (detailData.status === "failed") {
+        throw new Error("AI interaction failed");
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      attempts += 1;
+    }
+
+    if (!detailData || detailData.status !== "completed") {
+      setAiOutput("AI is still processing or no suggestion was returned yet.");
+      setStatusFor("error", "AI result not ready");
+    }
+  } catch (error) {
+    console.error(error);
+    setAiOutput("AI service unavailable or request failed.");
+    setStatusFor("error", "Failed to run AI");
+  } finally {
     setAiLoading(false);
-  };
+  }
+};
 
   const applySuggestion = () => {
     if (aiOutput) setContent(aiOutput);
