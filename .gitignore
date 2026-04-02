@@ -3,6 +3,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.pyc
+*.log
+.coverage
+.coverage.*
+.venv/
+venv/
 .env
 dist/
 collab_editor.db
