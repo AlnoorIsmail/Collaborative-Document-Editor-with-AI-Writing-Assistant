@@ -761,7 +761,6 @@ export default function App() {
           <div className="ai-header ai-header-glam">
             <span className="ai-icon">◈</span>
             <div>
-              <div className="ai-title">Backend-connected AI workspace</div>
               <div className="ai-subtitle">
                 Auth · Documents · Versions · Summaries · Suggestions
               </div>
