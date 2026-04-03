@@ -1,17 +1,17 @@
 # Collaborative Document Editor with AI Writing Assistant
 
-This repository contains a collaborative document editor with:
+This repository contains a proof-of-concept collaborative document editor with:
 
-- a FastAPI backend under `app/backend`
-- a React + Vite frontend under `app/frontend`
+- a FastAPI backend in `app/backend`
+- a React + Vite frontend in `app/frontend`
 
-The current implementation is still PoC-sized, but it already supports an end-to-end flow for authentication, document creation/loading/saving, version history, sharing/invitations, session bootstrap, and suggestion-based AI actions.
+The current repo supports an end-to-end flow for authentication, document creation/loading/saving, version history, permissions and sharing APIs, realtime session bootstrap, and suggestion-based AI actions.
 
 ## Current Scope
 
 ### Backend
 
-The backend exposes:
+The backend currently exposes:
 
 - `POST /v1/auth/register`
 - `POST /v1/auth/login`
@@ -20,22 +20,30 @@ The backend exposes:
 - `GET /v1/documents/{documentId}`
 - `PATCH /v1/documents/{documentId}`
 - `PATCH /v1/documents/{documentId}/content`
-- version listing and restore endpoints
-- permissions, invitations, and share-link endpoints
-- realtime session bootstrap through `POST /v1/documents/{documentId}/sessions`
+- `POST /v1/documents/{documentId}/export`
+- `GET /v1/documents/{documentId}/versions`
+- `POST /v1/documents/{documentId}/versions/{versionId}/restore`
+- `POST /v1/documents/{documentId}/permissions`
+- `DELETE /v1/documents/{documentId}/permissions/{permissionId}`
+- `POST /v1/documents/{documentId}/invitations`
+- `POST /v1/invitations/{invitationId}/accept`
+- `POST /v1/share-links`
+- `POST /v1/share-links/{token}/redeem`
+- `POST /v1/documents/{documentId}/sessions`
 - AI interaction and suggestion endpoints under `/v1/documents/{documentId}/ai/*` and `/v1/ai/*`
 
 Key backend decisions:
 
-- FastAPI was kept as the API framework.
+- FastAPI remains the API framework.
 - The code is organized as a layered modular monolith.
-- Route handlers stay thin; services hold orchestration logic; repositories handle persistence.
-- AI is suggestion-based only. It does not silently overwrite document content.
+- Route handlers stay thin, services orchestrate behavior, and repositories handle persistence.
+- AI is suggestion-based only and does not silently overwrite document content.
 - Realtime is represented as a session bootstrap contract, not a full websocket sync engine yet.
+- If `AI_COLLAB_AI_API_KEY` and `AI_COLLAB_AI_API_URL` are not set, the backend falls back to a local stub AI provider.
 
 ### Frontend
 
-The frontend provides a single-page client that can:
+The frontend is a single-page client that can:
 
 - register and sign in
 - create a new document
@@ -46,21 +54,16 @@ The frontend provides a single-page client that can:
 - call the backend AI endpoints for summarize and rewrite flows
 - accept an AI rewrite suggestion back into the document
 
-The frontend talks to the backend using:
+The frontend talks to the backend using `VITE_API_BASE_URL`, which defaults to `/v1`. In local Vite development, `/v1` is proxied to `http://127.0.0.1:8000`.
 
-- `VITE_API_BASE_URL`
-- default value: `/v1`
-- in local Vite development, `/v1` is proxied to `http://127.0.0.1:8000`
+Sharing, invitations, permissions management, and export are implemented at the API layer, but are not yet surfaced as dedicated UI workflows in the current frontend.
 
 ## Requirements
 
-### Runtime requirements
-
 - Python 3.11+ recommended
-- Node.js 24+ recommended
-- npm 11+ recommended
+- A recent Node.js and npm release compatible with Vite 8 and React 19
 
-Validated locally in this repository:
+Validated in this workspace on April 3, 2026:
 
 - Python `3.12.7`
 - Node `v24.13.0`
@@ -79,7 +82,7 @@ The backend dependencies are listed in `requirements.txt`:
 - `black`
 - `ruff`
 
-Formatting/lint targets are configured in `pyproject.toml`. Black and Ruff currently target Python 3.11 syntax/style.
+Formatting and linting targets are configured in `pyproject.toml`. Black and Ruff target Python 3.11 syntax/style.
 
 ### Frontend dependencies
 
@@ -96,9 +99,9 @@ The frontend dependencies are defined in `app/frontend/package.json`. The main s
 ```text
 .
 ├── README.md
+├── .env.example
 ├── requirements.txt
 ├── pyproject.toml
-├── .env.example
 └── app
     ├── backend
     │   ├── api
@@ -135,11 +138,13 @@ Install backend dependencies:
 pip install -r requirements.txt
 ```
 
-Optionally copy the example environment file:
+Copy the example backend environment file:
 
 ```bash
 cp .env.example .env
 ```
+
+If you leave `AI_COLLAB_AI_API_KEY` and `AI_COLLAB_AI_API_URL` empty, the backend will use the built-in stub AI provider.
 
 ### 2. Frontend setup
 
@@ -156,7 +161,7 @@ If you want the frontend to target a backend on a different origin, create an `.
 VITE_API_BASE_URL=http://127.0.0.1:8000/v1
 ```
 
-## Running the project
+## Running the Project
 
 ### Start the backend
 
@@ -180,57 +185,43 @@ From `app/frontend`:
 npm run dev
 ```
 
-By default, Vite serves the frontend at:
-
-- `http://127.0.0.1:5173`
+By default, Vite serves the frontend at `http://127.0.0.1:5173`.
 
 ## Verification
 
-The repository was rechecked locally with:
+Rechecked in this workspace on April 3, 2026 with:
 
-### Backend tests
+From the repository root:
 
 ```bash
 pytest app/backend/tests -q
 ```
 
-Result:
-
-- `51 passed`
-
-### Frontend lint
+From `app/frontend`:
 
 ```bash
-cd app/frontend
 npm run lint
-```
-
-### Frontend production build
-
-```bash
-cd app/frontend
 npm run build
 ```
 
+Result:
 
-## Intentionally minimal / future work
+- backend tests: `54 passed`
+- frontend lint: passed
+- frontend production build: passed
 
-This is still a proof-of-concept implementation. A few things are intentionally not production-complete yet:
+## Intentionally Minimal / Future Work
 
-- reconnect/resync and conflict-resolution behavior are not a complete collaboration engine yet
-- auth is suitable for PoC validation but not fully hardened for production deployment
-- broader CI and release automation are still minimal
-- Fully functional AI chat, that is personalized and customizable
-- Real-time collaboration was left at the session-bootstrap level. The app can create/join a collaboration session, but full live synchronization, presence, cursors, and conflict-free multi-user editing over websockets were intentionally deferred.
-- The AI assistant was implemented as a suggestion-based workflow, but production-grade AI concerns were left minimal. The system supports summarize/rewrite flows, and can use a fallback local provider, but streaming responses, advanced retries, cost controls, persistent AI audit logs, and full provider hardening were not completed.
-- The frontend was intentionally kept as a single end-to-end client focused on proving backend connectivity and user flows, rather than a fully modular collaboration UI with separate live-editing, presence, and sharing interfaces.
-- Authentication and authorization were implemented enough for protected routes and document access control, but not hardened to production standards such as stronger session management, secret rotation, and broader security controls.
-- Sharing, invitations, versioning, and document editing are functional, but the project does not yet include production deployment concerns such as CI/CD pipelines, observability, monitoring, and large-scale load handling.
+This is still a proof-of-concept implementation. A few areas are intentionally not production-complete yet:
 
-## Main backend validation file
+- reconnect, resync, presence, and conflict-free live collaboration are not implemented as a full collaboration engine yet
+- authentication and secret management are suitable for PoC validation, but not hardened for production deployment
+- sharing, invitations, and permissions exist in the API, but the frontend does not yet provide dedicated management screens for them
+- the AI assistant is intentionally minimal: no streaming responses, advanced retries, cost controls, or persistent audit logs yet
+- observability, CI/CD, release automation, and large-scale deployment concerns are still minimal
 
-The most assignment-relevant backend contract coverage lives in:
+## Main Backend Validation File
 
-- `app/backend/tests/test_poc_backend.py`
+The most assignment-relevant backend contract coverage lives in `app/backend/tests/test_poc_backend.py`.
 
 That test exercises authentication, document create/load/save, realtime session bootstrap, and the AI contract flow end to end.
