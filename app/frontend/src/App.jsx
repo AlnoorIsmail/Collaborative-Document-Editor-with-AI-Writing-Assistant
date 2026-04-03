@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/v1"
-).replace(/\/$/, "");
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "/v1").replace(/\/$/, "");
+
+function getApiBaseLabel() {
+  if (typeof window === "undefined") {
+    return API_BASE;
+  }
+
+  return new URL(API_BASE, window.location.origin).toString().replace(/\/$/, "");
+}
 
 const SESSION_STORAGE_KEY = "collabowrite.session";
 const DEFAULT_TITLE = "Untitled Document";
@@ -69,7 +75,7 @@ async function apiRequest(path, { method = "GET", body, token } = {}) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (error) {
-    const message = `Cannot reach backend at ${API_BASE}. Make sure FastAPI is running.`;
+    const message = `Cannot reach backend at ${getApiBaseLabel()}. Make sure FastAPI is running.`;
     const requestError = new Error(message);
     requestError.cause = error;
     throw requestError;

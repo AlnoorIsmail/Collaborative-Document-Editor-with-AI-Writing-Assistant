@@ -49,7 +49,8 @@ The frontend provides a single-page client that can:
 The frontend talks to the backend using:
 
 - `VITE_API_BASE_URL`
-- default value: `http://127.0.0.1:8000/v1`
+- default value: `/v1`
+- in local Vite development, `/v1` is proxied to `http://127.0.0.1:8000`
 
 ## Requirements
 
@@ -149,7 +150,7 @@ cd app/frontend
 npm install
 ```
 
-If you want the frontend to target a different backend URL, create an `.env` file inside `app/frontend` and set:
+If you want the frontend to target a backend on a different origin, create an `.env` file inside `app/frontend` and set:
 
 ```bash
 VITE_API_BASE_URL=http://127.0.0.1:8000/v1
