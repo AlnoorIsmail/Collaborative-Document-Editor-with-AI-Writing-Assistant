@@ -34,3 +34,28 @@ def test_expected_contract_paths_are_mounted(client) -> None:
     for path, methods in EXPECTED_PATHS.items():
         assert path in paths
         assert set(paths[path]) == methods
+
+
+def test_protected_routes_use_bearer_security_scheme(client) -> None:
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    body = response.json()
+    security_schemes = body["components"]["securitySchemes"]
+    assert security_schemes["HTTPBearer"] == {
+        "type": "http",
+        "scheme": "bearer",
+    }
+
+    protected_operations = [
+        body["paths"]["/v1/auth/me"]["get"],
+        body["paths"]["/v1/documents/{documentId}"]["get"],
+        body["paths"]["/v1/share-links/{token}/redeem"]["post"],
+    ]
+
+    for operation in protected_operations:
+        assert operation["security"] == [{"HTTPBearer": []}]
+        assert "parameters" not in operation or all(
+            parameter["name"].lower() != "authorization"
+            for parameter in operation["parameters"]
+        )

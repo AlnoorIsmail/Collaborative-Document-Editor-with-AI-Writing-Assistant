@@ -1,10 +1,12 @@
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Request, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.backend.core.database import get_db
 from app.backend.core.errors import ApiError
+from app.backend.core.security import bearer_scheme
 from app.backend.models.user import User
 from app.backend.repositories.user_repository import UserRepository
 from app.backend.schemas.auth import (
@@ -23,7 +25,13 @@ def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
     return AuthService(UserRepository(db))
 
 
-def get_bearer_token(authorization: str = Header(None)) -> str:
+def get_bearer_token(
+    request: Request,
+    credentials: Annotated[
+        Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)
+    ],
+) -> str:
+    authorization = request.headers.get("Authorization")
     if not authorization:
         raise ApiError(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -31,15 +39,14 @@ def get_bearer_token(authorization: str = Header(None)) -> str:
             message="Authorization token is missing.",
         )
 
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
+    if credentials is None or not credentials.credentials.strip():
         raise ApiError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             error_code="UNAUTHORIZED",
             message="Authorization token is invalid.",
         )
 
-    return token
+    return credentials.credentials.strip()
 
 
 def get_current_authenticated_user(
@@ -50,21 +57,24 @@ def get_current_authenticated_user(
 
 
 def get_optional_authenticated_user(
-    authorization: str = Header(None),
+    request: Request,
+    credentials: Annotated[
+        Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)
+    ],
     auth_service: AuthService = Depends(get_auth_service),
 ) -> Optional[User]:
+    authorization = request.headers.get("Authorization")
     if not authorization:
         return None
 
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
+    if credentials is None or not credentials.credentials.strip():
         raise ApiError(
             status_code=status.HTTP_401_UNAUTHORIZED,
             error_code="UNAUTHORIZED",
             message="Authorization token is invalid.",
         )
 
-    return auth_service.get_current_user(token)
+    return auth_service.get_current_user(credentials.credentials.strip())
 
 
 @router.post(

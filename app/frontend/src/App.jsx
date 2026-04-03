@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import "./App.css";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "/v1").replace(/\/$/, "");
+const PLACEHOLDER_REALTIME_HOST = "api.example.com";
 
 function getApiBaseLabel() {
   if (typeof window === "undefined") {
@@ -9,6 +10,21 @@ function getApiBaseLabel() {
   }
 
   return new URL(API_BASE, window.location.origin).toString().replace(/\/$/, "");
+}
+
+function getRealtimeSessionSummary(session) {
+  if (!session) {
+    return "";
+  }
+
+  if (
+    !session.realtimeUrl ||
+    session.realtimeUrl.includes(PLACEHOLDER_REALTIME_HOST)
+  ) {
+    return `Session ${session.sessionId} was created. Live sync is still stubbed in this build.`;
+  }
+
+  return `Session ${session.sessionId} was created. This UI does not open the realtime socket yet.`;
 }
 
 const SESSION_STORAGE_KEY = "collabowrite.session";
@@ -703,7 +719,7 @@ export default function App() {
 
           {liveSession ? (
             <div className="doc-id-badge live-badge">
-              <span className="badge-label">LIVE</span>
+              <span className="badge-label">SESS</span>
               <span className="badge-value">{liveSession.sessionId}</span>
             </div>
           ) : null}
@@ -884,9 +900,7 @@ export default function App() {
               </div>
 
               {liveSession ? (
-                <div className="helper-text">
-                  Session {liveSession.sessionId} ready at <code>{liveSession.realtimeUrl}</code>
-                </div>
+                <div className="helper-text">{getRealtimeSessionSummary(liveSession)}</div>
               ) : null}
             </section>
 
