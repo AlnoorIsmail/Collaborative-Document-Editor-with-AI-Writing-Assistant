@@ -59,9 +59,9 @@ def test_duplicate_register_rejected() -> None:
     second_response = client.post("/v1/auth/register", json=payload)
 
     assert first_response.status_code == 201
-    assert second_response.status_code == 400
+    assert second_response.status_code == 409
     assert second_response.json() == {
-        "error_code": "VALIDATION_ERROR",
+        "error_code": "CONFLICT_DETECTED",
         "message": "A user with this email already exists.",
         "retryable": False,
     }
@@ -85,6 +85,9 @@ def test_login_success() -> None:
     body = response.json()
     assert body["token_type"] == "bearer"
     assert body["access_token"]
+    assert body["refresh_token"]
+    assert body["access_token_expires_in_seconds"] > 0
+    assert body["refresh_token_expires_in_seconds"] > 0
     assert body["user"] == {
         "user_id": 1,
         "email": "alice@example.com",
@@ -144,3 +147,31 @@ def test_me_returns_current_user_with_valid_auth() -> None:
         "display_name": "Alice",
         "account_status": "active",
     }
+
+
+def test_refresh_rotates_token_pair() -> None:
+    client = create_test_client()
+    client.post(
+        "/v1/auth/register",
+        json={
+            "email": "alice@example.com",
+            "display_name": "Alice",
+            "password": "strong-password",
+        },
+    )
+    login_response = client.post(
+        "/v1/auth/login",
+        json={"email": "alice@example.com", "password": "strong-password"},
+    )
+
+    response = client.post(
+        "/v1/auth/refresh",
+        json={"refresh_token": login_response.json()["refresh_token"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["token_type"] == "bearer"
+    assert body["access_token"]
+    assert body["refresh_token"]
+    assert body["refresh_token"] != login_response.json()["refresh_token"]

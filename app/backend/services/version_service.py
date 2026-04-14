@@ -53,7 +53,9 @@ class VersionService:
             user_id=current_user.id,
         )
 
-        version = self.version_repository.get_by_id(parse_resource_id(version_id, "ver"))
+        version = self.version_repository.get_by_id(
+            parse_resource_id(version_id, "ver")
+        )
         if version is None:
             raise ApiError(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -88,7 +90,9 @@ class VersionService:
         latest_version = self.version_repository.get_latest_for_document(document.id)
         version = self.version_repository.create(
             document_id=document.id,
-            version_number=1 if latest_version is None else latest_version.version_number + 1,
+            version_number=(
+                1 if latest_version is None else latest_version.version_number + 1
+            ),
             content_snapshot=document.content,
             created_by=current_user.id,
             is_restore_version=True,

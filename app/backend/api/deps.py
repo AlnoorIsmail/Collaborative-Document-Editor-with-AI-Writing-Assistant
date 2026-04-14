@@ -7,8 +7,8 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.backend.core.database import get_db
 from app.backend.core.config import Settings, get_settings
+from app.backend.core.database import get_db
 from app.backend.core.security import (
     AuthenticatedPrincipal,
     bearer_scheme,
@@ -19,11 +19,15 @@ from app.backend.integrations.ai_provider import (
     OpenAICompatibleAIProviderClient,
     StubAIProviderClient,
 )
+from app.backend.models.user import User
 from app.backend.repositories.ai import AIRepository, StubAIRepository
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
+from app.backend.repositories.refresh_token_repository import RefreshTokenRepository
 from app.backend.repositories.sessions import SessionRepository, StubSessionRepository
+from app.backend.repositories.user_repository import UserRepository
 from app.backend.repositories.version_repository import VersionRepository
+from app.backend.services.auth_service import AuthService
 from app.backend.services.ai.ai_service import AIService
 from app.backend.services.realtime.session_service import SessionService
 
@@ -34,6 +38,35 @@ def get_current_principal(
     ],
 ) -> AuthenticatedPrincipal:
     return get_principal_from_credentials(credentials)
+
+
+def get_auth_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> AuthService:
+    return AuthService(
+        UserRepository(db),
+        RefreshTokenRepository(db),
+    )
+
+
+def get_current_authenticated_user(
+    principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> User:
+    return auth_service.get_current_user_from_principal(principal)
+
+
+def get_optional_authenticated_user(
+    credentials: Annotated[
+        Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)
+    ],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> Optional[User]:
+    if credentials is None or not credentials.credentials.strip():
+        return None
+
+    principal = get_principal_from_credentials(credentials)
+    return auth_service.get_current_user_from_principal(principal)
 
 
 @lru_cache

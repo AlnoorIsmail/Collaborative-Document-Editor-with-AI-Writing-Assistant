@@ -47,3 +47,9 @@ class User(Base):
         back_populates="creator",
         foreign_keys="ShareLink.created_by",
     )
+    refresh_tokens: Mapped[List["RefreshToken"]] = relationship(
+        "RefreshToken",
+        back_populates="user",
+        foreign_keys="RefreshToken.user_id",
+        cascade="all, delete-orphan",
+    )

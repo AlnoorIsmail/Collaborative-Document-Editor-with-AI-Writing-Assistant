@@ -15,6 +15,7 @@ from app.backend.models import document as _document
 from app.backend.models import document_permission as _document_permission
 from app.backend.models import document_version as _document_version
 from app.backend.models import invitation as _invitation
+from app.backend.models import refresh_token as _refresh_token
 from app.backend.models import share_link as _share_link
 from app.backend.models import user as _user
 
@@ -27,10 +28,55 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    openapi_tags = [
+        {
+            "name": "auth",
+            "description": "Registration, login, refresh, and current-user identity endpoints.",
+        },
+        {
+            "name": "documents",
+            "description": "Protected document CRUD and export endpoints.",
+        },
+        {
+            "name": "versions",
+            "description": "Document history and restore operations.",
+        },
+        {
+            "name": "permissions",
+            "description": "Document sharing and role-management endpoints.",
+        },
+        {
+            "name": "invitations",
+            "description": "Invitation workflows for document collaboration.",
+        },
+        {
+            "name": "share-links",
+            "description": "Share-link creation and redemption endpoints.",
+        },
+        {
+            "name": "sessions",
+            "description": "Realtime session bootstrap contracts.",
+        },
+        {
+            "name": "ai",
+            "description": "AI interaction and suggestion endpoints.",
+        },
+        {
+            "name": "health",
+            "description": "Backend health and readiness checks.",
+        },
+    ]
 
     app = FastAPI(
         title=settings.app_name,
-        version="0.1.0",
+        version="1.0.0",
+        description=(
+            "Backend API for the Collaborative Document Editor with AI Writing "
+            "Assistant. This FastAPI service provides JWT-based authentication, "
+            "document CRUD, version history, restore flows, and supporting "
+            "assignment endpoints."
+        ),
+        openapi_tags=openapi_tags,
         lifespan=lifespan,
     )
 

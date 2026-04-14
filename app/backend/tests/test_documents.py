@@ -109,7 +109,8 @@ def test_update_document_success() -> None:
     assert response.json()["ai_enabled"] is False
     assert response.json()["role"] == "owner"
     assert response.json()["updated_at"]
-    assert "current_content" not in response.json()
+    assert response.json()["current_content"] == "Draft"
+    assert response.json()["revision"] == 0
 
 
 def test_save_document_content_success() -> None:
@@ -146,7 +147,7 @@ def test_unauthenticated_access_rejected() -> None:
     assert response.status_code == 401
     assert response.json() == {
         "error_code": "UNAUTHORIZED",
-        "message": "Authorization token is missing.",
+        "message": "Missing or invalid bearer token.",
         "retryable": False,
     }
 
@@ -175,3 +176,52 @@ def test_non_owner_access_rejected() -> None:
         "message": "You are not allowed to access this document.",
         "retryable": False,
     }
+
+
+def test_list_documents_success() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    client.post(
+        "/v1/documents",
+        json={"title": "Doc One", "initial_content": "A"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    client.post(
+        "/v1/documents",
+        json={"title": "Doc Two", "initial_content": "B"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    response = client.get(
+        "/v1/documents",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 2
+    assert body[0]["title"] == "Doc Two"
+    assert body[1]["title"] == "Doc One"
+
+
+def test_delete_document_success() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Disposable", "initial_content": "Draft"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    document_id = create_response.json()["document_id"]
+
+    delete_response = client.delete(
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    get_response = client.get(
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert delete_response.status_code == 204
+    assert get_response.status_code == 404

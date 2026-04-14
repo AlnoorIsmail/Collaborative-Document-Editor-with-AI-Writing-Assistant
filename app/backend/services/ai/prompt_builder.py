@@ -11,14 +11,18 @@ from app.backend.schemas.ai import AIInteractionCreateRequest
 
 class PromptTemplateRenderer:
     def __init__(self, prompts_dir: Path | None = None) -> None:
-        self._prompts_dir = prompts_dir or Path(__file__).resolve().parents[2] / "prompts"
+        self._prompts_dir = (
+            prompts_dir or Path(__file__).resolve().parents[2] / "prompts"
+        )
 
     def render(self, payload: AIInteractionCreateRequest) -> str:
         template = self._load_template(payload.feature_type)
         return template.format(
             feature_type=payload.feature_type,
             scope_type=payload.scope_type,
-            selected_text_snapshot=self._value_or_default(payload.selected_text_snapshot),
+            selected_text_snapshot=self._value_or_default(
+                payload.selected_text_snapshot
+            ),
             surrounding_context=self._value_or_default(payload.surrounding_context),
             user_instruction=self._value_or_default(payload.user_instruction),
             parameters_json=self._parameters_json(payload.parameters),

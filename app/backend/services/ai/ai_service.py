@@ -319,7 +319,9 @@ class AIService:
             message=message,
         )
 
-    def _apply_replacement(self, *, document, apply_to_range: TextRange, replacement: str):
+    def _apply_replacement(
+        self, *, document, apply_to_range: TextRange, replacement: str
+    ):
         content_length = len(document.content)
         if apply_to_range.end > content_length:
             raise AppError(
@@ -339,7 +341,9 @@ class AIService:
         latest_version = self._version_repository.get_latest_for_document(document.id)
         version = self._version_repository.create(
             document_id=document.id,
-            version_number=1 if latest_version is None else latest_version.version_number + 1,
+            version_number=(
+                1 if latest_version is None else latest_version.version_number + 1
+            ),
             content_snapshot=document.content,
             created_by=user_id,
             is_restore_version=False,

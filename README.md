@@ -1,86 +1,59 @@
-# Collaborative Document Editor Backend PoC
+# Collaborative Document Editor with AI Writing Assistant
 
-This repository contains a collaborative document editor project with both frontend and backend workstreams.
+This repository contains a FastAPI backend and frontend for a university software engineering project. The backend now supports JWT-based authentication, refresh-token sessions, document CRUD, version history, version restore, and the existing collaboration/AI contracts already present in the project.
 
-The goal of this PoC is to prove that (backend):
+## Backend scope
 
-- the FastAPI backend boots and exposes the expected API surface
-- a client can authenticate and communicate with the backend end to end
-- the main request and response shapes are represented in code
-- the project is organized using the layered backend structure from the architecture plan
+The implemented backend scope includes:
 
-## Frontend Scope
+- `POST /v1/auth/register`
+- `POST /v1/auth/login`
+- `POST /v1/auth/refresh`
+- `GET /v1/auth/me`
+- `POST /v1/documents`
+- `GET /v1/documents`
+- `GET /v1/documents/{document_id}`
+- `PATCH /v1/documents/{document_id}`
+- `DELETE /v1/documents/{document_id}`
+- `GET /v1/documents/{document_id}/versions`
+- `POST /v1/documents/{document_id}/versions/{version_id}/restore`
 
+## Tech stack
 
+- FastAPI
+- SQLAlchemy
+- SQLite for local development
+- Pydantic
+- pytest
 
-## What the PoC Demonstrates
+## Backend structure
 
-- `POST /v1/auth/register` and `POST /v1/auth/login` for a minimal client session
-- `POST /v1/documents` to create a document
-- `GET /v1/documents/{documentId}` to load document content
-- `PATCH /v1/documents/{documentId}/content` to save content and create a version
-- `POST /v1/documents/{documentId}/sessions` for realtime session bootstrap contract validation
-- AI suggestion lifecycle contract coverage through:
-  - `POST /v1/documents/{documentId}/ai/interactions`
-  - `GET /v1/documents/{documentId}/ai/interactions`
-  - `GET /v1/ai/interactions/{interactionId}`
-  - `POST /v1/ai/suggestions/{suggestionId}/accept`
-  - `POST /v1/ai/suggestions/{suggestionId}/reject`
-  - `POST /v1/ai/suggestions/{suggestionId}/apply-edited`
-
-## Backend Decisions
-
-These are the main backend decisions made for the PoC:
-
-- `FastAPI` was kept as the backend framework to match the architecture requirement.
-- The backend was organized as a layered modular monolith under `app/backend/`.
-- Route handlers stay thin and mainly handle transport and dependency wiring.
-- Business behavior is pushed into `services/`.
-- Data access is kept in `repositories/`.
-- Request and response formats are defined with explicit Pydantic schemas in `schemas/`.
-- Realtime traffic is represented separately through the session bootstrap contract instead of mixing it into document CRUD routes.
-- AI remains suggestion-based, with separate interaction and suggestion endpoints rather than automatic document mutation.
-- The PoC uses lightweight stubbed repositories for realtime session bootstrapping and AI generation so the contracts can be validated without introducing a production-ready websocket server or live LLM dependency.
-- The backend package was moved under `app/backend` so the repository structure matches the decision to treat `app` as the application root folder.
-
-## What Was Left Out and Why
-
-Some backend work was intentionally left incomplete because this is a proof of concept rather than a full implementation:
-
-- A true websocket collaboration server was not implemented yet. For the PoC, the important part was proving the session bootstrap contract and keeping realtime concerns separate from REST APIs.
-- AI calls are mocked instead of hitting a real provider. This keeps the PoC deterministic, testable, and free from external service dependencies.
-- Full quota enforcement and persistent AI audit logging were not completed yet because they are production concerns beyond the minimum PoC requirement.
-- Reconnect, resync, and conflict handling are represented at the contract level, but not yet built out as a complete live synchronization engine.
-- Authentication is sufficient for PoC validation, but not yet hardened as a production auth system.
-- Linting workflows, formatting gates, and broader automated validation were intentionally left out for now. The priority in this PoC was proving the backend shape and core flows, not enforcing production-ready quality gates.
-
-## What Is Intentionally Minimal
-
-- the focus is backend contract validation, not product completeness
-- realtime websocket transport is only represented by the session bootstrap contract, not a full live collaboration server
-- AI generation is mocked through a lightweight in-memory repository/provider seam
-- linting, CI automation, and stricter validation are deferred until after the PoC stage
-- some backend concerns are left as future work so the PoC stays small, testable, and aligned with the assignment scope
-
-## Repository Shape
-
-The backend keeps the layered modular-monolith structure required by the architecture:
+The backend follows the existing layered project layout under `app/backend/`:
 
 ```text
 app/backend/
-├── api/routes        # transport layer only
-├── core              # config, auth, shared errors, db
-├── integrations      # external provider seams
-├── models            # persistence and internal records
-├── prompts           # prompt templates
-├── repositories      # data access
-├── realtime          # realtime event definitions
-├── schemas           # request/response contracts
-├── services          # business workflows
-└── tests             # route and service validation
+├── api/routes/        # FastAPI route handlers
+├── core/              # config, security, database, errors
+├── models/            # SQLAlchemy models
+├── repositories/      # persistence helpers
+├── schemas/           # request/response models
+├── services/          # business logic
+└── tests/             # unit and integration coverage
 ```
 
-## Quick Start
+## Environment variables
+
+Copy `.env.example` to `.env` and adjust values as needed.
+
+Important variables:
+
+- `AI_COLLAB_SECRET_KEY`: signing key used for JWT access and refresh tokens
+- `AI_COLLAB_ACCESS_TOKEN_EXPIRE_MINUTES`: short-lived access token TTL
+- `AI_COLLAB_REFRESH_TOKEN_EXPIRE_DAYS`: refresh token TTL
+- `AI_COLLAB_DATABASE_URL`: SQLAlchemy database URL
+- `AI_COLLAB_ALLOWED_ORIGINS`: CORS origins for local frontend clients
+
+## Local setup
 
 1. Create and activate a virtual environment.
 
@@ -89,62 +62,71 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-2. Install the minimal dependencies.
+2. Install dependencies.
 
 ```bash
-pip install -r requirements.txt
+./run.sh setup
 ```
 
-3. Optionally copy the example environment file.
+3. Copy environment variables.
 
 ```bash
 cp .env.example .env
 ```
 
-4. Start the backend from the repository root.
+4. Start the backend.
 
 ```bash
-uvicorn app.backend.main:app --reload
+./run.sh run
 ```
 
-5. Open the generated docs or OpenAPI contract.
+The API will be available at `http://127.0.0.1:8000`.
+
+## API docs
+
+FastAPI autogenerated docs are available at:
 
 - Swagger UI: `http://127.0.0.1:8000/docs`
-- OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
-- Health check: `http://127.0.0.1:8000/health`
+- ReDoc: `http://127.0.0.1:8000/redoc`
+- OpenAPI schema: `http://127.0.0.1:8000/openapi.json`
 
-## Optional PoC Checks
+## Running tests
 
-From the repository root:
+Run the full backend suite with:
 
 ```bash
-pytest app/backend/tests/test_poc_backend.py -q
+./run.sh test
 ```
 
-If you want to run the full backend test suite locally, you still can:
+You can also run individual groups:
 
 ```bash
+pytest app/backend/tests/unit -q
+pytest app/backend/tests/integration -q
 pytest app/backend/tests -q
 ```
 
-There is no lint or CI workflow wired up at the moment. Ruff, Black, and broader validation were left out intentionally while the project stays in proof-of-concept mode.
+## Auth architecture
 
-## Suggested Demo Flow
+- Passwords are hashed with PBKDF2-HMAC-SHA256 before storage.
+- Access tokens are signed JWTs intended for short-lived bearer authentication.
+- Refresh tokens are signed JWTs with server-side persistence and rotation.
+- Protected routes use a shared bearer-token dependency that resolves the current user consistently.
 
-If you want a short manual demo without a frontend:
+## Document architecture
 
-1. Register a user.
-2. Log in and capture the bearer token.
-3. Create a document.
-4. Load the document back with `GET /v1/documents/{documentId}`.
-5. Save updated content with `PATCH /v1/documents/{documentId}/content`.
-6. Call the session bootstrap endpoint.
-7. Call the AI interaction endpoint and inspect the resulting suggestion detail.
+- Documents are stored with `title`, `content`, `created_at`, `updated_at`, `owner`, and `latest_version_id`.
+- Document reads are limited to the owner or explicitly permitted users.
+- Content updates create immutable version records.
+- Restoring a version creates a new current version instead of rewriting history.
 
-## Main Backend PoC File
+## Useful test files
 
-The most assignment-relevant backend validation is in:
+- `app/backend/tests/unit/test_security.py`
+- `app/backend/tests/integration/test_assignment_scope.py`
+- `app/backend/tests/test_backend_contracts.py`
 
-- `app/backend/tests/test_poc_backend.py`
+## Notes
 
-That file checks that a client can authenticate, create/load/save a document, bootstrap a realtime session, and exercise the AI contract flow with the expected JSON shapes.
+- The default local database is SQLite to keep the project easy to run for assignment review.
+- Existing realtime session and AI routes are preserved so the wider app continues to boot and test successfully.

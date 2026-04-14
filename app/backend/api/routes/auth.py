@@ -1,16 +1,21 @@
-from typing import Optional
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
+from app.backend.api.deps import (
+    get_current_authenticated_user,
+)
 from app.backend.core.database import get_db
-from app.backend.core.errors import ApiError
 from app.backend.models.user import User
+from app.backend.repositories.refresh_token_repository import RefreshTokenRepository
 from app.backend.repositories.user_repository import UserRepository
 from app.backend.schemas.auth import (
     LoginRequest,
     LoginResponse,
     MeResponse,
+    RefreshTokenRequest,
+    RefreshTokenResponse,
     RegisterRequest,
     RegisterResponse,
 )
@@ -20,55 +25,18 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
-    return AuthService(UserRepository(db))
-
-
-def get_bearer_token(authorization: str = Header(None)) -> str:
-    if not authorization:
-        raise ApiError(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            error_code="UNAUTHORIZED",
-            message="Authorization token is missing.",
-        )
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise ApiError(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            error_code="UNAUTHORIZED",
-            message="Authorization token is invalid.",
-        )
-
-    return token
-
-
-def get_current_authenticated_user(
-    token: str = Depends(get_bearer_token),
-    auth_service: AuthService = Depends(get_auth_service),
-) -> User:
-    return auth_service.get_current_user(token)
-
-
-def get_optional_authenticated_user(
-    authorization: str = Header(None),
-    auth_service: AuthService = Depends(get_auth_service),
-) -> Optional[User]:
-    if not authorization:
-        return None
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise ApiError(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            error_code="UNAUTHORIZED",
-            message="Authorization token is invalid.",
-        )
-
-    return auth_service.get_current_user(token)
+    return AuthService(
+        UserRepository(db),
+        RefreshTokenRepository(db),
+    )
 
 
 @router.post(
-    "/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED
+    "/register",
+    response_model=RegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a user account",
+    description="Create a new backend user account with a securely hashed password.",
 )
 def register(
     payload: RegisterRequest,
@@ -81,7 +49,12 @@ def register(
     )
 
 
-@router.post("/login", response_model=LoginResponse)
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    summary="Authenticate a user",
+    description="Validate credentials and return a short-lived JWT access token plus a refresh token.",
+)
 def login(
     payload: LoginRequest,
     auth_service: AuthService = Depends(get_auth_service),
@@ -89,9 +62,27 @@ def login(
     return auth_service.login(email=payload.email, password=payload.password)
 
 
-@router.get("/me", response_model=MeResponse)
+@router.post(
+    "/refresh",
+    response_model=RefreshTokenResponse,
+    summary="Refresh an authenticated session",
+    description="Rotate a valid refresh token and issue a fresh access/refresh token pair.",
+)
+def refresh_access_token(
+    payload: RefreshTokenRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> RefreshTokenResponse:
+    return auth_service.refresh(refresh_token=payload.refresh_token)
+
+
+@router.get(
+    "/me",
+    response_model=MeResponse,
+    summary="Get current user",
+    description="Return the user represented by the provided bearer access token.",
+)
 def get_current_user(
-    current_user: User = Depends(get_current_authenticated_user),
+    current_user: Annotated[User, Depends(get_current_authenticated_user)],
     auth_service: AuthService = Depends(get_auth_service),
 ) -> MeResponse:
     return auth_service.to_me_response(current_user)

@@ -51,7 +51,9 @@ class DocumentAccessService:
         self.document_repository = document_repository
         self.permission_repository = permission_repository
 
-    def resolve_access(self, *, document_id: str | int, user_id: str | int) -> DocumentAccess:
+    def resolve_access(
+        self, *, document_id: str | int, user_id: str | int
+    ) -> DocumentAccess:
         resolved_document_id = parse_resource_id(document_id, "doc")
         resolved_user_id = parse_resource_id(user_id, "usr")
 

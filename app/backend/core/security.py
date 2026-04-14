@@ -1,4 +1,4 @@
-"""Authentication helpers for protected endpoints."""
+"""Authentication helpers for password hashing and JWT validation."""
 
 import base64
 import hashlib
@@ -15,6 +15,9 @@ from app.backend.core.config import settings
 from app.backend.schemas.common import ErrorCode
 
 PASSWORD_HASH_ITERATIONS = 260000
+ACCESS_TOKEN_TYPE = "access"
+REFRESH_TOKEN_TYPE = "refresh"
+
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -23,6 +26,7 @@ class AuthenticatedPrincipal:
     user_id: str
     role: str
     token: str
+    token_type: str
 
 
 def _b64encode(data: bytes) -> str:
@@ -67,50 +71,58 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return hmac.compare_digest(candidate_digest, expected_digest)
 
 
-def create_access_token(subject: str, expires_in_minutes: Optional[int] = None) -> str:
-    ttl_minutes = expires_in_minutes or settings.access_token_expire_minutes
-    payload = {
-        "sub": subject,
-        "exp": int(time.time()) + (ttl_minutes * 60),
-    }
-    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode(
-        "utf-8"
+def get_access_token_ttl_seconds(expires_in_minutes: Optional[int] = None) -> int:
+    ttl_minutes = (
+        settings.access_token_expire_minutes
+        if expires_in_minutes is None
+        else expires_in_minutes
     )
-    payload_b64 = _b64encode(payload_bytes)
-    signature = hmac.new(
-        settings.secret_key.encode("utf-8"),
-        payload_b64.encode("utf-8"),
-        hashlib.sha256,
-    ).digest()
-    return "{payload}.{signature}".format(
-        payload=payload_b64,
-        signature=_b64encode(signature),
+    return ttl_minutes * 60
+
+
+def get_refresh_token_ttl_seconds(expires_in_days: Optional[int] = None) -> int:
+    ttl_days = (
+        settings.refresh_token_expire_days
+        if expires_in_days is None
+        else expires_in_days
+    )
+    return ttl_days * 24 * 60 * 60
+
+
+def create_access_token(subject: str, expires_in_minutes: Optional[int] = None) -> str:
+    return _encode_token(
+        {
+            "sub": str(subject),
+            "type": ACCESS_TOKEN_TYPE,
+        },
+        expires_in_seconds=get_access_token_ttl_seconds(expires_in_minutes),
+    )
+
+
+def create_refresh_token(
+    subject: str,
+    *,
+    jti: str,
+    expires_in_days: Optional[int] = None,
+) -> str:
+    return _encode_token(
+        {
+            "sub": str(subject),
+            "type": REFRESH_TOKEN_TYPE,
+            "jti": jti,
+        },
+        expires_in_seconds=get_refresh_token_ttl_seconds(expires_in_days),
     )
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
-    try:
-        payload_b64, signature_b64 = token.split(".", 1)
-    except ValueError as exc:
-        raise ValueError("Invalid token format.") from exc
+    return _decode_token(token, expected_token_type=ACCESS_TOKEN_TYPE)
 
-    expected_signature = hmac.new(
-        settings.secret_key.encode("utf-8"),
-        payload_b64.encode("utf-8"),
-        hashlib.sha256,
-    ).digest()
-    provided_signature = _b64decode(signature_b64)
 
-    if not hmac.compare_digest(expected_signature, provided_signature):
-        raise ValueError("Invalid token signature.")
-
-    payload = json.loads(_b64decode(payload_b64).decode("utf-8"))
-    if int(payload.get("exp", 0)) < int(time.time()):
-        raise ValueError("Token has expired.")
-
-    if "sub" not in payload:
-        raise ValueError("Token subject is missing.")
-
+def decode_refresh_token(token: str) -> dict[str, Any]:
+    payload = _decode_token(token, expected_token_type=REFRESH_TOKEN_TYPE)
+    if "jti" not in payload or not str(payload["jti"]).strip():
+        raise ValueError("Refresh token identifier is missing.")
     return payload
 
 
@@ -128,14 +140,6 @@ def get_principal_from_credentials(
 
     token = credentials.credentials.strip()
 
-    if ":" in token and "." not in token:
-        candidate_user_id, candidate_role = token.split(":", 1)
-        return AuthenticatedPrincipal(
-            user_id=candidate_user_id or "usr_123",
-            role=candidate_role or "editor",
-            token=token,
-        )
-
     try:
         payload = decode_access_token(token)
     except (TypeError, ValueError):
@@ -147,12 +151,78 @@ def get_principal_from_credentials(
             message="Missing or invalid bearer token.",
         )
 
-    user_id = str(payload["sub"])
-    if user_id.isdigit():
-        user_id = f"usr_{user_id}"
-
     return AuthenticatedPrincipal(
-        user_id=user_id,
-        role="editor",
+        user_id=str(payload["sub"]),
+        role="authenticated",
         token=token,
+        token_type=str(payload["type"]),
     )
+
+
+def _encode_token(payload: dict[str, Any], *, expires_in_seconds: int) -> str:
+    if settings.jwt_algorithm != "HS256":
+        raise ValueError("Unsupported JWT algorithm configured.")
+
+    issued_at = int(time.time())
+    token_payload = {
+        **payload,
+        "iat": issued_at,
+        "exp": issued_at + expires_in_seconds,
+    }
+
+    header_b64 = _b64encode(
+        json.dumps(
+            {"alg": settings.jwt_algorithm, "typ": "JWT"},
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    )
+    payload_b64 = _b64encode(
+        json.dumps(token_payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    signing_input = f"{header_b64}.{payload_b64}"
+    signature = hmac.new(
+        settings.jwt_secret.encode("utf-8"),
+        signing_input.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    return f"{signing_input}.{_b64encode(signature)}"
+
+
+def _decode_token(token: str, *, expected_token_type: str) -> dict[str, Any]:
+    try:
+        header_b64, payload_b64, signature_b64 = token.split(".", 2)
+    except ValueError as exc:
+        raise ValueError("Invalid token format.") from exc
+
+    signing_input = f"{header_b64}.{payload_b64}"
+    expected_signature = hmac.new(
+        settings.jwt_secret.encode("utf-8"),
+        signing_input.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    provided_signature = _b64decode(signature_b64)
+
+    if not hmac.compare_digest(expected_signature, provided_signature):
+        raise ValueError("Invalid token signature.")
+
+    try:
+        header = json.loads(_b64decode(header_b64).decode("utf-8"))
+        payload = json.loads(_b64decode(payload_b64).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Invalid token payload.") from exc
+
+    if header.get("alg") != settings.jwt_algorithm or header.get("typ") != "JWT":
+        raise ValueError("Invalid token header.")
+
+    if str(payload.get("type")) != expected_token_type:
+        raise ValueError("Unexpected token type.")
+
+    if "sub" not in payload or not str(payload["sub"]).strip():
+        raise ValueError("Token subject is missing.")
+
+    expires_at = int(payload.get("exp", 0))
+    if expires_at <= int(time.time()):
+        raise ValueError("Token has expired.")
+
+    return payload

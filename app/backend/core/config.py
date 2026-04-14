@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./collab_editor.db"
     realtime_url: str = "wss://api.example.com/realtime"
     secret_key: str = "change-me"
-    access_token_expire_minutes: int = 60
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
     algorithm: str = "HS256"
     ai_api_key: str = ""
     ai_api_url: str = ""
