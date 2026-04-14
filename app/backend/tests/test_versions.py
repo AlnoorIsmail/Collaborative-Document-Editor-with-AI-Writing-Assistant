@@ -100,6 +100,10 @@ def test_restore_version_works() -> None:
         ),
         headers={"Authorization": "Bearer {token}".format(token=token)},
     )
+    restored_document = client.get(
+        "/v1/documents/{document_id}".format(document_id=document_id),
+        headers={"Authorization": "Bearer {token}".format(token=token)},
+    )
     list_after_restore = client.get(
         "/v1/documents/{document_id}/versions".format(document_id=document_id),
         headers={"Authorization": "Bearer {token}".format(token=token)},
@@ -112,6 +116,9 @@ def test_restore_version_works() -> None:
         "new_version_id": 3,
         "message": "Version restored as a new version entry.",
     }
+    assert restored_document.status_code == 200
+    assert restored_document.json()["current_content"] == "Version one"
+    assert restored_document.json()["revision"] == 3
     assert len(list_after_restore.json()) == 3
     assert list_after_restore.json()[0]["version_number"] == 3
     assert list_after_restore.json()[0]["is_restore_version"] is True

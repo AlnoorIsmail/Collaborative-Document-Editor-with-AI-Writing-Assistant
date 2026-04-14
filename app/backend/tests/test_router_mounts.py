@@ -3,9 +3,10 @@
 EXPECTED_PATHS = {
     "/v1/auth/register": {"post"},
     "/v1/auth/login": {"post"},
+    "/v1/auth/refresh": {"post"},
     "/v1/auth/me": {"get"},
-    "/v1/documents": {"post"},
-    "/v1/documents/{documentId}": {"get", "patch"},
+    "/v1/documents": {"get", "post"},
+    "/v1/documents/{documentId}": {"delete", "get", "patch"},
     "/v1/documents/{documentId}/content": {"patch"},
     "/v1/documents/{documentId}/versions": {"get"},
     "/v1/documents/{documentId}/versions/{versionId}/restore": {"post"},
@@ -49,6 +50,7 @@ def test_protected_routes_use_bearer_security_scheme(client) -> None:
 
     protected_operations = [
         body["paths"]["/v1/auth/me"]["get"],
+        body["paths"]["/v1/documents"]["get"],
         body["paths"]["/v1/documents/{documentId}"]["get"],
         body["paths"]["/v1/share-links/{token}/redeem"]["post"],
     ]

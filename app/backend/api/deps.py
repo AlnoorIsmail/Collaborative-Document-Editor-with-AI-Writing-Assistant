@@ -14,6 +14,7 @@ from app.backend.core.security import (
     bearer_scheme,
     get_principal_from_credentials,
 )
+from app.backend.models.user import User
 from app.backend.integrations.ai_provider import (
     AIProviderClient,
     OpenAICompatibleAIProviderClient,
@@ -22,9 +23,12 @@ from app.backend.integrations.ai_provider import (
 from app.backend.repositories.ai import AIRepository, StubAIRepository
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
+from app.backend.repositories.refresh_token_repository import RefreshTokenRepository
 from app.backend.repositories.sessions import SessionRepository, StubSessionRepository
 from app.backend.repositories.version_repository import VersionRepository
+from app.backend.repositories.user_repository import UserRepository
 from app.backend.services.ai.ai_service import AIService
+from app.backend.services.auth_service import AuthService
 from app.backend.services.realtime.session_service import SessionService
 
 
@@ -34,6 +38,59 @@ def get_current_principal(
     ],
 ) -> AuthenticatedPrincipal:
     return get_principal_from_credentials(credentials)
+
+
+def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
+    return AuthService(
+        UserRepository(db),
+        RefreshTokenRepository(db),
+    )
+
+
+def get_bearer_token(
+    credentials: Annotated[
+        Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)
+    ],
+) -> str:
+    if credentials is None or not credentials.credentials.strip():
+        from app.backend.core.errors import ApiError
+
+        raise ApiError(
+            status_code=401,
+            error_code="UNAUTHORIZED",
+            message="Missing or invalid bearer token.",
+        )
+
+    return credentials.credentials.strip()
+
+
+def get_current_authenticated_user(
+    token: Annotated[str, Depends(get_bearer_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> User:
+    return auth_service.get_current_user(token)
+
+
+def get_optional_authenticated_user(
+    credentials: Annotated[
+        Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)
+    ],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> Optional[User]:
+    if credentials is None:
+        return None
+
+    token = credentials.credentials.strip()
+    if not token:
+        from app.backend.core.errors import ApiError
+
+        raise ApiError(
+            status_code=401,
+            error_code="UNAUTHORIZED",
+            message="Missing or invalid bearer token.",
+        )
+
+    return auth_service.get_current_user(token)
 
 
 @lru_cache

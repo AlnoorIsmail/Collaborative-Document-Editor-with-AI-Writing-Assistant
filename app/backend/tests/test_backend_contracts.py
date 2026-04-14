@@ -1,4 +1,4 @@
-"""Assignment-facing backend PoC tests.
+"""Assignment-facing backend contract tests.
 
 These tests validate that the minimal backend skeleton can be exercised
 end to end by a client and that the JSON contracts stay stable.
@@ -9,8 +9,8 @@ def register_and_login(client) -> tuple[str, int]:
     register_response = client.post(
         "/v1/auth/register",
         json={
-            "email": "poc@example.com",
-            "display_name": "PoC User",
+            "email": "integration@example.com",
+            "display_name": "Integration User",
             "password": "strong-password",
         },
     )
@@ -19,7 +19,7 @@ def register_and_login(client) -> tuple[str, int]:
     login_response = client.post(
         "/v1/auth/login",
         json={
-            "email": "poc@example.com",
+            "email": "integration@example.com",
             "password": "strong-password",
         },
     )
@@ -28,7 +28,7 @@ def register_and_login(client) -> tuple[str, int]:
     return body["access_token"], body["user"]["user_id"]
 
 
-def test_backend_poc_document_flow_contracts(client) -> None:
+def test_backend_document_flow_contracts(client) -> None:
     token, user_id = register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -36,7 +36,7 @@ def test_backend_poc_document_flow_contracts(client) -> None:
         "/v1/documents",
         headers=headers,
         json={
-            "title": "PoC Document",
+            "title": "Implementation Document",
             "initial_content": "First draft",
             "content_format": "plain_text",
             "ai_enabled": True,
@@ -60,12 +60,12 @@ def test_backend_poc_document_flow_contracts(client) -> None:
         "created_at",
         "updated_at",
     }
-    assert create_body["title"] == "PoC Document"
+    assert create_body["title"] == "Implementation Document"
     assert create_body["current_content"] == "First draft"
     assert create_body["content_format"] == "plain_text"
     assert create_body["owner"] == {
         "user_id": user_id,
-        "display_name": "PoC User",
+        "display_name": "Integration User",
     }
     assert create_body["owner_user_id"] == user_id
     assert create_body["role"] == "owner"
@@ -99,11 +99,11 @@ def test_backend_poc_document_flow_contracts(client) -> None:
         "updated_at",
     }
     assert get_body["document_id"] == document_id
-    assert get_body["title"] == "PoC Document"
+    assert get_body["title"] == "Implementation Document"
     assert get_body["current_content"] == "First draft"
     assert get_body["owner"] == {
         "user_id": user_id,
-        "display_name": "PoC User",
+        "display_name": "Integration User",
     }
     assert get_body["owner_user_id"] == user_id
     assert get_body["revision"] == 0
@@ -128,7 +128,7 @@ def test_backend_poc_document_flow_contracts(client) -> None:
     }
 
 
-def test_backend_poc_realtime_and_ai_contracts(client) -> None:
+def test_backend_realtime_and_ai_contracts(client) -> None:
     token, user_id = register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
     initial_content = "First draft"
@@ -169,7 +169,7 @@ def test_backend_poc_realtime_and_ai_contracts(client) -> None:
             "scope_type": "selection",
             "selection_range": {"start": 0, "end": 11},
             "selected_text_snapshot": "First draft",
-            "surrounding_context": "Short PoC document",
+            "surrounding_context": "Short implementation document",
             "user_prompt": "Make this more formal",
             "base_revision": 0,
             "options": {"tone": "formal"},

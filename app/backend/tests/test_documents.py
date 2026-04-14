@@ -84,6 +84,28 @@ def test_get_document_success() -> None:
     assert response.json()["created_at"]
 
 
+def test_list_documents_success() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    client.post(
+        "/v1/documents",
+        json={"title": "Readable Doc", "initial_content": "Body"},
+        headers={"Authorization": "Bearer {token}".format(token=token)},
+    )
+
+    response = client.get(
+        "/v1/documents",
+        headers={"Authorization": "Bearer {token}".format(token=token)},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["title"] == "Readable Doc"
+    assert response.json()[0]["role"] == "owner"
+    assert response.json()[0]["created_at"]
+    assert response.json()[0]["updated_at"]
+
+
 def test_update_document_success() -> None:
     client = create_test_client()
     _, token = create_user_and_token(client, "owner@example.com", "Owner")
@@ -146,7 +168,23 @@ def test_unauthenticated_access_rejected() -> None:
     assert response.status_code == 401
     assert response.json() == {
         "error_code": "UNAUTHORIZED",
-        "message": "Authorization token is missing.",
+        "message": "Missing or invalid bearer token.",
+        "retryable": False,
+    }
+
+
+def test_invalid_token_access_rejected() -> None:
+    client = create_test_client()
+
+    response = client.get(
+        "/v1/documents",
+        headers={"Authorization": "Bearer invalid.jwt.token"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "error_code": "UNAUTHORIZED",
+        "message": "Invalid or expired token.",
         "retryable": False,
     }
 
@@ -173,5 +211,33 @@ def test_non_owner_access_rejected() -> None:
     assert response.json() == {
         "error_code": "PERMISSION_DENIED",
         "message": "You are not allowed to access this document.",
+        "retryable": False,
+    }
+
+
+def test_delete_document_success() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Temporary Doc", "initial_content": "Draft"},
+        headers={"Authorization": "Bearer {token}".format(token=token)},
+    )
+    document_id = create_response.json()["document_id"]
+
+    delete_response = client.delete(
+        "/v1/documents/{document_id}".format(document_id=document_id),
+        headers={"Authorization": "Bearer {token}".format(token=token)},
+    )
+    fetch_response = client.get(
+        "/v1/documents/{document_id}".format(document_id=document_id),
+        headers={"Authorization": "Bearer {token}".format(token=token)},
+    )
+
+    assert delete_response.status_code == 204
+    assert fetch_response.status_code == 404
+    assert fetch_response.json() == {
+        "error_code": "DOCUMENT_NOT_FOUND",
+        "message": "Document not found.",
         "retryable": False,
     }

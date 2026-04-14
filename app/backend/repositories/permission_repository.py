@@ -1,7 +1,8 @@
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
+from app.backend.models.document import Document
 from app.backend.models.document_permission import DocumentPermission
 
 
@@ -26,6 +27,19 @@ class PermissionRepository:
                 DocumentPermission.user_id == user_id,
             )
             .first()
+        )
+
+    def list_for_user(self, user_id: int) -> list[DocumentPermission]:
+        return (
+            self.db.query(DocumentPermission)
+            .options(
+                joinedload(DocumentPermission.document).joinedload(Document.owner),
+                joinedload(DocumentPermission.document).joinedload(
+                    Document.latest_version
+                ),
+            )
+            .filter(DocumentPermission.user_id == user_id)
+            .all()
         )
 
     def create(

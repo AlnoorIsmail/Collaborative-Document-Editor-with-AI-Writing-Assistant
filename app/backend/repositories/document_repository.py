@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -41,6 +41,18 @@ class DocumentRepository:
             .first()
         )
 
+    def list_owned_by_user(self, user_id: int) -> List[Document]:
+        return (
+            self.db.query(Document)
+            .options(
+                joinedload(Document.owner),
+                joinedload(Document.latest_version),
+            )
+            .filter(Document.owner_id == user_id)
+            .order_by(Document.updated_at.desc(), Document.created_at.desc())
+            .all()
+        )
+
     def update(self, document: Document, **fields) -> Document:
         for key, value in fields.items():
             setattr(document, key, value)
@@ -49,3 +61,10 @@ class DocumentRepository:
         self.db.flush()
         self.db.refresh(document)
         return document
+
+    def delete(self, document: Document) -> None:
+        document.latest_version_id = None
+        self.db.add(document)
+        self.db.flush()
+        self.db.delete(document)
+        self.db.flush()

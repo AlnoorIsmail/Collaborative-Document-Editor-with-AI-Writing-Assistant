@@ -1,5 +1,6 @@
 """Authentication tests covering both merged auth flows and protected Part B routes."""
 
+from app.backend.core.security import decode_access_token
 from app.backend.tests.conftest import create_test_client
 
 EXPECTED_UNAUTHORIZED = {
@@ -59,9 +60,9 @@ def test_duplicate_register_rejected() -> None:
     second_response = client.post("/v1/auth/register", json=payload)
 
     assert first_response.status_code == 201
-    assert second_response.status_code == 400
+    assert second_response.status_code == 409
     assert second_response.json() == {
-        "error_code": "VALIDATION_ERROR",
+        "error_code": "CONFLICT",
         "message": "A user with this email already exists.",
         "retryable": False,
     }
@@ -85,6 +86,10 @@ def test_login_success() -> None:
     body = response.json()
     assert body["token_type"] == "bearer"
     assert body["access_token"]
+    assert body["refresh_token"]
+    assert body["access_token_expires_in"] > 0
+    assert body["refresh_token_expires_in"] > 0
+    assert decode_access_token(body["access_token"])["sub"] == "1"
     assert body["user"] == {
         "user_id": 1,
         "email": "alice@example.com",
@@ -116,6 +121,51 @@ def test_invalid_login_rejected() -> None:
     }
 
 
+def test_refresh_rotates_session() -> None:
+    client = create_test_client()
+    client.post(
+        "/v1/auth/register",
+        json={
+            "email": "alice@example.com",
+            "display_name": "Alice",
+            "password": "strong-password",
+        },
+    )
+
+    login_response = client.post(
+        "/v1/auth/login",
+        json={"email": "alice@example.com", "password": "strong-password"},
+    )
+    refresh_token = login_response.json()["refresh_token"]
+
+    refresh_response = client.post(
+        "/v1/auth/refresh",
+        json={"refresh_token": refresh_token},
+    )
+
+    assert refresh_response.status_code == 200
+    assert refresh_response.json()["access_token"]
+    assert refresh_response.json()["refresh_token"]
+    assert refresh_response.json()["refresh_token"] != refresh_token
+    assert refresh_response.json()["user"] == {
+        "user_id": 1,
+        "email": "alice@example.com",
+        "display_name": "Alice",
+    }
+
+    reused_refresh_response = client.post(
+        "/v1/auth/refresh",
+        json={"refresh_token": refresh_token},
+    )
+
+    assert reused_refresh_response.status_code == 401
+    assert reused_refresh_response.json() == {
+        "error_code": "UNAUTHORIZED",
+        "message": "Invalid or expired refresh token.",
+        "retryable": False,
+    }
+
+
 def test_me_returns_current_user_with_valid_auth() -> None:
     client = create_test_client()
     client.post(
@@ -143,4 +193,20 @@ def test_me_returns_current_user_with_valid_auth() -> None:
         "email": "alice@example.com",
         "display_name": "Alice",
         "account_status": "active",
+    }
+
+
+def test_me_rejects_invalid_token() -> None:
+    client = create_test_client()
+
+    response = client.get(
+        "/v1/auth/me",
+        headers={"Authorization": "Bearer invalid.jwt.token"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "error_code": "UNAUTHORIZED",
+        "message": "Invalid or expired token.",
+        "retryable": False,
     }

@@ -19,6 +19,7 @@ from app.backend.schemas.document import (
     DocumentExportResponse,
     DocumentMetadataResponse,
     DocumentOwnerResponse,
+    DocumentSummaryResponse,
     DocumentUpdate,
     LatestVersionReference,
 )
@@ -34,16 +35,43 @@ class DocumentService:
     ) -> None:
         self.document_repository = document_repository
         self.version_repository = version_repository
+        self.permission_repository = permission_repository
         self.access_service = DocumentAccessService(
             document_repository,
             permission_repository,
+        )
+
+    def list_documents(self, *, current_user: User) -> list[DocumentSummaryResponse]:
+        owned_documents = self.document_repository.list_owned_by_user(current_user.id)
+        shared_permissions = self.permission_repository.list_for_user(current_user.id)
+
+        documents_by_id: dict[int, DocumentSummaryResponse] = {}
+        for document in owned_documents:
+            documents_by_id[document.id] = self._to_document_summary_response(
+                document=document,
+                role="owner",
+            )
+
+        for permission in shared_permissions:
+            document = permission.document
+            if document.id in documents_by_id:
+                continue
+            documents_by_id[document.id] = self._to_document_summary_response(
+                document=document,
+                role=permission.role,
+            )
+
+        return sorted(
+            documents_by_id.values(),
+            key=lambda document: (document.updated_at, document.created_at),
+            reverse=True,
         )
 
     def create_document(
         self, *, payload: DocumentCreate, current_user: User
     ) -> DocumentCreateResponse:
         document = self.document_repository.create(
-            title=payload.title,
+            title=payload.title.strip(),
             content=payload.initial_content,
             content_format=payload.content_format,
             ai_enabled=payload.ai_enabled,
@@ -79,7 +107,9 @@ class DocumentService:
         )
 
         update_fields = payload.model_dump(exclude_unset=True)
-        updated_document = self.document_repository.update(access.document, **update_fields)
+        updated_document = self.document_repository.update(
+            access.document, **update_fields
+        )
         self.document_repository.db.commit()
         refreshed_access = self.access_service.require_read_access(
             document_id=updated_document.id,
@@ -92,6 +122,14 @@ class DocumentService:
             role=refreshed_access.role,
             updated_at=refreshed_access.document.updated_at,
         )
+
+    def delete_document(self, *, document_id: str | int, current_user: User) -> None:
+        access = self.access_service.require_owner_access(
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+        self.document_repository.delete(access.document)
+        self.document_repository.db.commit()
 
     def save_document_content(
         self,
@@ -195,7 +233,9 @@ class DocumentService:
         latest_version = self.version_repository.get_latest_for_document(document.id)
         version = self.version_repository.create(
             document_id=document.id,
-            version_number=1 if latest_version is None else latest_version.version_number + 1,
+            version_number=(
+                1 if latest_version is None else latest_version.version_number + 1
+            ),
             content_snapshot=document.content,
             created_by=current_user.id,
             is_restore_version=mark_as_restore,
@@ -203,7 +243,9 @@ class DocumentService:
         self.document_repository.update(document, latest_version_id=version.id)
         return version
 
-    def _ensure_matching_revision(self, *, base_revision: int, current_revision: int) -> None:
+    def _ensure_matching_revision(
+        self, *, base_revision: int, current_revision: int
+    ) -> None:
         if base_revision == current_revision:
             return
         raise ApiError(
@@ -232,7 +274,7 @@ class DocumentService:
                 .replace(">", "&gt;")
             )
             html = (
-                "<article data-document-id=\"{document_id}\" data-revision=\"{revision}\">"
+                '<article data-document-id="{document_id}" data-revision="{revision}">'
                 "<h1>{title}</h1><pre>{content}</pre></article>"
             ).format(
                 document_id=document.id,
@@ -310,7 +352,31 @@ class DocumentService:
             updated_at=document.updated_at,
         )
 
-    def _to_document_detail_response(self, access: DocumentAccess) -> DocumentDetailResponse:
+    def _to_document_summary_response(
+        self,
+        *,
+        document: Document,
+        role: str,
+    ) -> DocumentSummaryResponse:
+        latest_version = self._latest_version_reference(document)
+        return DocumentSummaryResponse(
+            document_id=document.id,
+            title=document.title,
+            content_format=document.content_format,
+            owner=self._owner_response(document),
+            owner_user_id=document.owner_id,
+            role=role,
+            ai_enabled=document.ai_enabled,
+            revision=0 if latest_version is None else latest_version.revision,
+            latest_version_id=document.latest_version_id,
+            latest_version=latest_version,
+            created_at=document.created_at,
+            updated_at=document.updated_at,
+        )
+
+    def _to_document_detail_response(
+        self, access: DocumentAccess
+    ) -> DocumentDetailResponse:
         latest_version = self._latest_version_reference(access.document)
         return DocumentDetailResponse(
             document_id=access.document.id,

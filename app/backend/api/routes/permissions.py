@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from app.backend.api.routes.auth import get_current_authenticated_user
+from app.backend.api.deps import get_current_authenticated_user
 from app.backend.core.database import get_db
 from app.backend.models.user import User
 from app.backend.repositories.document_repository import DocumentRepository
@@ -10,7 +10,7 @@ from app.backend.repositories.user_repository import UserRepository
 from app.backend.schemas.permission import PermissionGrantRequest, PermissionResponse
 from app.backend.services.permission_service import PermissionService
 
-router = APIRouter(prefix="/documents", tags=["permissions"])
+router = APIRouter(prefix="/documents", tags=["Permissions"])
 
 
 def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
