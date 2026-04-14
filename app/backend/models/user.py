@@ -37,6 +37,12 @@ class User(Base):
         back_populates="user",
         foreign_keys="DocumentPermission.user_id",
     )
+    refresh_tokens: Mapped[List["RefreshToken"]] = relationship(
+        "RefreshToken",
+        back_populates="user",
+        foreign_keys="RefreshToken.user_id",
+        cascade="all, delete-orphan",
+    )
     sent_invitations: Mapped[List["Invitation"]] = relationship(
         "Invitation",
         back_populates="inviter",

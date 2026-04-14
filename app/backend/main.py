@@ -15,6 +15,7 @@ from app.backend.models import document as _document
 from app.backend.models import document_permission as _document_permission
 from app.backend.models import document_version as _document_version
 from app.backend.models import invitation as _invitation
+from app.backend.models import refresh_token as _refresh_token
 from app.backend.models import share_link as _share_link
 from app.backend.models import user as _user
 
@@ -30,7 +31,13 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title=settings.app_name,
-        version="0.1.0",
+        version="1.0.0",
+        description=(
+            "Backend API for the Collaborative Document Editor with AI Writing "
+            "Assistant. The documented scope includes JWT-based authentication, "
+            "document CRUD, append-only version history, sharing flows, realtime "
+            "session bootstrap, and suggestion-based AI endpoints."
+        ),
         lifespan=lifespan,
     )
 

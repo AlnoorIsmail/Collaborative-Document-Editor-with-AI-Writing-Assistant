@@ -6,5 +6,6 @@ def test_app_boots_and_exposes_openapi(client) -> None:
 
     assert response.status_code == 200
     assert (
-        response.json()["info"]["title"] == "AI Collaborative Document Editor Backend"
+        response.json()["info"]["title"]
+        == "Collaborative Document Editor with AI Writing Assistant Backend"
     )

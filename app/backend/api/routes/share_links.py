@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.backend.api.routes.auth import (
+from app.backend.api.deps import (
     get_current_authenticated_user,
     get_optional_authenticated_user,
 )
@@ -17,7 +17,7 @@ from app.backend.schemas.share_link import (
 )
 from app.backend.services.share_link_service import ShareLinkService
 
-router = APIRouter(prefix="/share-links", tags=["share-links"])
+router = APIRouter(prefix="/share-links", tags=["Share Links"])
 
 
 def get_share_link_service(db: Session = Depends(get_db)) -> ShareLinkService:
