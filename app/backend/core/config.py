@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     ai_model: str = "gpt-4o-mini"
     ai_request_timeout_seconds: float = 30.0
     allowed_origins: list[str] = Field(
+        validation_alias=AliasChoices("ALLOWED_ORIGINS", "AI_COLLAB_ALLOWED_ORIGINS"),
         default_factory=lambda: [
             "http://localhost:3000",
             "http://localhost:5173",
