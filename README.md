@@ -39,6 +39,7 @@ The backend reads `.env` values through `pydantic-settings`. The main variables 
 - `REFRESH_TOKEN_EXPIRE_DAYS`: refresh token TTL
 - `DATABASE_URL`: SQLite connection string by default
 - `JWT_ALGORITHM`: JWT signing algorithm, default `HS256`
+- `AI_COLLAB_ALLOWED_ORIGINS`: JSON-list CORS origins; the default local list already includes `http://localhost:5173`
 
 An example file is included at [.env.example](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/.env.example).
 
@@ -61,6 +62,8 @@ Useful local URLs:
 - API docs: `http://127.0.0.1:8000/docs`
 - OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
 - Health check: `http://127.0.0.1:8000/health`
+
+For local frontend development, Vite proxies `/v1` requests to `http://127.0.0.1:8000` in [vite.config.js](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/frontend/vite.config.js). If you point the frontend directly at the backend with `VITE_API_BASE_URL`, the backend's default CORS list already allows `http://localhost:5173`.
 
 **How To Run Tests**
 Run all backend tests:
