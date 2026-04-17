@@ -4,7 +4,7 @@ import RegisterPage from './pages/RegisterPage';
 import DocumentsPage from './pages/DocumentsPage';
 import EditorPage from './pages/EditorPage';
 
-function ProtectedRoute({ children }) {
+export function ProtectedRoute({ children }) {
   const token = localStorage.getItem('access_token');
   return token ? children : <Navigate to="/login" replace />;
 }
