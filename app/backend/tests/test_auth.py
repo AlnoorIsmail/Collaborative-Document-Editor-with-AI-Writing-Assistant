@@ -8,6 +8,11 @@ EXPECTED_UNAUTHORIZED = {
     "message": "Missing or invalid bearer token.",
     "retryable": False,
 }
+EXPECTED_INVALID_TOKEN = {
+    "error_code": "UNAUTHORIZED",
+    "message": "Invalid or expired token.",
+    "retryable": False,
+}
 
 
 def test_sessions_route_requires_bearer_token(client) -> None:
@@ -25,6 +30,27 @@ def test_ai_route_requires_bearer_token(client) -> None:
 
     assert response.status_code == 401
     assert response.json() == EXPECTED_UNAUTHORIZED
+
+
+def test_sessions_route_rejects_placeholder_bearer_token(client) -> None:
+    response = client.post(
+        "/v1/documents/1/sessions",
+        headers={"Authorization": "Bearer usr_1:editor"},
+        json={"last_known_revision": 0},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == EXPECTED_INVALID_TOKEN
+
+
+def test_ai_route_rejects_placeholder_bearer_token(client) -> None:
+    response = client.get(
+        "/v1/documents/1/ai/interactions",
+        headers={"Authorization": "Bearer usr_1:editor"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == EXPECTED_INVALID_TOKEN
 
 
 def test_register_success() -> None:
@@ -205,8 +231,4 @@ def test_me_rejects_invalid_token() -> None:
     )
 
     assert response.status_code == 401
-    assert response.json() == {
-        "error_code": "UNAUTHORIZED",
-        "message": "Invalid or expired token.",
-        "retryable": False,
-    }
+    assert response.json() == EXPECTED_INVALID_TOKEN

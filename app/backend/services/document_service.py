@@ -1,3 +1,4 @@
+import html as html_lib
 import json
 import re
 
@@ -268,21 +269,13 @@ class DocumentService:
             return "text/markdown; charset=utf-8", document.content
 
         if export_format == "html":
-            escaped_content = (
-                document.content.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
+            escaped_title = html_lib.escape(document.title, quote=True)
+            escaped_content = html_lib.escape(document.content, quote=True)
+            html_document = (
+                f'<article data-document-id="{document.id}" data-revision="{revision}">'
+                f"<h1>{escaped_title}</h1><pre>{escaped_content}</pre></article>"
             )
-            html = (
-                '<article data-document-id="{document_id}" data-revision="{revision}">'
-                "<h1>{title}</h1><pre>{content}</pre></article>"
-            ).format(
-                document_id=document.id,
-                revision=revision,
-                title=document.title,
-                content=escaped_content,
-            )
-            return "text/html; charset=utf-8", html
+            return "text/html; charset=utf-8", html_document
 
         if export_format == "json":
             payload = {

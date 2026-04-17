@@ -8,12 +8,11 @@ import os
 import secrets
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPBearer
 
 from app.backend.core.config import settings
-from app.backend.schemas.common import ErrorCode
 
 PASSWORD_HASH_ITERATIONS = 260000
 ACCESS_TOKEN_TYPE = "access"
@@ -49,10 +48,10 @@ def get_password_hash(password: str) -> str:
         salt,
         PASSWORD_HASH_ITERATIONS,
     )
-    return "{iterations}${salt}${digest}".format(
-        iterations=PASSWORD_HASH_ITERATIONS,
-        salt=_b64encode(salt),
-        digest=_b64encode(digest),
+    return (
+        f"{PASSWORD_HASH_ITERATIONS}"
+        f"${_b64encode(salt)}"
+        f"${_b64encode(digest)}"
     )
 
 
@@ -88,8 +87,8 @@ def create_token(
     subject: str,
     token_type: str,
     expires_in_seconds: int,
-    token_id: Optional[str] = None,
-    extra_claims: Optional[dict[str, Any]] = None,
+    token_id: str | None = None,
+    extra_claims: dict[str, Any] | None = None,
 ) -> str:
     now = int(time.time())
     header = {
@@ -113,7 +112,7 @@ def create_token(
     return f"{signing_input}.{_sign(signing_input)}"
 
 
-def create_access_token(subject: str, expires_in_minutes: Optional[int] = None) -> str:
+def create_access_token(subject: str, expires_in_minutes: int | None = None) -> str:
     ttl_minutes = (
         settings.access_token_expire_minutes
         if expires_in_minutes is None
@@ -133,7 +132,7 @@ def generate_refresh_token_id() -> str:
 def create_refresh_token(
     subject: str,
     token_id: str,
-    expires_in_days: Optional[int] = None,
+    expires_in_days: int | None = None,
 ) -> str:
     ttl_days = (
         settings.refresh_token_expire_days
@@ -148,7 +147,7 @@ def create_refresh_token(
     )
 
 
-def decode_token(token: str, *, expected_type: Optional[str] = None) -> dict[str, Any]:
+def decode_token(token: str, *, expected_type: str | None = None) -> dict[str, Any]:
     try:
         header_b64, payload_b64, signature_b64 = token.split(".", 2)
     except ValueError as exc:
@@ -186,45 +185,11 @@ def decode_refresh_token(token: str) -> dict[str, Any]:
     return payload
 
 
-def get_principal_from_credentials(
-    credentials: Optional[HTTPAuthorizationCredentials],
+def build_authenticated_principal(
+    *, user_id: int | str, token: str
 ) -> AuthenticatedPrincipal:
-    if credentials is None or not credentials.credentials.strip():
-        from app.backend.core.errors import AppError
-
-        raise AppError(
-            status_code=401,
-            error_code=ErrorCode.UNAUTHORIZED,
-            message="Missing or invalid bearer token.",
-        )
-
-    token = credentials.credentials.strip()
-
-    if ":" in token and "." not in token:
-        candidate_user_id, candidate_role = token.split(":", 1)
-        return AuthenticatedPrincipal(
-            user_id=candidate_user_id or "usr_123",
-            role=candidate_role or "editor",
-            token=token,
-        )
-
-    try:
-        payload = decode_access_token(token)
-    except (TypeError, ValueError):
-        from app.backend.core.errors import AppError
-
-        raise AppError(
-            status_code=401,
-            error_code=ErrorCode.UNAUTHORIZED,
-            message="Missing or invalid bearer token.",
-        )
-
-    user_id = str(payload["sub"])
-    if user_id.isdigit():
-        user_id = f"usr_{user_id}"
-
     return AuthenticatedPrincipal(
-        user_id=user_id,
-        role="editor",
+        user_id=str(user_id),
+        role="authenticated",
         token=token,
     )
