@@ -1,5 +1,6 @@
 # Collaborative Document Editor with AI Writing Assistant
 
+
 This repository contains a university software engineering project with:
 
 - a FastAPI backend in `app/backend`
