@@ -53,27 +53,56 @@ class AIInteractionAcceptedResponse(AppSchema):
     created_at: datetime
 
 
+class AIUsageResponse(AppSchema):
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    estimated_cost_usd: Optional[float] = Field(default=None, ge=0)
+
+
 class AISuggestionPayload(AppSchema):
     suggestion_id: str
     generated_output: str
     model_name: str
     stale: bool
+    usage: Optional[AIUsageResponse] = None
+
+
+class AISelectionRangeResponse(AppSchema):
+    start: int = Field(ge=0)
+    end: int = Field(ge=0)
 
 
 class AIInteractionDetailResponse(AppSchema):
     interaction_id: str
+    feature_type: str
+    scope_type: str
     status: AIInteractionStatus
     document_id: int
     base_revision: int = Field(ge=0)
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    rendered_prompt: str
+    selected_range: Optional[AISelectionRangeResponse] = None
+    selected_text_snapshot: Optional[str] = None
+    surrounding_context: Optional[str] = None
+    user_instruction: Optional[str] = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    outcome: Optional[SuggestionOutcome] = None
+    outcome_recorded_at: Optional[datetime] = None
     suggestion: Optional[AISuggestionPayload] = None
 
 
 class AIInteractionHistoryItem(AppSchema):
     interaction_id: str
     feature_type: str
+    scope_type: str
     user_id: int
     status: AIInteractionStatus
     created_at: datetime
+    model_name: Optional[str] = None
+    outcome: Optional[SuggestionOutcome] = None
+    total_tokens: Optional[int] = Field(default=None, ge=0)
 
 
 class AcceptSuggestionRequest(AppSchema):

@@ -2,6 +2,8 @@
 
 from http import HTTPStatus
 
+from sqlalchemy.exc import IntegrityError
+
 from app.backend.core.contracts import parse_resource_id
 from app.backend.core.errors import ApiError, AppError
 from app.backend.core.security import AuthenticatedPrincipal
@@ -10,6 +12,7 @@ from app.backend.integrations.ai_provider import (
     AIProviderTimeoutError,
     AIProviderUnavailableError,
 )
+from app.backend.models.ai import AIUsageRecord
 from app.backend.repositories.ai import AIRepository
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
@@ -20,7 +23,9 @@ from app.backend.schemas.ai import (
     AIInteractionDetailResponse,
     AIInteractionHistoryItem,
     AIInteractionStatus,
+    AISelectionRangeResponse,
     AISuggestionPayload,
+    AIUsageResponse,
     AcceptSuggestionRequest,
     AcceptSuggestionResponse,
     ApplyEditedSuggestionRequest,
@@ -101,8 +106,20 @@ class AIService:
             feature_type=payload.feature_type,
             scope_type=payload.scope_type,
             base_revision=payload.base_revision,
+            rendered_prompt=prompt,
+            selected_range_start=(
+                None if payload.selected_range is None else payload.selected_range.start
+            ),
+            selected_range_end=(
+                None if payload.selected_range is None else payload.selected_range.end
+            ),
+            selected_text_snapshot=payload.selected_text_snapshot,
+            surrounding_context=payload.surrounding_context,
+            user_instruction=payload.user_instruction,
+            parameters=payload.parameters,
             generated_output=suggestion.generated_output,
             model_name=suggestion.model_name,
+            usage=self._to_usage_record(suggestion.usage),
         )
         return AIInteractionAcceptedResponse(
             interaction_id=record.interaction_id,
@@ -131,9 +148,15 @@ class AIService:
             AIInteractionHistoryItem(
                 interaction_id=record.interaction_id,
                 feature_type=record.feature_type,
+                scope_type=record.scope_type,
                 user_id=record.user_id,
                 status=AIInteractionStatus(record.status),
                 created_at=record.created_at,
+                model_name=record.model_name,
+                outcome=(
+                    None if record.outcome is None else SuggestionOutcome(record.outcome)
+                ),
+                total_tokens=record.total_tokens,
             )
             for record in records
         ]
@@ -160,12 +183,27 @@ class AIService:
                 generated_output=record.suggestion.generated_output,
                 model_name=record.suggestion.model_name,
                 stale=access.current_revision != record.base_revision,
+                usage=self._to_usage_response(record.suggestion.usage),
             )
         return AIInteractionDetailResponse(
             interaction_id=record.interaction_id,
+            feature_type=record.feature_type,
+            scope_type=record.scope_type,
             status=AIInteractionStatus(record.status),
             document_id=record.document_id,
             base_revision=record.base_revision,
+            created_at=record.created_at,
+            completed_at=record.completed_at,
+            rendered_prompt=record.rendered_prompt,
+            selected_range=self._to_selected_range_response(record),
+            selected_text_snapshot=record.selected_text_snapshot,
+            surrounding_context=record.surrounding_context,
+            user_instruction=record.user_instruction,
+            parameters={} if record.parameters is None else dict(record.parameters),
+            outcome=(
+                None if record.outcome is None else SuggestionOutcome(record.outcome)
+            ),
+            outcome_recorded_at=record.outcome_recorded_at,
             suggestion=suggestion,
         )
 
@@ -197,19 +235,31 @@ class AIService:
                 message="The AI interaction has not completed yet.",
             )
 
+        try:
+            updated_document = self._apply_replacement(
+                document=access.document,
+                apply_to_range=payload.apply_to_range,
+                replacement=record.suggestion.generated_output,
+            )
+            version = self._create_version(document=updated_document, user_id=user_id)
+            self._document_repository.db.commit()
+        except IntegrityError as exc:
+            self._document_repository.db.rollback()
+            raise AppError(
+                status_code=HTTPStatus.CONFLICT,
+                error_code=ErrorCode.STALE_SELECTION,
+                message=(
+                    "The selected content changed before the AI suggestion could "
+                    "be applied. Refresh and retry the AI action."
+                ),
+            ) from exc
+
         outcome = self._repository.accept_suggestion(
             suggestion_id=suggestion_id,
             user_id=user_id,
             apply_range_start=payload.apply_to_range.start,
             apply_range_end=payload.apply_to_range.end,
         )
-        updated_document = self._apply_replacement(
-            document=access.document,
-            apply_to_range=payload.apply_to_range,
-            replacement=record.suggestion.generated_output,
-        )
-        version = self._create_version(document=updated_document, user_id=user_id)
-        self._document_repository.db.commit()
         return AcceptSuggestionResponse(
             suggestion_id=outcome.suggestion_id,
             outcome=SuggestionOutcome(outcome.outcome),
@@ -255,6 +305,25 @@ class AIService:
             error_code=ErrorCode.STALE_SELECTION,
         )
 
+        try:
+            updated_document = self._apply_replacement(
+                document=access.document,
+                apply_to_range=payload.apply_to_range,
+                replacement=payload.edited_output,
+            )
+            version = self._create_version(document=updated_document, user_id=user_id)
+            self._document_repository.db.commit()
+        except IntegrityError as exc:
+            self._document_repository.db.rollback()
+            raise AppError(
+                status_code=HTTPStatus.CONFLICT,
+                error_code=ErrorCode.STALE_SELECTION,
+                message=(
+                    "The selected content changed before the AI suggestion could "
+                    "be applied. Refresh and retry the AI action."
+                ),
+            ) from exc
+
         outcome = self._repository.apply_edited_suggestion(
             suggestion_id=suggestion_id,
             user_id=user_id,
@@ -262,13 +331,6 @@ class AIService:
             apply_range_start=payload.apply_to_range.start,
             apply_range_end=payload.apply_to_range.end,
         )
-        updated_document = self._apply_replacement(
-            document=access.document,
-            apply_to_range=payload.apply_to_range,
-            replacement=payload.edited_output,
-        )
-        version = self._create_version(document=updated_document, user_id=user_id)
-        self._document_repository.db.commit()
         return ApplyEditedSuggestionResponse(
             suggestion_id=outcome.suggestion_id,
             outcome=SuggestionOutcome(outcome.outcome),
@@ -317,6 +379,40 @@ class AIService:
             status_code=HTTPStatus.CONFLICT,
             error_code=error_code,
             message=message,
+        )
+
+    def _to_selected_range_response(
+        self, record
+    ) -> AISelectionRangeResponse | None:
+        if record.selected_range_start is None or record.selected_range_end is None:
+            return None
+        return AISelectionRangeResponse(
+            start=record.selected_range_start,
+            end=record.selected_range_end,
+        )
+
+    def _to_usage_record(
+        self, usage
+    ) -> AIUsageRecord | None:
+        if usage is None:
+            return None
+        return AIUsageRecord(
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            estimated_cost_usd=usage.estimated_cost_usd,
+        )
+
+    def _to_usage_response(
+        self, usage: AIUsageRecord | None
+    ) -> AIUsageResponse | None:
+        if usage is None:
+            return None
+        return AIUsageResponse(
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            estimated_cost_usd=usage.estimated_cost_usd,
         )
 
     def _apply_replacement(self, *, document, apply_to_range: TextRange, replacement: str):

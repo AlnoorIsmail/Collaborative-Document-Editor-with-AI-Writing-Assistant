@@ -3,6 +3,7 @@ import json
 import re
 
 from fastapi import status
+from sqlalchemy.exc import IntegrityError
 
 from app.backend.core.errors import ApiError
 from app.backend.models.document import Document
@@ -143,21 +144,36 @@ class DocumentService:
             document_id=document_id,
             user_id=current_user.id,
         )
+        if self._can_acknowledge_existing_save(access=access, content=payload.content):
+            return self._existing_save_response(access.document)
         self._ensure_matching_revision(
             base_revision=payload.base_revision,
             current_revision=access.current_revision,
         )
 
-        updated_document = self.document_repository.update(
-            access.document,
-            content=payload.content,
-        )
-        version = self._create_version(
-            document=updated_document,
-            current_user=current_user,
-            mark_as_restore=False,
-        )
-        self.document_repository.db.commit()
+        try:
+            updated_document = self.document_repository.update(
+                access.document,
+                content=payload.content,
+            )
+            version = self._create_version(
+                document=updated_document,
+                current_user=current_user,
+                mark_as_restore=False,
+            )
+            self.document_repository.db.commit()
+        except IntegrityError:
+            self.document_repository.db.rollback()
+            refreshed_access = self.access_service.require_edit_access(
+                document_id=document_id,
+                user_id=current_user.id,
+            )
+            if self._can_acknowledge_existing_save(
+                access=refreshed_access,
+                content=payload.content,
+            ):
+                return self._existing_save_response(refreshed_access.document)
+            self._raise_concurrent_save_conflict()
         return DocumentContentSaveResponse(
             document_id=updated_document.id,
             latest_version_id=version.id,
@@ -253,6 +269,39 @@ class DocumentService:
             status_code=status.HTTP_409_CONFLICT,
             error_code="CONFLICT_DETECTED",
             message="The document revision is stale. Refresh and retry.",
+        )
+
+    def _can_acknowledge_existing_save(
+        self, *, access: DocumentAccess, content: str
+    ) -> bool:
+        return (
+            access.current_revision > 0
+            and access.document.latest_version is not None
+            and access.document.content == content
+        )
+
+    def _existing_save_response(
+        self, document: Document
+    ) -> DocumentContentSaveResponse:
+        latest_version = document.latest_version
+        if latest_version is None:
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                error_code="CONFLICT_DETECTED",
+                message="The document revision is stale. Refresh and retry.",
+            )
+        return DocumentContentSaveResponse(
+            document_id=document.id,
+            latest_version_id=latest_version.id,
+            revision=latest_version.version_number,
+            saved_at=latest_version.created_at,
+        )
+
+    def _raise_concurrent_save_conflict(self) -> None:
+        raise ApiError(
+            status_code=status.HTTP_409_CONFLICT,
+            error_code="CONFLICT_DETECTED",
+            message="Another collaborator saved a newer revision. Refresh and retry.",
         )
 
     def _serialize_document(

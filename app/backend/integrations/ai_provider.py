@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import math
 import re
 
 import httpx
@@ -42,6 +43,15 @@ class AIProviderUnavailableError(Exception):
 class GeneratedSuggestion:
     generated_output: str
     model_name: str
+    usage: "GeneratedSuggestionUsage"
+
+
+@dataclass(frozen=True)
+class GeneratedSuggestionUsage:
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float | None = None
 
 
 class AIProviderClient(ABC):
@@ -58,14 +68,18 @@ class StubAIProviderClient(AIProviderClient):
     ) -> GeneratedSuggestion:
         normalized_feature = feature_type.strip().lower()
         if normalized_feature == "summarize":
+            output = self._summarize(prompt)
             return GeneratedSuggestion(
-                generated_output=self._summarize(prompt),
+                generated_output=output,
                 model_name="local-summary-fallback",
+                usage=self._estimate_usage(prompt=prompt, completion=output),
             )
 
+        output = self._rewrite(prompt)
         return GeneratedSuggestion(
-            generated_output=self._rewrite(prompt),
+            generated_output=output,
             model_name="local-rewrite-fallback",
+            usage=self._estimate_usage(prompt=prompt, completion=output),
         )
 
     def _summarize(self, prompt: str) -> str:
@@ -157,6 +171,23 @@ class StubAIProviderClient(AIProviderClient):
             return ""
         return match.group(1).strip()
 
+    def _estimate_usage(
+        self, *, prompt: str, completion: str
+    ) -> GeneratedSuggestionUsage:
+        prompt_tokens = self._estimate_tokens(prompt)
+        completion_tokens = self._estimate_tokens(completion)
+        return GeneratedSuggestionUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+        )
+
+    def _estimate_tokens(self, text: str) -> int:
+        normalized = text.strip()
+        if not normalized:
+            return 0
+        return max(1, math.ceil(len(normalized) / 4))
+
 
 class OpenAICompatibleAIProviderClient(AIProviderClient):
     def __init__(
@@ -166,11 +197,15 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
         api_url: str,
         model_name: str,
         timeout_seconds: float,
+        prompt_token_cost_per_1k: float = 0.0,
+        completion_token_cost_per_1k: float = 0.0,
     ) -> None:
         self._api_key = api_key.strip()
         self._api_url = api_url.strip()
         self._model_name = model_name.strip()
         self._timeout_seconds = timeout_seconds
+        self._prompt_token_cost_per_1k = prompt_token_cost_per_1k
+        self._completion_token_cost_per_1k = completion_token_cost_per_1k
 
     def generate_suggestion(
         self, *, feature_type: str, prompt: str
@@ -220,6 +255,7 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
         return GeneratedSuggestion(
             generated_output=generated_output,
             model_name=str(payload.get("model") or self._model_name),
+            usage=self._extract_usage(payload, prompt=prompt, completion=generated_output),
         )
 
     def _system_instruction(self, feature_type: str) -> str:
@@ -256,3 +292,61 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
             return "\n".join(parts).strip()
 
         return ""
+
+    def _extract_usage(
+        self,
+        payload: dict,
+        *,
+        prompt: str,
+        completion: str,
+    ) -> GeneratedSuggestionUsage:
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            prompt_tokens = self._coerce_token_count(usage.get("prompt_tokens"))
+            completion_tokens = self._coerce_token_count(usage.get("completion_tokens"))
+            total_tokens = self._coerce_token_count(usage.get("total_tokens"))
+            if total_tokens == 0:
+                total_tokens = prompt_tokens + completion_tokens
+            return GeneratedSuggestionUsage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                estimated_cost_usd=self._estimate_cost(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                ),
+            )
+
+        prompt_tokens = self._estimate_tokens(prompt)
+        completion_tokens = self._estimate_tokens(completion)
+        return GeneratedSuggestionUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            estimated_cost_usd=self._estimate_cost(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            ),
+        )
+
+    def _estimate_cost(
+        self, *, prompt_tokens: int, completion_tokens: int
+    ) -> float | None:
+        total_cost = (
+            (prompt_tokens / 1000) * self._prompt_token_cost_per_1k
+            + (completion_tokens / 1000) * self._completion_token_cost_per_1k
+        )
+        if total_cost <= 0:
+            return None
+        return round(total_cost, 6)
+
+    def _coerce_token_count(self, value: object) -> int:
+        if isinstance(value, int) and value >= 0:
+            return value
+        return 0
+
+    def _estimate_tokens(self, text: str) -> int:
+        normalized = text.strip()
+        if not normalized:
+            return 0
+        return max(1, math.ceil(len(normalized) / 4))

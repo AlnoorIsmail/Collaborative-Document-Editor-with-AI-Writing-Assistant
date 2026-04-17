@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     ai_api_url: str = ""
     ai_model: str = "gpt-4o-mini"
     ai_request_timeout_seconds: float = 30.0
+    ai_prompt_token_cost_per_1k: float = 0.0
+    ai_completion_token_cost_per_1k: float = 0.0
     allowed_origins: list[str] = Field(
         validation_alias=AliasChoices("ALLOWED_ORIGINS", "AI_COLLAB_ALLOWED_ORIGINS"),
         default_factory=lambda: [

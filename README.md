@@ -13,6 +13,9 @@ The backend now includes the assigned implementation scope for:
 - document CRUD for authenticated users
 - append-only version history and restore
 - pytest unit and integration coverage for auth and document flows
+- safe idempotent document saves for repeated same-content submissions
+- richer session bootstrap metadata for resync and active collaborator presence
+- AI interaction audit metadata including rendered prompt, scope inputs, usage, and outcome tracking
 
 **Project Purpose**
 The system supports collaborative document work with AI-assisted writing features. The backend in this repository focuses on secure authentication, document persistence, version tracking, sharing-related extensions already present in the repo, and clean API contracts for the frontend.
@@ -112,6 +115,17 @@ Document flow:
 - orchestration is handled in [document_service.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/services/document_service.py) and [version_service.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/services/version_service.py)
 - persistence uses SQLAlchemy models and lightweight repositories against SQLite
 - content saves append version entries, and restore creates a brand-new version instead of mutating history
+- repeated saves of already-persisted content reuse the current version instead of creating duplicate version rows
+
+Collaboration bootstrap:
+
+- `POST /v1/documents/{documentId}/sessions` now returns the current server revision plus `resync_required`, `missed_revision_count`, and an `active_collaborators` snapshot from the in-memory session repository
+- reconnecting the same user to the same document reuses the existing session identity while refreshing presence timestamps
+
+AI flow:
+
+- AI suggestions remain reviewable before apply, but the backend now records the rendered prompt, selected scope inputs, provider/model metadata, token usage, and the accept/reject/edited outcome on the interaction record
+- AI document-apply flows only record acceptance or modification outcomes after the document/version write commits successfully
 
 **Testing Overview**
 Relevant backend coverage includes:
@@ -121,6 +135,8 @@ Relevant backend coverage includes:
 - document CRUD integration tests in [test_documents.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/tests/test_documents.py)
 - version restore tests in [test_versions.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/tests/test_versions.py)
 - end-to-end contract coverage in [test_backend_contracts.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/tests/test_backend_contracts.py)
+- collaboration-focused coverage for repeated saves, resync metadata, and active collaborator snapshots in [test_documents.py](/Users/alnoor.ismail/Documents/GitHub/Collaborative-Document-Editor-with-AI-Writing-Assistant/app/backend/tests/test_documents.py)
+- AI audit/usage contract coverage in [test_contract_stubs.py](/Users/alnoor.ismail/Documents/GitHub/Collaborative-Document-Editor-with-AI-Writing-Assistant/app/backend/tests/test_contract_stubs.py) and [test_ai_provider.py](/Users/alnoor.ismail/Documents/GitHub/Collaborative-Document-Editor-with-AI-Writing-Assistant/app/backend/tests/test_ai_provider.py)
 
 **Notes**
 - SQLite is used as the default assignment-friendly persistence layer.
