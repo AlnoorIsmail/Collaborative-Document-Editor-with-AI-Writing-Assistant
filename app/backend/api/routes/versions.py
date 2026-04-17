@@ -1,6 +1,4 @@
-from typing import List
-
-from typing import Annotated, List
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -17,7 +15,9 @@ from app.backend.services.version_service import VersionService
 router = APIRouter(prefix="/documents", tags=["Versions"])
 
 
-def get_version_service(db: Session = Depends(get_db)) -> VersionService:
+def get_version_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> VersionService:
     return VersionService(
         DocumentRepository(db),
         VersionRepository(db),
@@ -27,7 +27,7 @@ def get_version_service(db: Session = Depends(get_db)) -> VersionService:
 
 @router.get(
     "/{documentId}/versions",
-    response_model=List[VersionResponse],
+    response_model=list[VersionResponse],
     summary="List document versions",
     description="Return append-only version history metadata for a readable document.",
 )
@@ -35,7 +35,7 @@ def list_versions(
     documentId: str,
     current_user: Annotated[User, Depends(get_current_authenticated_user)],
     version_service: Annotated[VersionService, Depends(get_version_service)],
-) -> List[VersionResponse]:
+) -> list[VersionResponse]:
     return version_service.list_versions(
         document_id=documentId, current_user=current_user
     )

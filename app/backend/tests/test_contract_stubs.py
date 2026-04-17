@@ -131,7 +131,11 @@ def test_get_ai_interaction_returns_suggestion_stub(client, auth_headers) -> Non
 
 def test_accept_suggestion_returns_applied_contract(client, auth_headers) -> None:
     document_id, interaction = create_ai_interaction(client, auth_headers)
-    suggestion_id = get_suggestion_id(client, auth_headers, interaction["interaction_id"])
+    suggestion_id = get_suggestion_id(
+        client,
+        auth_headers,
+        interaction["interaction_id"],
+    )
 
     accept_response = client.post(
         f"/v1/ai/suggestions/{suggestion_id}/accept",
@@ -158,7 +162,11 @@ def test_accept_suggestion_returns_applied_contract(client, auth_headers) -> Non
 
 def test_reject_suggestion_returns_rejected_contract(client, auth_headers) -> None:
     _, interaction = create_ai_interaction(client, auth_headers)
-    suggestion_id = get_suggestion_id(client, auth_headers, interaction["interaction_id"])
+    suggestion_id = get_suggestion_id(
+        client,
+        auth_headers,
+        interaction["interaction_id"],
+    )
 
     reject_response = client.post(
         f"/v1/ai/suggestions/{suggestion_id}/reject",
@@ -172,9 +180,15 @@ def test_reject_suggestion_returns_rejected_contract(client, auth_headers) -> No
     }
 
 
-def test_apply_edited_suggestion_returns_modified_contract(client, auth_headers) -> None:
+def test_apply_edited_suggestion_returns_modified_contract(
+    client, auth_headers
+) -> None:
     document_id, interaction = create_ai_interaction(client, auth_headers)
-    suggestion_id = get_suggestion_id(client, auth_headers, interaction["interaction_id"])
+    suggestion_id = get_suggestion_id(
+        client,
+        auth_headers,
+        interaction["interaction_id"],
+    )
 
     apply_response = client.post(
         f"/v1/ai/suggestions/{suggestion_id}/apply-edited",
@@ -203,3 +217,51 @@ def test_apply_edited_suggestion_returns_modified_contract(client, auth_headers)
         == "User-modified version of the suggestion"
     )
     assert document_response.json()["revision"] == 1
+
+
+def test_viewer_cannot_start_ai_interaction_even_with_ai_flag(
+    client, auth_headers
+) -> None:
+    document = create_document(client, auth_headers, initial_content="")
+    viewer, viewer_token = client.post(
+        "/v1/auth/register",
+        json={
+            "email": "viewer@example.com",
+            "display_name": "Viewer",
+            "password": "strong-password",
+        },
+    ).json(), client.post(
+        "/v1/auth/login",
+        json={"email": "viewer@example.com", "password": "strong-password"},
+    ).json()["access_token"]
+    owner_headers = auth_headers
+    viewer_headers = {"Authorization": f"Bearer {viewer_token}"}
+
+    permission_response = client.post(
+        f"/v1/documents/{document['document_id']}/permissions",
+        headers=owner_headers,
+        json={
+            "grantee_type": "user",
+            "user_id": f"usr_{viewer['user_id']}",
+            "role": "viewer",
+            "ai_allowed": True,
+        },
+    )
+    assert permission_response.status_code == 201
+
+    response = client.post(
+        f"/v1/documents/{document['document_id']}/ai/interactions",
+        headers=viewer_headers,
+        json={
+            **CREATE_AI_PAYLOAD,
+            "selected_text_snapshot": "",
+            "selection_range": {"start": 0, "end": 0},
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error_code": "AI_ROLE_NOT_ALLOWED",
+        "message": "Your role is not allowed to use AI features.",
+        "retryable": False,
+    }

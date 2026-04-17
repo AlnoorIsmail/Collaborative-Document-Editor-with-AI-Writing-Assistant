@@ -33,7 +33,7 @@ def test_create_document_success() -> None:
             "content_format": "rich_text",
             "ai_enabled": True,
         },
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 201
@@ -61,13 +61,13 @@ def test_get_document_success() -> None:
     create_response = client.post(
         "/v1/documents",
         json={"title": "Readable Doc", "initial_content": "Body"},
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        headers={"Authorization": f"Bearer {token}"},
     )
     document_id = create_response.json()["document_id"]
 
     response = client.get(
-        "/v1/documents/{document_id}".format(document_id=document_id),
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 200
@@ -90,12 +90,12 @@ def test_list_documents_success() -> None:
     client.post(
         "/v1/documents",
         json={"title": "Readable Doc", "initial_content": "Body"},
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     response = client.get(
         "/v1/documents",
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 200
@@ -106,23 +106,71 @@ def test_list_documents_success() -> None:
     assert response.json()[0]["updated_at"]
 
 
+def test_list_documents_includes_shared_documents_for_grantee() -> None:
+    client = create_test_client()
+    owner, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    viewer, viewer_token = create_user_and_token(client, "viewer@example.com", "Viewer")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Shared Doc", "initial_content": "Body"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    document_id = create_response.json()["document_id"]
+    client.post(
+        f"/v1/documents/{document_id}/permissions",
+        json={
+            "grantee_type": "user",
+            "user_id": f"usr_{viewer['user_id']}",
+            "role": "viewer",
+            "ai_allowed": False,
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+
+    response = client.get(
+        "/v1/documents",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "document_id": document_id,
+            "title": "Shared Doc",
+            "content_format": "plain_text",
+            "owner": {
+                "user_id": owner["user_id"],
+                "display_name": "Owner",
+            },
+            "owner_user_id": owner["user_id"],
+            "role": "viewer",
+            "ai_enabled": True,
+            "revision": 0,
+            "latest_version_id": None,
+            "latest_version": None,
+            "created_at": response.json()[0]["created_at"],
+            "updated_at": response.json()[0]["updated_at"],
+        }
+    ]
+
+
 def test_update_document_success() -> None:
     client = create_test_client()
     _, token = create_user_and_token(client, "owner@example.com", "Owner")
     create_response = client.post(
         "/v1/documents",
         json={"title": "Original", "initial_content": "Draft"},
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        headers={"Authorization": f"Bearer {token}"},
     )
     document_id = create_response.json()["document_id"]
 
     response = client.patch(
-        "/v1/documents/{document_id}".format(document_id=document_id),
+        f"/v1/documents/{document_id}",
         json={
             "title": "Updated",
             "ai_enabled": False,
         },
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 200
@@ -140,14 +188,14 @@ def test_save_document_content_success() -> None:
     create_response = client.post(
         "/v1/documents",
         json={"title": "Original", "initial_content": ""},
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        headers={"Authorization": f"Bearer {token}"},
     )
     document_id = create_response.json()["document_id"]
 
     response = client.patch(
-        "/v1/documents/{document_id}/content".format(document_id=document_id),
+        f"/v1/documents/{document_id}/content",
         json={"content": "Final copy", "base_revision": 0},
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 200
@@ -198,13 +246,13 @@ def test_non_owner_access_rejected() -> None:
     create_response = client.post(
         "/v1/documents",
         json={"title": "Owner Doc", "initial_content": "Secret"},
-        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+        headers={"Authorization": f"Bearer {owner_token}"},
     )
     document_id = create_response.json()["document_id"]
 
     response = client.get(
-        "/v1/documents/{document_id}".format(document_id=document_id),
-        headers={"Authorization": "Bearer {token}".format(token=stranger_token)},
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {stranger_token}"},
     )
 
     assert response.status_code == 403
@@ -221,17 +269,17 @@ def test_delete_document_success() -> None:
     create_response = client.post(
         "/v1/documents",
         json={"title": "Temporary Doc", "initial_content": "Draft"},
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        headers={"Authorization": f"Bearer {token}"},
     )
     document_id = create_response.json()["document_id"]
 
     delete_response = client.delete(
-        "/v1/documents/{document_id}".format(document_id=document_id),
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {token}"},
     )
     fetch_response = client.get(
-        "/v1/documents/{document_id}".format(document_id=document_id),
-        headers={"Authorization": "Bearer {token}".format(token=token)},
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert delete_response.status_code == 204
@@ -241,3 +289,29 @@ def test_delete_document_success() -> None:
         "message": "Document not found.",
         "retryable": False,
     }
+
+
+def test_html_export_escapes_title_and_content() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_response = client.post(
+        "/v1/documents",
+        json={
+            "title": '<script>alert("title")</script>',
+            "initial_content": '<b>unsafe</b>',
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    document_id = create_response.json()["document_id"]
+
+    response = client.post(
+        f"/v1/documents/{document_id}/export",
+        json={"format": "html"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert "&lt;script&gt;alert(&quot;title&quot;)&lt;/script&gt;" in response.json()[
+        "exported_content"
+    ]
+    assert "&lt;b&gt;unsafe&lt;/b&gt;" in response.json()["exported_content"]
