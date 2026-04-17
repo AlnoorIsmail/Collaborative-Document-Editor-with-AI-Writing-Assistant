@@ -29,11 +29,6 @@ export default function Navbar({
   const inputRef = useRef(null);
   const navigate = useNavigate();
 
-  // Keep draft in sync when title prop changes externally
-  useEffect(() => {
-    if (!editing) setDraft(title);
-  }, [title, editing]);
-
   function startEditing() {
     if (isReadOnly) return;
     setDraft(title);

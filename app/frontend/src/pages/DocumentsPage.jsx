@@ -28,7 +28,12 @@ export default function DocumentsPage() {
     try {
       const doc = await apiJSON('/documents', {
         method: 'POST',
-        body: JSON.stringify({ title: 'Untitled document', initial_content: '' }),
+        body: JSON.stringify({
+          title: 'Untitled document',
+          initial_content: '',
+          content_format: 'html',
+          ai_enabled: true,
+        }),
       });
       navigate(`/documents/${doc.document_id}`);
     } catch (err) {
@@ -91,7 +96,14 @@ export default function DocumentsPage() {
                 tabIndex={0}
                 onKeyDown={e => e.key === 'Enter' && navigate(`/documents/${doc.document_id}`)}
               >
-                <span className="doc-card-title">{doc.title || 'Untitled document'}</span>
+                <div className="doc-card-copy">
+                  <span className="doc-card-title">{doc.title || 'Untitled document'}</span>
+                  <div className="doc-card-meta">
+                    <span>{doc.role || 'viewer'}</span>
+                    <span>{doc.ai_enabled ? 'AI enabled' : 'AI off'}</span>
+                    <span>Revision {doc.revision ?? 0}</span>
+                  </div>
+                </div>
                 <span className="doc-card-date">{formatDate(doc.updated_at || doc.created_at)}</span>
               </li>
             ))}

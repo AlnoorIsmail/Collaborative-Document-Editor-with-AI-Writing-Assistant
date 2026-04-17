@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle } from 'react';
+import { forwardRef, useEffect, useImperativeHandle } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -135,7 +135,7 @@ function Toolbar({ editor }) {
  *   onChange     - called with new HTML on every change
  *   readOnly     - boolean, disables editing
  *   placeholder  - placeholder text
- *   onSelectionUpdate - (selectedText: string) => void, called when selection changes
+ *   onSelectionUpdate - ({ text, from, to }) => void, called when selection changes
  *
  * Ref methods:
  *   getSelectedText() - returns the currently selected text
@@ -155,11 +155,12 @@ const TiptapEditor = forwardRef(function TiptapEditor(
       onChange?.(editor.getHTML());
     },
     onSelectionUpdate({ editor }) {
-      if (onSelectionUpdate) {
-        const { from, to } = editor.state.selection;
-        const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ');
-        onSelectionUpdate(text);
-      }
+      if (!onSelectionUpdate) return;
+
+      const { from, to } = editor.state.selection;
+      const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ');
+
+      onSelectionUpdate({ text, from, to });
     },
   });
 
@@ -174,21 +175,48 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     getHTML() {
       return editor?.getHTML() ?? '';
     },
+    getText() {
+      return editor?.getText() ?? '';
+    },
+    getSelection() {
+      if (!editor) {
+        return { text: '', from: 0, to: 0 };
+      }
+
+      const { from, to } = editor.state.selection;
+
+      return {
+        text: from === to ? '' : editor.state.doc.textBetween(from, to, ' '),
+        from,
+        to,
+      };
+    },
+    setContent(nextContent) {
+      if (!editor) return '';
+      editor.commands.setContent(nextContent || '', false);
+      return editor.getHTML();
+    },
+    replaceRange(from, to, text) {
+      if (!editor) return '';
+      editor.chain().focus().insertContentAt({ from, to }, text).run();
+      return editor.getHTML();
+    },
     focus() {
       editor?.commands.focus();
     },
   }), [editor]);
 
   // Sync editable state when readOnly prop changes
-  if (editor && editor.isEditable === readOnly) {
+  useEffect(() => {
+    if (!editor) return;
     editor.setEditable(!readOnly);
-  }
+  }, [editor, readOnly]);
 
-  // Sync content when the prop changes externally (e.g. after initial load)
-  // Only on first meaningful content load (when editor is empty and content arrives)
-  if (editor && content && editor.isEmpty) {
-    editor.commands.setContent(content, false);
-  }
+  useEffect(() => {
+    if (!editor || typeof content !== 'string') return;
+    if (content === editor.getHTML()) return;
+    editor.commands.setContent(content || '', false);
+  }, [editor, content]);
 
   return (
     <div className={`editor-wrapper ${readOnly ? 'editor-readonly' : ''}`}>

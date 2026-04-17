@@ -68,7 +68,7 @@ export async function apiJSON(path, options = {}) {
   if (!res.ok) {
     let errData;
     try { errData = await res.json(); } catch { errData = { detail: res.statusText }; }
-    const err = new Error(errData.detail || `HTTP ${res.status}`);
+    const err = new Error(errData.message || errData.detail || `HTTP ${res.status}`);
     err.status = res.status;
     err.data = errData;
     throw err;
