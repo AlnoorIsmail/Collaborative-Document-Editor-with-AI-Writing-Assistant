@@ -24,7 +24,7 @@ from app.backend.repositories.ai import AIRepository, StubAIRepository
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.refresh_token_repository import RefreshTokenRepository
-from app.backend.repositories.sessions import SessionRepository, StubSessionRepository
+from app.backend.repositories.sessions import InMemorySessionRepository, SessionRepository
 from app.backend.repositories.user_repository import UserRepository
 from app.backend.repositories.version_repository import VersionRepository
 from app.backend.services.ai.ai_service import AIService
@@ -97,7 +97,7 @@ def get_optional_authenticated_user(
 
 @lru_cache
 def get_session_repository() -> SessionRepository:
-    return StubSessionRepository()
+    return InMemorySessionRepository()
 
 
 @lru_cache
@@ -114,6 +114,8 @@ def get_ai_provider() -> AIProviderClient:
             api_url=settings.ai_api_url,
             model_name=settings.ai_model,
             timeout_seconds=settings.ai_request_timeout_seconds,
+            prompt_token_cost_per_1k=settings.ai_prompt_token_cost_per_1k,
+            completion_token_cost_per_1k=settings.ai_completion_token_cost_per_1k,
         )
     return StubAIProviderClient()
 

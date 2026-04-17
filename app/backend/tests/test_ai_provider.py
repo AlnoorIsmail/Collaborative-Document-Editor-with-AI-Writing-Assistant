@@ -33,6 +33,12 @@ def test_stub_summary_returns_polished_document_based_summary() -> None:
     )
 
     assert result.model_name == "local-summary-fallback"
+    assert result.usage is not None
+    assert result.usage.prompt_tokens > 0
+    assert result.usage.completion_tokens > 0
+    assert result.usage.total_tokens == (
+        result.usage.prompt_tokens + result.usage.completion_tokens
+    )
     assert (
         result.generated_output
         == "I cannot attend the meeting tomorrow because I am sick. Please send me notes after."
@@ -54,6 +60,12 @@ def test_stub_rewrite_uses_document_text_and_formal_instruction() -> None:
     )
 
     assert result.model_name == "local-rewrite-fallback"
+    assert result.usage is not None
+    assert result.usage.prompt_tokens > 0
+    assert result.usage.completion_tokens > 0
+    assert result.usage.total_tokens == (
+        result.usage.prompt_tokens + result.usage.completion_tokens
+    )
     assert (
         result.generated_output
         == "I am unable to attend the meeting tomorrow because I am unwell. Please share the notes with me afterward."

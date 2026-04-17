@@ -65,13 +65,23 @@ def test_session_bootstrap_returns_contract_shaped_response(
     )
 
     assert response.status_code == 201
-    assert response.json() == {
-        "session_id": "sess_1",
-        "session_token": "realtime-jwt",
-        "document_id": document["document_id"],
-        "revision": 0,
-        "realtime_url": "wss://api.example.com/realtime",
-    }
+    body = response.json()
+    assert body["session_id"] == "sess_1"
+    assert body["session_token"]
+    assert body["document_id"] == document["document_id"]
+    assert body["revision"] == 0
+    assert body["realtime_url"] == "wss://api.example.com/realtime"
+    assert body["resync_required"] is False
+    assert body["missed_revision_count"] == 0
+    assert body["active_collaborators"] == [
+        {
+            "user_id": 1,
+            "session_id": "sess_1",
+            "last_known_revision": 0,
+            "joined_at": body["active_collaborators"][0]["joined_at"],
+            "last_seen_at": body["active_collaborators"][0]["last_seen_at"],
+        }
+    ]
 
 
 def test_create_ai_interaction_returns_pending_stub(client, auth_headers) -> None:
@@ -99,11 +109,16 @@ def test_list_ai_interactions_returns_history_stub(client, auth_headers) -> None
         {
             "interaction_id": interaction["interaction_id"],
             "feature_type": "rewrite",
+            "scope_type": "selection",
             "user_id": 1,
             "status": "completed",
             "created_at": interaction["created_at"],
+            "model_name": "local-rewrite-fallback",
+            "outcome": None,
+            "total_tokens": response.json()[0]["total_tokens"],
         }
     ]
+    assert response.json()[0]["total_tokens"] > 0
 
 
 def test_get_ai_interaction_returns_suggestion_stub(client, auth_headers) -> None:
@@ -115,18 +130,37 @@ def test_get_ai_interaction_returns_suggestion_stub(client, auth_headers) -> Non
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "interaction_id": interaction["interaction_id"],
-        "status": "completed",
-        "document_id": document_id,
-        "base_revision": 0,
-        "suggestion": {
-            "suggestion_id": "sug_1",
-            "generated_output": "Original selected paragraph.",
-            "model_name": "local-rewrite-fallback",
-            "stale": False,
+    body = response.json()
+    assert body["interaction_id"] == interaction["interaction_id"]
+    assert body["feature_type"] == "rewrite"
+    assert body["scope_type"] == "selection"
+    assert body["status"] == "completed"
+    assert body["document_id"] == document_id
+    assert body["base_revision"] == 0
+    assert body["created_at"] == interaction["created_at"]
+    assert body["completed_at"] == "2026-03-25T10:40:02Z"
+    assert "FEATURE_TYPE:\nrewrite" in body["rendered_prompt"]
+    assert body["selected_range"] == {"start": 0, "end": len(DEFAULT_DOCUMENT_CONTENT)}
+    assert body["selected_text_snapshot"] == DEFAULT_DOCUMENT_CONTENT
+    assert body["surrounding_context"] == "Previous and next sentence"
+    assert body["user_instruction"] == "Make this more formal"
+    assert body["parameters"] == {"tone": "formal"}
+    assert body["outcome"] is None
+    assert body["outcome_recorded_at"] is None
+    assert body["suggestion"] == {
+        "suggestion_id": "sug_1",
+        "generated_output": "Original selected paragraph.",
+        "model_name": "local-rewrite-fallback",
+        "stale": False,
+        "usage": {
+            "prompt_tokens": body["suggestion"]["usage"]["prompt_tokens"],
+            "completion_tokens": body["suggestion"]["usage"]["completion_tokens"],
+            "total_tokens": body["suggestion"]["usage"]["total_tokens"],
+            "estimated_cost_usd": None,
         },
     }
+    assert body["suggestion"]["usage"]["prompt_tokens"] > 0
+    assert body["suggestion"]["usage"]["completion_tokens"] > 0
 
 
 def test_accept_suggestion_returns_applied_contract(client, auth_headers) -> None:
@@ -178,6 +212,14 @@ def test_reject_suggestion_returns_rejected_contract(client, auth_headers) -> No
         "suggestion_id": suggestion_id,
         "outcome": "rejected",
     }
+
+    detail_response = client.get(
+        f"/v1/ai/interactions/{interaction['interaction_id']}",
+        headers=auth_headers,
+    )
+    assert detail_response.status_code == 200
+    assert detail_response.json()["outcome"] == "rejected"
+    assert detail_response.json()["outcome_recorded_at"]
 
 
 def test_apply_edited_suggestion_returns_modified_contract(

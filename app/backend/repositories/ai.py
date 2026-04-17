@@ -1,14 +1,18 @@
 """Repository seams for AI interaction and suggestion scaffolding."""
 
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
+from typing import Any
 
+from app.backend.core.contracts import utc_now
 from app.backend.core.errors import AppError
 from app.backend.models.ai import (
     AIInteractionHistoryRecord,
     AIInteractionRecord,
     AISuggestionRecord,
+    AIUsageRecord,
     SuggestionOutcomeRecord,
 )
 from app.backend.schemas.common import ErrorCode
@@ -26,8 +30,16 @@ class AIRepository(ABC):
         feature_type: str,
         scope_type: str,
         base_revision: int,
+        rendered_prompt: str,
+        selected_range_start: int | None,
+        selected_range_end: int | None,
+        selected_text_snapshot: str | None,
+        surrounding_context: str | None,
+        user_instruction: str | None,
+        parameters: dict[str, Any],
         generated_output: str,
         model_name: str,
+        usage: AIUsageRecord | None,
     ) -> AIInteractionRecord:
         """Create an AI interaction record."""
 
@@ -94,8 +106,16 @@ class StubAIRepository(AIRepository):
         feature_type: str,
         scope_type: str,
         base_revision: int,
+        rendered_prompt: str,
+        selected_range_start: int | None,
+        selected_range_end: int | None,
+        selected_text_snapshot: str | None,
+        surrounding_context: str | None,
+        user_instruction: str | None,
+        parameters: dict[str, Any],
         generated_output: str,
         model_name: str,
+        usage: AIUsageRecord | None,
     ) -> AIInteractionRecord:
         self._interaction_sequence += 1
         interaction_id = f"ai_{self._interaction_sequence}"
@@ -111,6 +131,14 @@ class StubAIRepository(AIRepository):
             status="pending",
             base_revision=base_revision,
             created_at=created_at,
+            completed_at=None,
+            rendered_prompt=rendered_prompt,
+            selected_range_start=selected_range_start,
+            selected_range_end=selected_range_end,
+            selected_text_snapshot=selected_text_snapshot,
+            surrounding_context=surrounding_context,
+            user_instruction=user_instruction,
+            parameters=dict(parameters),
         )
         self._interactions[interaction_id] = record
         self._prepared_suggestions[interaction_id] = AISuggestionRecord(
@@ -118,6 +146,7 @@ class StubAIRepository(AIRepository):
             generated_output=generated_output,
             model_name=model_name,
             stale=False,
+            usage=usage,
         )
         self._suggestion_to_interaction[suggestion_id] = interaction_id
         return record
@@ -129,9 +158,19 @@ class StubAIRepository(AIRepository):
             AIInteractionHistoryRecord(
                 interaction_id=record.interaction_id,
                 feature_type=record.feature_type,
+                scope_type=record.scope_type,
                 user_id=record.user_id,
                 status=record.status,
                 created_at=record.created_at,
+                model_name=(
+                    None if record.suggestion is None else record.suggestion.model_name
+                ),
+                outcome=record.outcome,
+                total_tokens=(
+                    None
+                    if record.suggestion is None or record.suggestion.usage is None
+                    else record.suggestion.usage.total_tokens
+                ),
             )
             for record in self._complete_matching_interactions(
                 document_id=document_id,
@@ -162,10 +201,15 @@ class StubAIRepository(AIRepository):
         apply_range_start: int,
         apply_range_end: int,
     ) -> SuggestionOutcomeRecord:
-        del apply_range_start, apply_range_end
         interaction = self._get_interaction_for_suggestion(
             suggestion_id=suggestion_id,
             user_id=user_id,
+        )
+        self._record_outcome(
+            interaction=interaction,
+            outcome="accepted",
+            apply_range_start=apply_range_start,
+            apply_range_end=apply_range_end,
         )
         return SuggestionOutcomeRecord(
             suggestion_id=suggestion_id,
@@ -177,9 +221,13 @@ class StubAIRepository(AIRepository):
     def reject_suggestion(
         self, *, suggestion_id: str, user_id: int
     ) -> SuggestionOutcomeRecord:
-        self._get_interaction_for_suggestion(
+        interaction = self._get_interaction_for_suggestion(
             suggestion_id=suggestion_id,
             user_id=user_id,
+        )
+        self._record_outcome(
+            interaction=interaction,
+            outcome="rejected",
         )
         return SuggestionOutcomeRecord(
             suggestion_id=suggestion_id,
@@ -197,10 +245,16 @@ class StubAIRepository(AIRepository):
         apply_range_start: int,
         apply_range_end: int,
     ) -> SuggestionOutcomeRecord:
-        del edited_output, apply_range_start, apply_range_end
         interaction = self._get_interaction_for_suggestion(
             suggestion_id=suggestion_id,
             user_id=user_id,
+        )
+        self._record_outcome(
+            interaction=interaction,
+            outcome="modified",
+            apply_range_start=apply_range_start,
+            apply_range_end=apply_range_end,
+            edited_output=edited_output,
         )
         return SuggestionOutcomeRecord(
             suggestion_id=suggestion_id,
@@ -230,15 +284,10 @@ class StubAIRepository(AIRepository):
         if record.status == "completed":
             return record
 
-        completed = AIInteractionRecord(
-            interaction_id=record.interaction_id,
-            document_id=record.document_id,
-            user_id=record.user_id,
-            feature_type=record.feature_type,
-            scope_type=record.scope_type,
+        completed = replace(
+            record,
             status="completed",
-            base_revision=record.base_revision,
-            created_at=record.created_at,
+            completed_at=record.created_at + timedelta(seconds=2),
             suggestion=self._prepared_suggestions[interaction_id],
         )
         self._interactions[interaction_id] = completed
@@ -272,3 +321,21 @@ class StubAIRepository(AIRepository):
 
         self._ensure_owned_interaction(interaction_id=interaction_id, user_id=user_id)
         return self._complete_interaction(interaction_id)
+
+    def _record_outcome(
+        self,
+        *,
+        interaction: AIInteractionRecord,
+        outcome: str,
+        apply_range_start: int | None = None,
+        apply_range_end: int | None = None,
+        edited_output: str | None = None,
+    ) -> None:
+        self._interactions[interaction.interaction_id] = replace(
+            interaction,
+            outcome=outcome,
+            outcome_recorded_at=utc_now(),
+            apply_range_start=apply_range_start,
+            apply_range_end=apply_range_end,
+            edited_output=edited_output,
+        )

@@ -205,6 +205,120 @@ def test_save_document_content_success() -> None:
     assert response.json()["saved_at"]
 
 
+def test_repeated_same_content_save_reuses_existing_version() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Original", "initial_content": ""},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    document_id = create_response.json()["document_id"]
+
+    first_save = client.patch(
+        f"/v1/documents/{document_id}/content",
+        json={"content": "Stable body", "base_revision": 0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    second_save = client.patch(
+        f"/v1/documents/{document_id}/content",
+        json={"content": "Stable body", "base_revision": 1},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    versions = client.get(
+        f"/v1/documents/{document_id}/versions",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert first_save.status_code == 200
+    assert second_save.status_code == 200
+    assert second_save.json() == first_save.json()
+    assert versions.status_code == 200
+    assert len(versions.json()) == 1
+
+
+def test_stale_same_content_save_returns_current_version_instead_of_conflict() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Original", "initial_content": ""},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    document_id = create_response.json()["document_id"]
+
+    first_save = client.patch(
+        f"/v1/documents/{document_id}/content",
+        json={"content": "Shared body", "base_revision": 0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    late_duplicate_save = client.patch(
+        f"/v1/documents/{document_id}/content",
+        json={"content": "Shared body", "base_revision": 0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert first_save.status_code == 200
+    assert late_duplicate_save.status_code == 200
+    assert late_duplicate_save.json() == first_save.json()
+
+
+def test_session_bootstrap_reports_resync_and_active_collaborators() -> None:
+    client = create_test_client()
+    owner, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    editor, editor_token = create_user_and_token(client, "editor@example.com", "Editor")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Shared Doc", "initial_content": ""},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    document_id = create_response.json()["document_id"]
+    save_response = client.patch(
+        f"/v1/documents/{document_id}/content",
+        json={"content": "First shared revision", "base_revision": 0},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    permission_response = client.post(
+        f"/v1/documents/{document_id}/permissions",
+        json={
+            "grantee_type": "user",
+            "user_id": f"usr_{editor['user_id']}",
+            "role": "editor",
+            "ai_allowed": True,
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    owner_session = client.post(
+        f"/v1/documents/{document_id}/sessions",
+        json={"last_known_revision": 0},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    editor_session = client.post(
+        f"/v1/documents/{document_id}/sessions",
+        json={"last_known_revision": 1},
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+
+    assert save_response.status_code == 200
+    assert permission_response.status_code == 201
+    assert owner_session.status_code == 201
+    assert owner_session.json()["document_id"] == document_id
+    assert owner_session.json()["revision"] == 1
+    assert owner_session.json()["resync_required"] is True
+    assert owner_session.json()["missed_revision_count"] == 1
+    assert len(owner_session.json()["active_collaborators"]) == 1
+    assert owner_session.json()["active_collaborators"][0]["user_id"] == owner["user_id"]
+
+    assert editor_session.status_code == 201
+    assert editor_session.json()["resync_required"] is False
+    assert editor_session.json()["missed_revision_count"] == 0
+    assert len(editor_session.json()["active_collaborators"]) == 2
+    assert {
+        collaborator["user_id"]
+        for collaborator in editor_session.json()["active_collaborators"]
+    } == {owner["user_id"], editor["user_id"]}
+
+
 def test_unauthenticated_access_rejected() -> None:
     client = create_test_client()
 

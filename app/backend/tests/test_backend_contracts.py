@@ -157,9 +157,24 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
         "document_id",
         "revision",
         "realtime_url",
+        "resync_required",
+        "missed_revision_count",
+        "active_collaborators",
     }
+    assert session_body["session_id"] == "sess_1"
+    assert session_body["session_token"]
     assert session_body["document_id"] == document_id
     assert session_body["revision"] == 0
+    assert session_body["resync_required"] is False
+    assert session_body["missed_revision_count"] == 0
+    assert len(session_body["active_collaborators"]) == 1
+    assert set(session_body["active_collaborators"][0]) == {
+        "user_id",
+        "session_id",
+        "last_known_revision",
+        "joined_at",
+        "last_seen_at",
+    }
 
     create_ai_response = client.post(
         f"/v1/documents/{document_id}/ai/interactions",
@@ -200,10 +215,15 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
     assert list_ai_body[0] == {
         "interaction_id": create_ai_body["interaction_id"],
         "feature_type": "rewrite",
+        "scope_type": "selection",
         "user_id": user_id,
         "status": "completed",
         "created_at": create_ai_body["created_at"],
+        "model_name": "local-rewrite-fallback",
+        "outcome": None,
+        "total_tokens": list_ai_body[0]["total_tokens"],
     }
+    assert list_ai_body[0]["total_tokens"] > 0
 
     detail_response = client.get(
         f"/v1/ai/interactions/{create_ai_body['interaction_id']}",
@@ -212,18 +232,51 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
 
     assert detail_response.status_code == 200
     detail_body = detail_response.json()
-    assert detail_body == {
-        "interaction_id": create_ai_body["interaction_id"],
-        "status": "completed",
-        "document_id": document_id,
-        "base_revision": 0,
-        "suggestion": {
-            "suggestion_id": "sug_1",
-            "generated_output": "First draft.",
-            "model_name": "local-rewrite-fallback",
-            "stale": False,
+    assert set(detail_body) == {
+        "interaction_id",
+        "feature_type",
+        "scope_type",
+        "status",
+        "document_id",
+        "base_revision",
+        "created_at",
+        "completed_at",
+        "rendered_prompt",
+        "selected_range",
+        "selected_text_snapshot",
+        "surrounding_context",
+        "user_instruction",
+        "parameters",
+        "outcome",
+        "outcome_recorded_at",
+        "suggestion",
+    }
+    assert detail_body["interaction_id"] == create_ai_body["interaction_id"]
+    assert detail_body["feature_type"] == "rewrite"
+    assert detail_body["scope_type"] == "selection"
+    assert detail_body["status"] == "completed"
+    assert detail_body["document_id"] == document_id
+    assert detail_body["base_revision"] == 0
+    assert detail_body["selected_range"] == {"start": 0, "end": 11}
+    assert detail_body["selected_text_snapshot"] == "First draft"
+    assert detail_body["surrounding_context"] == "Short implementation document"
+    assert detail_body["user_instruction"] == "Make this more formal"
+    assert detail_body["parameters"] == {"tone": "formal"}
+    assert detail_body["outcome"] is None
+    assert detail_body["outcome_recorded_at"] is None
+    assert detail_body["suggestion"] == {
+        "suggestion_id": "sug_1",
+        "generated_output": "First draft.",
+        "model_name": "local-rewrite-fallback",
+        "stale": False,
+        "usage": {
+            "prompt_tokens": detail_body["suggestion"]["usage"]["prompt_tokens"],
+            "completion_tokens": detail_body["suggestion"]["usage"]["completion_tokens"],
+            "total_tokens": detail_body["suggestion"]["usage"]["total_tokens"],
+            "estimated_cost_usd": None,
         },
     }
+    assert detail_body["suggestion"]["usage"]["total_tokens"] > 0
 
     accept_response = client.post(
         f"/v1/ai/suggestions/{detail_body['suggestion']['suggestion_id']}/accept",
@@ -238,3 +291,11 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
         "applied": True,
         "new_revision": 1,
     }
+
+    post_accept_detail = client.get(
+        f"/v1/ai/interactions/{create_ai_body['interaction_id']}",
+        headers=headers,
+    )
+    assert post_accept_detail.status_code == 200
+    assert post_accept_detail.json()["outcome"] == "accepted"
+    assert post_accept_detail.json()["outcome_recorded_at"]

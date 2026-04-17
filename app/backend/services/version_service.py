@@ -1,7 +1,8 @@
 from fastapi import status
+from sqlalchemy.exc import IntegrityError
 
 from app.backend.core.contracts import parse_resource_id
-from app.backend.core.errors import ApiError
+from app.backend.core.errors import ApiError, AppError
 from app.backend.models.user import User
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
@@ -72,11 +73,22 @@ class VersionService:
             access.document,
             content=version.content_snapshot,
         )
-        restore_version_entry = self._create_restore_version(
-            document=restored_document,
-            current_user=current_user,
-        )
-        self.document_repository.db.commit()
+        try:
+            restore_version_entry = self._create_restore_version(
+                document=restored_document,
+                current_user=current_user,
+            )
+            self.document_repository.db.commit()
+        except IntegrityError as exc:
+            self.document_repository.db.rollback()
+            raise AppError(
+                status_code=status.HTTP_409_CONFLICT,
+                error_code="CONFLICT_DETECTED",
+                message=(
+                    "The document changed before the restore completed. Refresh "
+                    "and retry the restore."
+                ),
+            ) from exc
         return VersionRestoreResponse(
             document_id=restored_document.id,
             restored_from_version_id=version.id,
