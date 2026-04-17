@@ -28,9 +28,9 @@ export default function DocumentsPage() {
     try {
       const doc = await apiJSON('/documents', {
         method: 'POST',
-        body: JSON.stringify({ title: 'Untitled document', content: '' }),
+        body: JSON.stringify({ title: 'Untitled document', initial_content: '' }),
       });
-      navigate(`/documents/${doc.id}`);
+      navigate(`/documents/${doc.document_id}`);
     } catch (err) {
       setError(err.message);
       setCreating(false);
@@ -84,12 +84,12 @@ export default function DocumentsPage() {
           <ul className="docs-list">
             {documents.map(doc => (
               <li
-                key={doc.id}
+                key={doc.document_id}
                 className="doc-card"
-                onClick={() => navigate(`/documents/${doc.id}`)}
+                onClick={() => navigate(`/documents/${doc.document_id}`)}
                 role="button"
                 tabIndex={0}
-                onKeyDown={e => e.key === 'Enter' && navigate(`/documents/${doc.id}`)}
+                onKeyDown={e => e.key === 'Enter' && navigate(`/documents/${doc.document_id}`)}
               >
                 <span className="doc-card-title">{doc.title || 'Untitled document'}</span>
                 <span className="doc-card-date">{formatDate(doc.updated_at || doc.created_at)}</span>

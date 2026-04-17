@@ -5,7 +5,7 @@ import Navbar from '../components/Navbar';
 import TiptapEditor from '../components/TiptapEditor';
 import ShareModal from '../components/ShareModal';
 
-const AUTO_SAVE_INTERVAL = 30_000; // 30 seconds
+const AUTO_SAVE_INTERVAL = 30_000;
 
 export default function EditorPage() {
   const { id } = useParams();
@@ -13,10 +13,10 @@ export default function EditorPage() {
 
   const [doc, setDoc] = useState(null);
   const [user, setUser] = useState(null);
-  const [role, setRole] = useState('owner'); // 'owner' | 'editor' | 'viewer'
+  const [role, setRole] = useState('owner');
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'unsaved'
+  const [saveStatus, setSaveStatus] = useState('saved');
   const [showShare, setShowShare] = useState(false);
   const [error, setError] = useState('');
 
@@ -25,7 +25,6 @@ export default function EditorPage() {
   const titleRef = useRef('');
   const isDirtyRef = useRef(false);
 
-  // Load document and current user
   useEffect(() => {
     Promise.all([
       apiJSON(`/documents/${id}`),
@@ -35,16 +34,20 @@ export default function EditorPage() {
         setDoc(docData);
         setUser(userData);
         setTitle(docData.title || '');
-        setContent(docData.content || '');
-        contentRef.current = docData.content || '';
+
+        const initialContent = docData.current_content || docData.content || '';
+        setContent(initialContent);
+        contentRef.current = initialContent;
         titleRef.current = docData.title || '';
 
-        // Determine role
-        if (docData.owner_id && userData.id && docData.owner_id === userData.id) {
+        const ownerId = docData.owner_id || docData.owner_user_id;
+        const userId = userData.id || userData.user_id;
+
+        if (ownerId && userId && ownerId === userId) {
           setRole('owner');
         } else {
           const collab = (docData.collaborators || []).find(
-            c => c.user_id === userData.id || c.email === userData.email
+            c => c.user_id === userId || c.email === userData.email
           );
           setRole(collab?.role || 'viewer');
         }
@@ -55,7 +58,6 @@ export default function EditorPage() {
       });
   }, [id, navigate]);
 
-  // Auto-save every 30 seconds
   const saveContent = useCallback(async () => {
     if (!isDirtyRef.current) return;
     setSaveStatus('saving');
@@ -76,7 +78,6 @@ export default function EditorPage() {
     return () => clearInterval(timer);
   }, [saveContent]);
 
-  // Save on page unload if dirty
   useEffect(() => {
     function handleUnload() {
       if (isDirtyRef.current) {
