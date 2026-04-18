@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.backend.core.contracts import utc_now
@@ -24,6 +24,7 @@ class Document(Base):
         ForeignKey("users.id"), index=True, nullable=False
     )
     ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    line_spacing: Mapped[float] = mapped_column(Float, default=1.15, nullable=False)
     latest_version_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("document_versions.id"),
         nullable=True,

@@ -1,7 +1,32 @@
 import { forwardRef, useEffect, useImperativeHandle } from 'react';
+import { Extension } from '@tiptap/core';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
+
+const LINE_SPACING_OPTIONS = [
+  { value: 1, label: 'Single' },
+  { value: 1.15, label: '1.15' },
+  { value: 1.5, label: '1.5' },
+  { value: 2, label: 'Double' },
+];
+
+const EditorKeymap = Extension.create({
+  name: 'editorKeymap',
+  addKeyboardShortcuts() {
+    return {
+      'Shift-Enter': () => this.editor.commands.setHardBreak(),
+    };
+  },
+});
+
+function clampLineSpacing(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 1.15;
+  }
+  return Math.min(3, Math.max(1, numeric));
+}
 
 // Toolbar button component
 function ToolbarButton({ onClick, active, disabled, title, children }) {
@@ -19,7 +44,7 @@ function ToolbarButton({ onClick, active, disabled, title, children }) {
   );
 }
 
-function Toolbar({ editor }) {
+function Toolbar({ editor, lineSpacing, onLineSpacingChange }) {
   if (!editor) return null;
 
   return (
@@ -108,6 +133,27 @@ function Toolbar({ editor }) {
       <div className="toolbar-divider" />
 
       <div className="toolbar-group">
+        <label className="toolbar-line-spacing" htmlFor="line-spacing-select">
+          <span className="toolbar-line-spacing-label">Line spacing</span>
+          <select
+            id="line-spacing-select"
+            className="toolbar-line-spacing-select"
+            value={lineSpacing}
+            onChange={(event) => onLineSpacingChange?.(Number(event.target.value))}
+            aria-label="Line spacing"
+          >
+            {LINE_SPACING_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="toolbar-divider" />
+
+      <div className="toolbar-group">
         <ToolbarButton
           onClick={() => editor.chain().focus().undo().run()}
           disabled={!editor.can().undo()}
@@ -136,19 +182,34 @@ function Toolbar({ editor }) {
  *   readOnly     - boolean, disables editing
  *   placeholder  - placeholder text
  *   onSelectionUpdate - ({ text, from, to }) => void, called when selection changes
+ *   lineSpacing  - unitless line spacing value persisted with the document
+ *   onLineSpacingChange - (nextLineSpacing) => void
  *
  * Ref methods:
  *   getSelectionData() - returns the current selected text and range
  *   replaceRange({ from, to, text }) - replaces a specific editor range
+ *   setSelection({ from, to }) - sets the current editor selection
+ *   insertParagraphBreak() - inserts a new paragraph at the current selection
+ *   insertHardBreak() - inserts a soft line break at the current selection
  */
 const TiptapEditor = forwardRef(function TiptapEditor(
-  { content, onChange, readOnly = false, placeholder = 'Start writing…', onSelectionUpdate },
+  {
+    content,
+    onChange,
+    readOnly = false,
+    placeholder = 'Start writing…',
+    onSelectionUpdate,
+    lineSpacing = 1.15,
+    onLineSpacingChange,
+  },
   ref
 ) {
+  const normalizedLineSpacing = clampLineSpacing(lineSpacing);
   const editor = useEditor({
     extensions: [
       StarterKit,
       Placeholder.configure({ placeholder }),
+      EditorKeymap,
     ],
     content,
     editable: !readOnly,
@@ -196,6 +257,27 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     focus() {
       editor?.commands.focus();
     },
+    setSelection({ from, to = from }) {
+      if (!editor) {
+        return false;
+      }
+
+      return editor.commands.setTextSelection({ from, to });
+    },
+    insertParagraphBreak() {
+      if (!editor) {
+        return false;
+      }
+
+      return editor.chain().focus().splitBlock().run();
+    },
+    insertHardBreak() {
+      if (!editor) {
+        return false;
+      }
+
+      return editor.chain().focus().setHardBreak().run();
+    },
   }), [editor]);
 
   useEffect(() => {
@@ -215,8 +297,20 @@ const TiptapEditor = forwardRef(function TiptapEditor(
   }, [content, editor]);
 
   return (
-    <div className={`editor-wrapper ${readOnly ? 'editor-readonly' : ''}`}>
-      {!readOnly && <Toolbar editor={editor} />}
+    <div
+      className={`editor-wrapper ${readOnly ? 'editor-readonly' : ''}`}
+      style={{
+        '--editor-line-spacing': normalizedLineSpacing,
+        '--editor-block-gap': `${Math.max(0.5, normalizedLineSpacing * 0.5)}rem`,
+      }}
+    >
+      {!readOnly && (
+        <Toolbar
+          editor={editor}
+          lineSpacing={normalizedLineSpacing}
+          onLineSpacingChange={onLineSpacingChange}
+        />
+      )}
       <EditorContent editor={editor} className="editor-content" />
     </div>
   );

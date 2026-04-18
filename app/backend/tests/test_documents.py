@@ -51,6 +51,7 @@ def test_create_document_success() -> None:
     assert response.json()["owner_user_id"] == owner["user_id"]
     assert response.json()["role"] == "owner"
     assert response.json()["ai_enabled"] is True
+    assert response.json()["line_spacing"] == 1.15
     assert response.json()["revision"] == 0
     assert response.json()["latest_version_id"] is None
     assert response.json()["latest_version"] is None
@@ -83,6 +84,7 @@ def test_get_document_success() -> None:
     }
     assert response.json()["owner_user_id"] == owner["user_id"]
     assert response.json()["role"] == "owner"
+    assert response.json()["line_spacing"] == 1.15
     assert response.json()["revision"] == 0
     assert response.json()["created_at"]
 
@@ -106,6 +108,7 @@ def test_list_documents_success() -> None:
     assert response.json()[0]["title"] == "Readable Doc"
     assert response.json()[0]["preview_text"] == "Body"
     assert response.json()[0]["role"] == "owner"
+    assert response.json()[0]["line_spacing"] == 1.15
     assert response.json()[0]["created_at"]
     assert response.json()[0]["updated_at"]
 
@@ -150,6 +153,7 @@ def test_list_documents_includes_shared_documents_for_grantee() -> None:
             "owner_user_id": owner["user_id"],
             "role": "viewer",
             "ai_enabled": True,
+            "line_spacing": 1.15,
             "revision": 0,
             "latest_version_id": None,
             "latest_version": None,
@@ -295,6 +299,7 @@ def test_update_document_success() -> None:
     assert response.json()["document_id"] == document_id
     assert response.json()["title"] == "Updated"
     assert response.json()["ai_enabled"] is False
+    assert response.json()["line_spacing"] == 1.15
     assert response.json()["role"] == "owner"
     assert response.json()["updated_at"]
     assert "current_content" not in response.json()
@@ -319,6 +324,7 @@ def test_save_document_content_success() -> None:
     assert response.status_code == 200
     assert response.json()["document_id"] == document_id
     assert response.json()["latest_version_id"] == 1
+    assert response.json()["line_spacing"] == 1.15
     assert response.json()["revision"] == 1
     assert response.json()["saved_at"]
 
@@ -422,6 +428,10 @@ def test_session_bootstrap_reports_resync_and_active_collaborators() -> None:
     assert owner_session.status_code == 201
     assert owner_session.json()["document_id"] == document_id
     assert owner_session.json()["revision"] == 1
+    assert (
+        owner_session.json()["realtime_url"]
+        == f"/v1/documents/{document_id}/sessions/sess_1/ws"
+    )
     assert owner_session.json()["resync_required"] is True
     assert owner_session.json()["missed_revision_count"] == 1
     assert len(owner_session.json()["active_collaborators"]) == 1
@@ -429,6 +439,10 @@ def test_session_bootstrap_reports_resync_and_active_collaborators() -> None:
     assert owner_session.json()["active_collaborators"][0]["display_name"] == "Owner"
 
     assert editor_session.status_code == 201
+    assert (
+        editor_session.json()["realtime_url"]
+        == f"/v1/documents/{document_id}/sessions/sess_2/ws"
+    )
     assert editor_session.json()["resync_required"] is False
     assert editor_session.json()["missed_revision_count"] == 0
     assert len(editor_session.json()["active_collaborators"]) == 2
@@ -528,14 +542,16 @@ def test_delete_document_success() -> None:
     }
 
 
-def test_html_export_escapes_title_and_content() -> None:
+def test_html_export_renders_rich_text_content_while_escaping_title() -> None:
     client = create_test_client()
     _, token = create_user_and_token(client, "owner@example.com", "Owner")
     create_response = client.post(
         "/v1/documents",
         json={
             "title": '<script>alert("title")</script>',
-            "initial_content": '<b>unsafe</b>',
+            "initial_content": '<p><strong>Formatted</strong> body</p>',
+            "content_format": "rich_text",
+            "line_spacing": 1.5,
         },
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -548,7 +564,68 @@ def test_html_export_escapes_title_and_content() -> None:
     )
 
     assert response.status_code == 200
-    assert "&lt;script&gt;alert(&quot;title&quot;)&lt;/script&gt;" in response.json()[
-        "exported_content"
-    ]
-    assert "&lt;b&gt;unsafe&lt;/b&gt;" in response.json()["exported_content"]
+    exported_content = response.json()["exported_content"]
+    assert exported_content.startswith("<!doctype html>")
+    assert "&lt;script&gt;alert(&quot;title&quot;)&lt;/script&gt;" in exported_content
+    assert "<pre>" not in exported_content
+    assert "<strong>Formatted</strong> body" in exported_content
+    assert 'data-document-id="{document_id}"'.format(document_id=document_id) in exported_content
+    assert 'data-revision="0"' in exported_content
+    assert "line-height: 1.5;" in exported_content
+
+
+def test_plain_text_export_strips_rich_text_tags() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_response = client.post(
+        "/v1/documents",
+        json={
+            "title": "Rich text export",
+            "initial_content": "<h1>Title</h1><p>Hello <strong>world</strong></p><ul><li>One</li><li>Two</li></ul>",
+            "content_format": "rich_text",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    document_id = create_response.json()["document_id"]
+
+    response = client.post(
+        f"/v1/documents/{document_id}/export",
+        json={"format": "plain_text"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    exported_content = response.json()["exported_content"]
+    assert "<p>" not in exported_content
+    assert "<strong>" not in exported_content
+    assert "Hello world" in exported_content
+    assert "- One" in exported_content
+    assert "- Two" in exported_content
+
+
+def test_markdown_export_converts_rich_text_tags_to_markdown() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_response = client.post(
+        "/v1/documents",
+        json={
+            "title": "Markdown export",
+            "initial_content": "<h2>Heading</h2><p><strong>Bold</strong> and <em>italic</em></p>",
+            "content_format": "rich_text",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    document_id = create_response.json()["document_id"]
+
+    response = client.post(
+        f"/v1/documents/{document_id}/export",
+        json={"format": "markdown"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    exported_content = response.json()["exported_content"]
+    assert "<p>" not in exported_content
+    assert "<strong>" not in exported_content
+    assert "## Heading" in exported_content
+    assert "**Bold** and *italic*" in exported_content

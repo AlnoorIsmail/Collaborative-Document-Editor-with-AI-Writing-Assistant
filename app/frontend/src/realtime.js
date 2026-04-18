@@ -9,7 +9,7 @@ export function buildRealtimeSocketUrl({
 }) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;
-  const fallbackBase = `${protocol}//${host}/v1/documents/${documentId}/sessions/${sessionId}/ws`;
+  const fallbackBase = `/v1/documents/${documentId}/sessions/${sessionId}/ws`;
 
   let base = fallbackBase;
   if (typeof realtimeUrl === 'string' && realtimeUrl.includes('/sessions/')) {

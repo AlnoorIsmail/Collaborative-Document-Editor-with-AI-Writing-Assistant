@@ -81,30 +81,35 @@ def test_websocket_supports_basic_message_exchange() -> None:
         presence = _receive_until(socket, "presence_snapshot")
 
         assert joined["content"] == "Draft"
+        assert joined["line_spacing"] == 1.15
         assert presence["presence"][0]["display_name"] == "Owner"
 
         socket.send_json(
             {
                 "type": "content_update",
                 "content": "Realtime saved content",
+                "line_spacing": 1.5,
                 "base_revision": 0,
             }
         )
         update = _receive_until(socket, "content_updated")
         assert update["revision"] == 1
         assert update["content"] == "Realtime saved content"
+        assert update["line_spacing"] == 1.5
         assert update["actor_display_name"] == "Owner"
 
         socket.send_json(
             {
                 "type": "content_update",
                 "content": "Stale content",
+                "line_spacing": 1.15,
                 "base_revision": 0,
             }
         )
         conflict = _receive_until(socket, "conflict_detected")
         assert conflict["revision"] == 1
         assert conflict["content"] == "Realtime saved content"
+        assert conflict["line_spacing"] == 1.5
 
     refreshed_document = client.get(
         f"/v1/documents/{document_id}",
@@ -112,3 +117,4 @@ def test_websocket_supports_basic_message_exchange() -> None:
     )
     assert refreshed_document.status_code == 200
     assert refreshed_document.json()["current_content"] == "Realtime saved content"
+    assert refreshed_document.json()["line_spacing"] == 1.5

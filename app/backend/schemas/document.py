@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,6 +23,12 @@ class DocumentCreate(BaseModel):
         default=True,
         description="Whether AI suggestion features are enabled for the document.",
     )
+    line_spacing: float = Field(
+        default=1.15,
+        ge=1.0,
+        le=3.0,
+        description="Unitless line spacing used when rendering the document editor.",
+    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -36,6 +43,12 @@ class DocumentUpdate(BaseModel):
         default=None,
         description="Toggle AI suggestion features for the document.",
     )
+    line_spacing: Optional[float] = Field(
+        default=None,
+        ge=1.0,
+        le=3.0,
+        description="Unitless line spacing used when rendering the document editor.",
+    )
 
     model_config = ConfigDict(extra="forbid")
 
@@ -46,6 +59,16 @@ class DocumentContentSaveRequest(BaseModel):
         ...,
         ge=0,
         description="Current revision known by the client for optimistic concurrency.",
+    )
+    line_spacing: Optional[float] = Field(
+        default=None,
+        ge=1.0,
+        le=3.0,
+        description="Unitless line spacing used when rendering the document editor.",
+    )
+    save_source: Literal["manual", "autosave", "restore"] = Field(
+        default="manual",
+        description="How this save was triggered for version-history display.",
     )
 
     model_config = ConfigDict(extra="forbid")
@@ -75,6 +98,9 @@ class DocumentSummaryResponse(BaseModel):
     owner_user_id: int = Field(..., description="Numeric owner user identifier.")
     role: str = Field(..., description="Current caller role for this document.")
     ai_enabled: bool = Field(..., description="Whether AI suggestions are enabled.")
+    line_spacing: float = Field(
+        ..., description="Unitless line spacing used when rendering the document editor."
+    )
     revision: int = Field(..., ge=0, description="Current document revision number.")
     latest_version_id: Optional[int] = Field(
         default=None,
@@ -94,6 +120,9 @@ class DocumentCreateResponse(BaseModel):
     owner_user_id: int = Field(..., description="Numeric owner user identifier.")
     role: str = Field(..., description="Current caller role for this document.")
     ai_enabled: bool = Field(..., description="Whether AI suggestions are enabled.")
+    line_spacing: float = Field(
+        ..., description="Unitless line spacing used when rendering the document editor."
+    )
     revision: int = Field(..., ge=0, description="Current document revision number.")
     latest_version_id: Optional[int] = Field(
         default=None,
@@ -113,6 +142,9 @@ class DocumentDetailResponse(BaseModel):
     owner_user_id: int = Field(..., description="Numeric owner user identifier.")
     role: str = Field(..., description="Current caller role for this document.")
     ai_enabled: bool = Field(..., description="Whether AI suggestions are enabled.")
+    line_spacing: float = Field(
+        ..., description="Unitless line spacing used when rendering the document editor."
+    )
     revision: int = Field(..., ge=0, description="Current document revision number.")
     latest_version_id: Optional[int] = Field(
         default=None,
@@ -127,6 +159,9 @@ class DocumentMetadataResponse(BaseModel):
     document_id: int = Field(..., description="Numeric document identifier.")
     title: str = Field(..., description="Current document title.")
     ai_enabled: bool = Field(..., description="Whether AI suggestions are enabled.")
+    line_spacing: float = Field(
+        ..., description="Unitless line spacing used when rendering the document editor."
+    )
     role: str = Field(..., description="Current caller role for this document.")
     updated_at: datetime = Field(..., description="UTC document update timestamp.")
 
@@ -135,6 +170,9 @@ class DocumentContentSaveResponse(BaseModel):
     document_id: int = Field(..., description="Numeric document identifier.")
     latest_version_id: int = Field(
         ..., description="Identifier of the newly created version."
+    )
+    line_spacing: float = Field(
+        ..., description="Unitless line spacing saved for the document."
     )
     revision: int = Field(..., ge=1, description="New current revision number.")
     saved_at: datetime = Field(

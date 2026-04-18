@@ -15,6 +15,8 @@ class VersionRepository:
         document_id: int,
         version_number: int,
         content_snapshot: str,
+        line_spacing_snapshot: float,
+        save_source: str,
         created_by: int,
         is_restore_version: bool,
     ) -> DocumentVersion:
@@ -22,6 +24,8 @@ class VersionRepository:
             document_id=document_id,
             version_number=version_number,
             content_snapshot=content_snapshot,
+            line_spacing_snapshot=line_spacing_snapshot,
+            save_source=save_source,
             created_by=created_by,
             is_restore_version=is_restore_version,
         )

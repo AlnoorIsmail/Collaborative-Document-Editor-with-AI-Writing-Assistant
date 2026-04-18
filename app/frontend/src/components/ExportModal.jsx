@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { apiJSON } from '../api';
 
 const FORMATS = [
+  { value: 'html', label: 'HTML (.html)' },
   { value: 'plain_text', label: 'Plain text (.txt)' },
   { value: 'markdown', label: 'Markdown (.md)' },
-  { value: 'html', label: 'HTML (.html)' },
   { value: 'json', label: 'JSON (.json)' },
 ];
 
@@ -19,7 +19,7 @@ function downloadExport({ content, filename, contentType }) {
 }
 
 export default function ExportModal({ docId, onClose }) {
-  const [format, setFormat] = useState('markdown');
+  const [format, setFormat] = useState('html');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -57,7 +57,8 @@ export default function ExportModal({ docId, onClose }) {
 
         <div className="modal-body">
           <p className="share-helper-text">
-            Download the current saved document in one of the available export formats.
+            Download the current saved document in one of the available export formats. HTML keeps
+            rich formatting most faithfully.
           </p>
 
           <form className="share-form" onSubmit={handleExport}>

@@ -52,7 +52,10 @@ class SessionService:
             session_token=record.session_token,
             document_id=record.document_id,
             revision=access.current_revision,
-            realtime_url=self._settings.realtime_url,
+            realtime_url=(
+                f"{self._settings.api_v1_prefix}/documents/"
+                f"{access.document.id}/sessions/{record.session_id}/ws"
+            ),
             resync_required=missed_revision_count > 0,
             missed_revision_count=missed_revision_count,
             active_collaborators=[

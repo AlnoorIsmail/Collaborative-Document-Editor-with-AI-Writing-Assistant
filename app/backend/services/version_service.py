@@ -38,6 +38,7 @@ class VersionService:
                 created_by=version.created_by,
                 created_at=version.created_at,
                 is_restore_version=version.is_restore_version,
+                save_source=version.save_source,
             )
             for version in versions
         ]
@@ -72,6 +73,7 @@ class VersionService:
         restored_document = self.document_repository.update(
             access.document,
             content=version.content_snapshot,
+            line_spacing=version.line_spacing_snapshot,
         )
         try:
             restore_version_entry = self._create_restore_version(
@@ -102,6 +104,8 @@ class VersionService:
             document_id=document.id,
             version_number=1 if latest_version is None else latest_version.version_number + 1,
             content_snapshot=document.content,
+            line_spacing_snapshot=document.line_spacing,
+            save_source="restore",
             created_by=current_user.id,
             is_restore_version=True,
         )
