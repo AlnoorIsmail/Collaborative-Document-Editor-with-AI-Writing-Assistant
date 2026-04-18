@@ -24,12 +24,14 @@ describe('LoginPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    document.title = 'frontend';
   });
 
   it('renders email and password fields', () => {
     renderLoginPage();
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+    expect(document.title).toBe('Login • CollabDocs');
   });
 
   it('shows inline email feedback while typing an invalid address', async () => {

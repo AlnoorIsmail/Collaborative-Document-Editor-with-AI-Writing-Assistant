@@ -6,12 +6,14 @@ import {
   getPendingShareLinkToken,
   storePendingShareLinkToken,
 } from '../shareLinks';
+import { buildPageTitle, usePageTitle } from '../pageTitle';
 
 export default function ShareLinkPage() {
   const { token } = useParams();
   const navigate = useNavigate();
   const [status, setStatus] = useState('loading');
   const [message, setMessage] = useState('Checking this share link…');
+  usePageTitle(buildPageTitle('Open shared document'));
 
   useEffect(() => {
     let cancelled = false;

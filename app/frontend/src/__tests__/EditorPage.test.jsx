@@ -274,6 +274,7 @@ describe('EditorPage save flow', () => {
     api.apiJSON.mockReset();
     localStorage.clear();
     sessionStorage.clear();
+    document.title = 'frontend';
     localStorage.setItem('access_token', 'test-token');
     MockWebSocket.instances = [];
     globalThis.WebSocket = undefined;
@@ -396,6 +397,7 @@ describe('EditorPage save flow', () => {
     renderEditorPage();
 
     await screen.findByText('Draft');
+    expect(document.title).toBe('Draft • CollabDocs');
     fireEvent.click(screen.getByRole('button', { name: 'Change line spacing' }));
     fireEvent.click(screen.getByRole('button', { name: /save now/i }));
 
