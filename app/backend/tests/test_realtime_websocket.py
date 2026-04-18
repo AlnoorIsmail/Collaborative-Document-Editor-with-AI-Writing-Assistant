@@ -118,3 +118,69 @@ def test_websocket_supports_basic_message_exchange() -> None:
     assert refreshed_document.status_code == 200
     assert refreshed_document.json()["current_content"] == "Realtime saved content"
     assert refreshed_document.json()["line_spacing"] == 1.5
+
+
+def test_websocket_supports_step_sync_and_resync() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_document = client.post(
+        "/v1/documents",
+        json={"title": "Realtime Doc", "initial_content": "Draft"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    document_id = create_document.json()["document_id"]
+    bootstrap = client.post(
+        f"/v1/documents/{document_id}/sessions",
+        json={"last_known_revision": 0},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()
+
+    with _open_socket(
+        client,
+        document_id=document_id,
+        session_id=bootstrap["session_id"],
+        session_token=bootstrap["session_token"],
+        access_token=owner_token,
+    ) as socket:
+        joined = _receive_until(socket, "session_joined")
+        assert joined["collab_version"] == 0
+
+        socket.send_json(
+            {
+                "type": "step_update",
+                "version": 0,
+                "client_id": "client-1",
+                "steps": [{"mock": "replace", "text": "Realtime stepped content"}],
+                "content": "Realtime stepped content",
+                "line_spacing": 1.15,
+            }
+        )
+
+        applied = _receive_until(socket, "steps_applied")
+        assert applied["collab_version"] == 1
+        assert applied["content"] == "Realtime stepped content"
+        assert applied["steps"] == [{"mock": "replace", "text": "Realtime stepped content"}]
+
+        socket.send_json(
+            {
+                "type": "step_update",
+                "version": 0,
+                "client_id": "client-2",
+                "steps": [{"mock": "replace", "text": "Stale content"}],
+                "content": "Stale content",
+                "line_spacing": 1.15,
+            }
+        )
+
+        resync = _receive_until(socket, "steps_resync")
+        assert resync["full_reset"] is False
+        assert resync["collab_version"] == 1
+        assert resync["steps"] == [{"mock": "replace", "text": "Realtime stepped content"}]
+        assert resync["client_ids"] == ["client-1"]
+
+    refreshed_document = client.get(
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert refreshed_document.status_code == 200
+    assert refreshed_document.json()["current_content"] == "Realtime stepped content"

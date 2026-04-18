@@ -381,6 +381,39 @@ class DocumentService:
             user_id=current_user.id,
         )
 
+    def ensure_edit_access(
+        self, *, document_id: str | int, current_user: User
+    ) -> DocumentAccess:
+        return self.access_service.require_edit_access(
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+
+    def persist_live_snapshot(
+        self,
+        *,
+        document_id: str | int,
+        current_user: User,
+        content: str,
+        line_spacing: float | None = None,
+    ) -> DocumentAccess:
+        access = self.access_service.require_edit_access(
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+        updated_document = self.document_repository.update(
+            access.document,
+            content=content,
+            line_spacing=(
+                access.document.line_spacing if line_spacing is None else line_spacing
+            ),
+        )
+        self.document_repository.db.commit()
+        return self.access_service.require_read_access(
+            document_id=updated_document.id,
+            user_id=current_user.id,
+        )
+
     def create_version_from_snapshot(
         self,
         *,

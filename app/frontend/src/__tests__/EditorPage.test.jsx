@@ -18,10 +18,20 @@ vi.mock('../api', async (importOriginal) => {
 
 vi.mock('../components/TiptapEditor', () => ({
   default: forwardRef(function MockTiptapEditor(
-    { content, onChange, onSelectionUpdate, lineSpacing = 1.15, onLineSpacingChange },
+    {
+      content,
+      onChange,
+      onSelectionUpdate,
+      lineSpacing = 1.15,
+      onLineSpacingChange,
+      onSendableSteps,
+      collaborationVersion = 0,
+      collaborationResetKey = 0,
+    },
     ref
   ) {
     const [currentContent, setCurrentContent] = useState(content);
+    const [currentVersion, setCurrentVersion] = useState(collaborationVersion);
 
     useImperativeHandle(ref, () => ({
       getSelectionData() {
@@ -43,12 +53,30 @@ vi.mock('../components/TiptapEditor', () => ({
       getHTML() {
         return currentContent;
       },
+      applyRemoteSteps({ steps }) {
+        const nextContent = steps?.[0]?.mockHtml ?? '<p>Remote collaborative body</p>';
+        const nextVersion = currentVersion + (steps?.length ?? 0);
+        setCurrentContent(nextContent);
+        setCurrentVersion(nextVersion);
+        return {
+          applied: true,
+          html: nextContent,
+          version: nextVersion,
+        };
+      },
+      getCollaborationVersion() {
+        return currentVersion;
+      },
       focus() {},
-    }), [currentContent, onChange]);
+    }), [currentContent, currentVersion, onChange]);
 
     React.useEffect(() => {
       setCurrentContent(content);
     }, [content]);
+
+    React.useEffect(() => {
+      setCurrentVersion(collaborationVersion);
+    }, [collaborationVersion, collaborationResetKey]);
 
     return (
       <div>
@@ -59,6 +87,26 @@ vi.mock('../components/TiptapEditor', () => ({
         </button>
         <button type="button" onClick={() => onLineSpacingChange?.(1.5)}>
           Change line spacing
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const nextContent = '<p>Local collaborative body</p>';
+            setCurrentContent(nextContent);
+            onChange(nextContent, {
+              hasPendingCollaborationSteps: true,
+              collaborationVersion: currentVersion,
+            });
+            onSendableSteps?.({
+              version: currentVersion,
+              clientId: 'client-1',
+              steps: [{ mockStep: true, mockHtml: nextContent }],
+              content: nextContent,
+              lineSpacing,
+            });
+          }}
+        >
+          Send collaboration step
         </button>
         <button
           type="button"
@@ -2492,6 +2540,122 @@ describe('EditorPage save flow', () => {
       expect(screen.getByTestId('editor-content')).toHaveTextContent('Remote body');
     });
     expect(screen.getByTestId('editor-line-spacing')).toHaveTextContent('1.5');
+  });
+
+  it('sends local collaborative steps over the realtime socket', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
+
+    expect(MockWebSocket.instances[0].sentMessages).toContainEqual({
+      type: 'step_update',
+      version: 0,
+      client_id: 'client-1',
+      steps: [{ mockStep: true, mockHtml: '<p>Local collaborative body</p>' }],
+      content: '<p>Local collaborative body</p>',
+      line_spacing: 1.15,
+    });
+  });
+
+  it('applies remote collaborative steps without forcing a snapshot overwrite', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    act(() => {
+      MockWebSocket.instances[0].emit({
+        type: 'steps_applied',
+        document_id: 1,
+        steps: [{ mockHtml: '<p>Remote collaborative body</p>' }],
+        client_ids: ['client-2'],
+        collab_version: 1,
+        content: '<p>Remote collaborative body</p>',
+        line_spacing: 1.15,
+        actor_user_id: 2,
+        actor_display_name: 'Editor',
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('editor-content')).toHaveTextContent('Remote collaborative body');
+    });
+    expect(screen.queryByText('Remote changes need review.')).not.toBeInTheDocument();
   });
 
   it('uses the latest refreshed access token when opening the realtime socket', async () => {
