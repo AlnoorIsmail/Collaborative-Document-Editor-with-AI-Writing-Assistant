@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle } from 'react';
+import { forwardRef, useEffect, useImperativeHandle } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -179,16 +179,21 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     },
   }), [editor]);
 
-  // Sync editable state when readOnly prop changes
-  if (editor && editor.isEditable === readOnly) {
+  useEffect(() => {
+    if (!editor) return;
     editor.setEditable(!readOnly);
-  }
+  }, [editor, readOnly]);
 
-  // Sync content when the prop changes externally (e.g. after initial load)
-  // Only on first meaningful content load (when editor is empty and content arrives)
-  if (editor && content && editor.isEmpty) {
-    editor.commands.setContent(content, false);
-  }
+  useEffect(() => {
+    if (!editor) return;
+
+    const currentContent = editor.getHTML();
+    if (content === currentContent) {
+      return;
+    }
+
+    editor.commands.setContent(content || '', false);
+  }, [content, editor]);
 
   return (
     <div className={`editor-wrapper ${readOnly ? 'editor-readonly' : ''}`}>
