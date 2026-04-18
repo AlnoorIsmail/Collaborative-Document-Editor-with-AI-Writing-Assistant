@@ -156,9 +156,9 @@ export default function RegisterPage() {
     }
   }
 
-  const nameErrorId = fieldErrors.name ? 'register-name-error' : undefined;
-  const emailErrorId = fieldErrors.email ? 'register-email-error' : undefined;
-  const passwordErrorId = fieldErrors.password ? 'register-password-error' : undefined;
+  const nameErrorId = 'register-name-error';
+  const emailErrorId = 'register-email-error';
+  const passwordErrorId = 'register-password-error';
 
   return (
     <div className="auth-page">
@@ -180,11 +180,13 @@ export default function RegisterPage() {
               aria-invalid={fieldErrors.name ? 'true' : 'false'}
               aria-describedby={nameErrorId}
             />
-            {fieldErrors.name ? (
-              <span className="field-help field-help-error" id={nameErrorId}>
-                {fieldErrors.name}
-              </span>
-            ) : null}
+            <span
+              className={`field-help ${fieldErrors.name ? 'field-help-error' : ''}`}
+              id={nameErrorId}
+              aria-hidden={fieldErrors.name ? 'false' : 'true'}
+            >
+              {fieldErrors.name || '\u00a0'}
+            </span>
           </label>
           <label className="field-label">
             Email
@@ -200,11 +202,13 @@ export default function RegisterPage() {
               aria-invalid={fieldErrors.email ? 'true' : 'false'}
               aria-describedby={emailErrorId}
             />
-            {fieldErrors.email ? (
-              <span className="field-help field-help-error" id={emailErrorId}>
-                {fieldErrors.email}
-              </span>
-            ) : null}
+            <span
+              className={`field-help ${fieldErrors.email ? 'field-help-error' : ''}`}
+              id={emailErrorId}
+              aria-hidden={fieldErrors.email ? 'false' : 'true'}
+            >
+              {fieldErrors.email || '\u00a0'}
+            </span>
           </label>
           <label className="field-label">
             Password
@@ -220,11 +224,13 @@ export default function RegisterPage() {
               aria-invalid={fieldErrors.password ? 'true' : 'false'}
               aria-describedby={passwordErrorId}
             />
-            {fieldErrors.password ? (
-              <span className="field-help field-help-error" id={passwordErrorId}>
-                {fieldErrors.password}
-              </span>
-            ) : null}
+            <span
+              className={`field-help ${fieldErrors.password ? 'field-help-error' : ''}`}
+              id={passwordErrorId}
+              aria-hidden={fieldErrors.password ? 'false' : 'true'}
+            >
+              {fieldErrors.password || '\u00a0'}
+            </span>
           </label>
           <button className="btn btn-primary btn-full" type="submit" disabled={loading}>
             {loading ? 'Creating account…' : 'Create account'}

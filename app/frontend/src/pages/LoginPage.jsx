@@ -130,8 +130,8 @@ export default function LoginPage() {
     }
   }
 
-  const emailErrorId = fieldErrors.email ? 'login-email-error' : undefined;
-  const passwordErrorId = fieldErrors.password ? 'login-password-error' : undefined;
+  const emailErrorId = 'login-email-error';
+  const passwordErrorId = 'login-password-error';
 
   return (
     <div className="auth-page">
@@ -154,11 +154,13 @@ export default function LoginPage() {
               aria-invalid={fieldErrors.email ? 'true' : 'false'}
               aria-describedby={emailErrorId}
             />
-            {fieldErrors.email ? (
-              <span className="field-help field-help-error" id={emailErrorId}>
-                {fieldErrors.email}
-              </span>
-            ) : null}
+            <span
+              className={`field-help ${fieldErrors.email ? 'field-help-error' : ''}`}
+              id={emailErrorId}
+              aria-hidden={fieldErrors.email ? 'false' : 'true'}
+            >
+              {fieldErrors.email || '\u00a0'}
+            </span>
           </label>
           <label className="field-label">
             Password
@@ -173,11 +175,13 @@ export default function LoginPage() {
               aria-invalid={fieldErrors.password ? 'true' : 'false'}
               aria-describedby={passwordErrorId}
             />
-            {fieldErrors.password ? (
-              <span className="field-help field-help-error" id={passwordErrorId}>
-                {fieldErrors.password}
-              </span>
-            ) : null}
+            <span
+              className={`field-help ${fieldErrors.password ? 'field-help-error' : ''}`}
+              id={passwordErrorId}
+              aria-hidden={fieldErrors.password ? 'false' : 'true'}
+            >
+              {fieldErrors.password || '\u00a0'}
+            </span>
           </label>
           <button className="btn btn-primary btn-full" type="submit" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign in'}

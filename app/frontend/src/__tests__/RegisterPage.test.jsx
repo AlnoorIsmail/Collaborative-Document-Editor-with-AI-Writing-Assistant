@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import RegisterPage from '../pages/RegisterPage';
 import * as api from '../api';
@@ -16,6 +17,17 @@ function renderRegisterPage() {
   return render(
     <MemoryRouter>
       <RegisterPage />
+    </MemoryRouter>
+  );
+}
+
+function renderRegisterPageWithRoutes() {
+  return render(
+    <MemoryRouter initialEntries={['/register']}>
+      <Routes>
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/login" element={<div>Login page</div>} />
+      </Routes>
     </MemoryRouter>
   );
 }
@@ -101,5 +113,15 @@ describe('RegisterPage', () => {
       expect(screen.getByText('A user with this email already exists.')).toBeInTheDocument()
     );
     expect(emailInput).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('opens sign in on the first click even when validation appears on blur', async () => {
+    const user = userEvent.setup();
+    renderRegisterPageWithRoutes();
+
+    await user.click(screen.getByLabelText(/^name$/i));
+    await user.click(screen.getByRole('link', { name: /sign in/i }));
+
+    await screen.findByText('Login page');
   });
 });

@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import LoginPage from '../pages/LoginPage';
 import * as api from '../api';
@@ -16,6 +17,17 @@ function renderLoginPage() {
   return render(
     <MemoryRouter>
       <LoginPage />
+    </MemoryRouter>
+  );
+}
+
+function renderLoginPageWithRoutes() {
+  return render(
+    <MemoryRouter initialEntries={['/login']}>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<div>Create account page</div>} />
+      </Routes>
     </MemoryRouter>
   );
 }
@@ -120,5 +132,15 @@ describe('LoginPage', () => {
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'password123' } });
     fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
     await waitFor(() => expect(localStorage.getItem('access_token')).toBe('test-token'));
+  });
+
+  it('opens create account on the first click even when validation appears on blur', async () => {
+    const user = userEvent.setup();
+    renderLoginPageWithRoutes();
+
+    await user.click(screen.getByLabelText(/email/i));
+    await user.click(screen.getByRole('link', { name: /create one/i }));
+
+    await screen.findByText('Create account page');
   });
 });
