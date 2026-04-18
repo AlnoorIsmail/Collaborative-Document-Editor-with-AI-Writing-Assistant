@@ -1,0 +1,124 @@
+import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+const STATUS_LABEL = {
+  saved: 'Saved',
+  saving: 'Saving…',
+  unsaved: 'Unsaved changes',
+};
+
+const STATUS_CLASS = {
+  saved: 'status-saved',
+  saving: 'status-saving',
+  unsaved: 'status-unsaved',
+};
+
+export default function Navbar({
+  title,
+  onTitleChange,
+  saveStatus,
+  onSaveNow,
+  onShare,
+  isOwner,
+  isReadOnly,
+  onBack,
+  user,
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const inputRef = useRef(null);
+  const navigate = useNavigate();
+
+  // Keep draft in sync when title prop changes externally
+  useEffect(() => {
+    if (!editing) setDraft(title);
+  }, [title, editing]);
+
+  function startEditing() {
+    if (isReadOnly) return;
+    setDraft(title);
+    setEditing(true);
+    // Focus happens after state update via the effect below
+  }
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  function commitTitle() {
+    const trimmed = draft.trim() || 'Untitled document';
+    setEditing(false);
+    if (trimmed !== title) {
+      onTitleChange(trimmed);
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter') commitTitle();
+    if (e.key === 'Escape') {
+      setEditing(false);
+      setDraft(title);
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    navigate('/login');
+  }
+
+  return (
+    <nav className="navbar">
+      <div className="navbar-left">
+        <button className="btn btn-ghost navbar-back" onClick={onBack} title="All documents">
+          &#8592;
+        </button>
+
+        {editing ? (
+          <input
+            ref={inputRef}
+            className="navbar-title-input"
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={handleKeyDown}
+          />
+        ) : (
+          <span
+            className={`navbar-title ${!isReadOnly ? 'navbar-title-editable' : ''}`}
+            onClick={startEditing}
+            title={isReadOnly ? undefined : 'Click to rename'}
+          >
+            {title || 'Untitled document'}
+          </span>
+        )}
+      </div>
+
+      <div className="navbar-center">
+        <span className={`save-status ${STATUS_CLASS[saveStatus]}`}>
+          {STATUS_LABEL[saveStatus]}
+        </span>
+        {saveStatus === 'unsaved' && (
+          <button className="btn btn-ghost save-now-btn" onClick={onSaveNow}>
+            Save now
+          </button>
+        )}
+      </div>
+
+      <div className="navbar-right">
+        {isOwner && (
+          <button className="btn btn-secondary" onClick={onShare}>
+            Share
+          </button>
+        )}
+        {user && <span className="navbar-user">{user.name || user.email}</span>}
+        <button className="btn btn-ghost" onClick={logout}>
+          Sign out
+        </button>
+      </div>
+    </nav>
+  );
+}
