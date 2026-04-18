@@ -27,6 +27,7 @@ describe('ShareLinkPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    document.title = 'frontend';
   });
 
   it('prompts for sign in when opening a share link while signed out', async () => {
@@ -34,6 +35,7 @@ describe('ShareLinkPage', () => {
 
     await screen.findByText('Sign in to redeem this share link and open the document.');
 
+    expect(document.title).toBe('Open shared document • CollabDocs');
     expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument();
     expect(localStorage.getItem('pending_share_link_token')).toBe('test-token');
   });

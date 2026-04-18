@@ -27,6 +27,7 @@ function renderDocumentsPage() {
 describe('DocumentsPage dashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    document.title = 'frontend';
   });
 
   it('renders documents as cards with previews, labels, and distinct fallback titles', async () => {
@@ -77,6 +78,7 @@ describe('DocumentsPage dashboard', () => {
 
     await screen.findByText('Project Notes');
 
+    expect(document.title).toBe('CollabDocs');
     expect(screen.getByRole('list', { name: /document dashboard/i })).toHaveClass('docs-grid');
     expect(container.querySelectorAll('.doc-card')).toHaveLength(3);
     expect(screen.getByText('Untitled Document')).toBeInTheDocument();

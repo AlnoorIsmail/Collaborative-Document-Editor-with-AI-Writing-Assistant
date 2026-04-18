@@ -24,6 +24,7 @@ describe('RegisterPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    document.title = 'frontend';
   });
 
   it('renders name, email, and password fields', () => {
@@ -31,6 +32,7 @@ describe('RegisterPage', () => {
     expect(screen.getByLabelText(/^name$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
+    expect(document.title).toBe('Create account • CollabDocs');
   });
 
   it('shows inline email feedback while typing an invalid address', async () => {

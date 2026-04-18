@@ -14,6 +14,7 @@ import {
   readOfflineDraft,
   writeOfflineDraft,
 } from '../realtime';
+import { buildDocumentPageTitle, usePageTitle } from '../pageTitle';
 
 const AUTO_SAVE_DELAY = 1_500;
 const REALTIME_SEND_DELAY = 450;
@@ -60,6 +61,7 @@ export default function EditorPage() {
   const [realtimeMessage, setRealtimeMessage] = useState('');
   const [conflictState, setConflictState] = useState(null);
   const [error, setError] = useState('');
+  usePageTitle(buildDocumentPageTitle(title || doc?.title));
 
   const editorRef = useRef(null);
   const docRef = useRef(null);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { apiFetch, getErrorMessage } from '../api';
 import {
@@ -11,6 +11,7 @@ import {
   clearPendingShareLinkToken,
   getPendingShareLinkToken,
 } from '../shareLinks';
+import { buildPageTitle, usePageTitle } from '../pageTitle';
 
 const INITIAL_TOUCHED = {
   email: false,
@@ -31,9 +32,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  useEffect(() => {
-  document.title = 'Login - CollaboWrite';
-}, []);
+  usePageTitle(buildPageTitle('Login'));
 
 
 

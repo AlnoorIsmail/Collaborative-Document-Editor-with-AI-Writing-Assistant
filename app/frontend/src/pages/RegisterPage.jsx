@@ -12,6 +12,7 @@ import {
   clearPendingShareLinkToken,
   getPendingShareLinkToken,
 } from '../shareLinks';
+import { buildPageTitle, usePageTitle } from '../pageTitle';
 
 const INITIAL_TOUCHED = {
   name: false,
@@ -35,6 +36,7 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  usePageTitle(buildPageTitle('Create account'));
 
   function setFieldError(field, value) {
     setFieldErrors((current) => ({

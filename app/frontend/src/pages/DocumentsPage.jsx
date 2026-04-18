@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { apiJSON } from '../api';
 import ShareModal from '../components/ShareModal';
 import { buildUniqueDisplayTitles, getRoleLabel } from '../documentDisplay';
+import { APP_NAME, usePageTitle } from '../pageTitle';
 
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState([]);
@@ -18,6 +19,7 @@ export default function DocumentsPage() {
     () => buildUniqueDisplayTitles(documents),
     [documents]
   );
+  usePageTitle(APP_NAME);
 
   useEffect(() => {
     Promise.all([
