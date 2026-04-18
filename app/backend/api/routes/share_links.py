@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.backend.api.deps import (
@@ -48,3 +48,18 @@ def redeem_share_link(
     share_link_service: ShareLinkService = Depends(get_share_link_service),
 ) -> ShareLinkRedeemResponse:
     return share_link_service.redeem_share_link(token=token, current_user=current_user)
+
+
+@router.delete(
+    "/{linkId}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke a share link",
+    description="Revoke an existing share link so it can no longer grant access.",
+)
+def revoke_share_link(
+    linkId: str,
+    current_user: User = Depends(get_current_authenticated_user),
+    share_link_service: ShareLinkService = Depends(get_share_link_service),
+) -> Response:
+    share_link_service.revoke_share_link(link_id=linkId, current_user=current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

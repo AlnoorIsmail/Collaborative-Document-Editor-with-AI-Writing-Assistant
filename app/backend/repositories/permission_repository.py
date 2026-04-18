@@ -42,6 +42,15 @@ class PermissionRepository:
             .all()
         )
 
+    def list_for_document(self, document_id: int) -> list[DocumentPermission]:
+        return (
+            self.db.query(DocumentPermission)
+            .options(joinedload(DocumentPermission.user))
+            .filter(DocumentPermission.document_id == document_id)
+            .order_by(DocumentPermission.created_at.desc(), DocumentPermission.id.desc())
+            .all()
+        )
+
     def create(
         self,
         *,

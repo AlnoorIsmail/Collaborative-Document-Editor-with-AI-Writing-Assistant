@@ -36,6 +36,14 @@ class InvitationRepository:
     def get_by_id(self, invitation_id: int) -> Optional[Invitation]:
         return self.db.query(Invitation).filter(Invitation.id == invitation_id).first()
 
+    def list_for_document(self, document_id: int) -> list[Invitation]:
+        return (
+            self.db.query(Invitation)
+            .filter(Invitation.document_id == document_id)
+            .order_by(Invitation.created_at.desc(), Invitation.id.desc())
+            .all()
+        )
+
     def update(self, invitation: Invitation, **fields) -> Invitation:
         for key, value in fields.items():
             setattr(invitation, key, value)

@@ -53,6 +53,14 @@ class DocumentRepository:
             .all()
         )
 
+    def list_titles_by_owner(
+        self, *, owner_id: int, exclude_document_id: int | None = None
+    ) -> List[str]:
+        query = self.db.query(Document.title).filter(Document.owner_id == owner_id)
+        if exclude_document_id is not None:
+            query = query.filter(Document.id != exclude_document_id)
+        return [title for (title,) in query.all()]
+
     def update(self, document: Document, **fields) -> Document:
         for key, value in fields.items():
             setattr(document, key, value)

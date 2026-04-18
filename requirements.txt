@@ -6,3 +6,5 @@ pytest
 httpx
 black
 ruff
+google-genai
+python-dotenv

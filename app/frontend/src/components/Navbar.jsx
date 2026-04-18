@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { DEFAULT_DOCUMENT_TITLE } from '../documentDisplay';
 
 const STATUS_LABEL = {
   saved: 'Saved',
@@ -18,11 +19,16 @@ export default function Navbar({
   onTitleChange,
   saveStatus,
   onSaveNow,
+  onOpenHistory,
+  onOpenExport,
   onShare,
   isOwner,
   isReadOnly,
+  canRestoreHistory,
   onBack,
   user,
+  isAiOpen,
+  onToggleAi,
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -49,7 +55,7 @@ export default function Navbar({
   }, [editing]);
 
   function commitTitle() {
-    const trimmed = draft.trim() || 'Untitled document';
+    const trimmed = draft.trim();
     setEditing(false);
     if (trimmed !== title) {
       onTitleChange(trimmed);
@@ -92,7 +98,7 @@ export default function Navbar({
             onClick={startEditing}
             title={isReadOnly ? undefined : 'Click to rename'}
           >
-            {title || 'Untitled document'}
+            {title || DEFAULT_DOCUMENT_TITLE}
           </span>
         )}
       </div>
@@ -109,6 +115,15 @@ export default function Navbar({
       </div>
 
       <div className="navbar-right">
+        <button className="btn btn-secondary" onClick={onToggleAi}>
+          {isAiOpen ? 'Hide AI' : 'Show AI'}
+        </button>
+        <button className="btn btn-secondary" onClick={onOpenHistory}>
+          {canRestoreHistory ? 'History' : 'Versions'}
+        </button>
+        <button className="btn btn-secondary" onClick={onOpenExport}>
+          Export
+        </button>
         {isOwner && (
           <button className="btn btn-secondary" onClick={onShare}>
             Share

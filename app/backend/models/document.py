@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.backend.core.contracts import utc_now
@@ -10,6 +10,9 @@ from app.backend.core.database import Base
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "title", name="uq_documents_owner_id_title"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
