@@ -170,6 +170,7 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
     assert len(session_body["active_collaborators"]) == 1
     assert set(session_body["active_collaborators"][0]) == {
         "user_id",
+        "display_name",
         "session_id",
         "last_known_revision",
         "joined_at",

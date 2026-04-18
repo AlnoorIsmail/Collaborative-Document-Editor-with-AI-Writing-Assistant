@@ -7,8 +7,16 @@ import ShareModal from '../components/ShareModal';
 import AISidebar from '../components/AISidebar';
 import DocumentHistoryModal from '../components/DocumentHistoryModal';
 import ExportModal from '../components/ExportModal';
+import PresenceBar from '../components/PresenceBar';
+import {
+  buildRealtimeSocketUrl,
+  clearOfflineDraft,
+  readOfflineDraft,
+  writeOfflineDraft,
+} from '../realtime';
 
 const AUTO_SAVE_DELAY = 1_500;
+const REALTIME_SEND_DELAY = 450;
 
 function resolveRole(docData, userData) {
   if (!userData) {
@@ -46,6 +54,10 @@ export default function EditorPage() {
   const [showShare, setShowShare] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [presence, setPresence] = useState([]);
+  const [realtimeStatus, setRealtimeStatus] = useState('connecting');
+  const [realtimeMessage, setRealtimeMessage] = useState('');
+  const [conflictState, setConflictState] = useState(null);
   const [error, setError] = useState('');
 
   const editorRef = useRef(null);
@@ -58,6 +70,8 @@ export default function EditorPage() {
   const lastAiUndoRef = useRef(null);
   const isDirtyRef = useRef(false);
   const savePromiseRef = useRef(null);
+  const socketRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
 
   const applyDocumentState = useCallback((docData, userData = userRef.current) => {
     setDoc(docData);
@@ -96,6 +110,39 @@ export default function EditorPage() {
     return docData;
   }, [applyDocumentState, id]);
 
+  const syncRealtimeDocument = useCallback(
+    ({
+      nextContent,
+      nextRevision,
+      nextLatestVersionId,
+      updatedAt,
+    }) => {
+      setContent(nextContent);
+      contentRef.current = nextContent;
+      setRevision(nextRevision);
+      revisionRef.current = nextRevision;
+      isDirtyRef.current = false;
+      setSaveStatus('saved');
+      setDoc((current) => {
+        if (!current) {
+          return current;
+        }
+
+        const nextDoc = {
+          ...current,
+          current_content: nextContent,
+          revision: nextRevision,
+          latest_version_id: nextLatestVersionId ?? current.latest_version_id,
+          updated_at: updatedAt ?? current.updated_at,
+        };
+        docRef.current = nextDoc;
+        return nextDoc;
+      });
+      clearOfflineDraft(id);
+    },
+    [id]
+  );
+
   useEffect(() => {
     clearLastAiUndo();
   }, [clearLastAiUndo, id]);
@@ -109,6 +156,18 @@ export default function EditorPage() {
         userRef.current = userData;
         setUser(userData);
         applyDocumentState(docData, userData);
+        const recoveredDraft = readOfflineDraft(id);
+        if (recoveredDraft?.content && recoveredDraft.content !== (docData.current_content || '')) {
+          setContent(recoveredDraft.content);
+          contentRef.current = recoveredDraft.content;
+          if (typeof recoveredDraft.revision === 'number') {
+            setRevision(recoveredDraft.revision);
+            revisionRef.current = recoveredDraft.revision;
+          }
+          isDirtyRef.current = true;
+          setSaveStatus('unsaved');
+          setRealtimeMessage('Recovered an unsent local draft from a disconnected session.');
+        }
       })
       .catch(err => {
         if (err.status === 404) navigate('/');
@@ -229,7 +288,7 @@ export default function EditorPage() {
   }, [id, saveContent]);
 
   useEffect(() => {
-    if (role === 'viewer' || !doc || saveStatus !== 'unsaved') {
+    if (role === 'viewer' || !doc || saveStatus !== 'unsaved' || realtimeStatus === 'connected') {
       return undefined;
     }
 
@@ -274,6 +333,19 @@ export default function EditorPage() {
     selectionRef.current = null;
     isDirtyRef.current = true;
     setSaveStatus('unsaved');
+    setRealtimeMessage('');
+    writeOfflineDraft(id, {
+      content: newContent,
+      revision: revisionRef.current,
+      updatedAt: Date.now(),
+    });
+
+    if (
+      typeof WebSocket !== 'undefined'
+      && socketRef.current?.readyState === WebSocket.OPEN
+    ) {
+      socketRef.current.send(JSON.stringify({ type: 'typing', active: true }));
+    }
   }
 
   function handleSelectionUpdate(nextSelection) {
@@ -422,6 +494,256 @@ export default function EditorPage() {
     }
   }
 
+  const applyRemoteConflictVersion = useCallback(() => {
+    if (!conflictState) {
+      return;
+    }
+
+    syncRealtimeDocument({
+      nextContent: conflictState.content,
+      nextRevision: conflictState.revision,
+      nextLatestVersionId: conflictState.latest_version_id,
+    });
+    setConflictState(null);
+    setRealtimeMessage('Loaded the latest remote version.');
+  }, [conflictState, syncRealtimeDocument]);
+
+  const keepLocalDraft = useCallback(() => {
+    if (!conflictState || socketRef.current?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    setRevision(conflictState.revision);
+    revisionRef.current = conflictState.revision;
+    setDoc((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const nextDoc = {
+        ...current,
+        revision: conflictState.revision,
+        latest_version_id: conflictState.latest_version_id ?? current.latest_version_id,
+      };
+      docRef.current = nextDoc;
+      return nextDoc;
+    });
+    setConflictState(null);
+    setSaveStatus('unsaved');
+    socketRef.current.send(
+      JSON.stringify({
+        type: 'content_update',
+        content: contentRef.current,
+        base_revision: conflictState.revision,
+      })
+    );
+  }, [conflictState]);
+
+  useEffect(() => {
+    if (!doc || !user) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let reconnectHandle = null;
+
+    async function connectRealtime() {
+      const accessToken = localStorage.getItem('access_token');
+      if (!accessToken) {
+        return;
+      }
+      if (typeof WebSocket === 'undefined') {
+        setRealtimeStatus('offline');
+        setRealtimeMessage('This browser does not support realtime collaboration.');
+        return;
+      }
+
+      setRealtimeStatus('connecting');
+
+      try {
+        const bootstrap = await apiJSON(`/documents/${id}/sessions`, {
+          method: 'POST',
+          body: JSON.stringify({
+            last_known_revision: revisionRef.current,
+          }),
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        const socketUrl = buildRealtimeSocketUrl({
+          realtimeUrl: bootstrap.realtime_url,
+          documentId: id,
+          sessionId: bootstrap.session_id,
+          sessionToken: bootstrap.session_token,
+          accessToken,
+        });
+
+        const nextSocket = new WebSocket(socketUrl);
+        socketRef.current = nextSocket;
+
+        nextSocket.onopen = () => {
+          if (cancelled) {
+            return;
+          }
+          setRealtimeStatus('connected');
+          setRealtimeMessage('');
+          setPresence(
+            (bootstrap.active_collaborators || []).map((collaborator) => ({
+              ...collaborator,
+              typing: false,
+            }))
+          );
+        };
+
+        nextSocket.onmessage = (event) => {
+          const payload = JSON.parse(event.data);
+          if (payload.type === 'session_joined') {
+            setPresence(payload.presence || []);
+            setRealtimeStatus('connected');
+            return;
+          }
+
+          if (payload.type === 'presence_snapshot') {
+            setPresence(payload.presence || []);
+            return;
+          }
+
+          if (payload.type === 'content_updated') {
+            const actorUserId = payload.actor_user_id;
+            const isOwnUpdate = actorUserId && actorUserId === userRef.current?.user_id;
+
+            if (isOwnUpdate || !isDirtyRef.current) {
+              syncRealtimeDocument({
+                nextContent: payload.content,
+                nextRevision: payload.revision,
+                nextLatestVersionId: payload.latest_version_id,
+                updatedAt: payload.saved_at,
+              });
+              setConflictState(null);
+              if (!isOwnUpdate && payload.actor_display_name) {
+                setRealtimeMessage(`${payload.actor_display_name} updated the document.`);
+              } else {
+                setRealtimeMessage('');
+              }
+              return;
+            }
+
+            setConflictState({
+              content: payload.content,
+              revision: payload.revision,
+              latest_version_id: payload.latest_version_id,
+              message: `${payload.actor_display_name || 'Another collaborator'} updated this document while you were still editing.`,
+            });
+            return;
+          }
+
+          if (payload.type === 'conflict_detected') {
+            setConflictState({
+              content: payload.content,
+              revision: payload.revision,
+              latest_version_id: payload.latest_version_id,
+              message: payload.message,
+            });
+            return;
+          }
+
+          if (payload.type === 'error') {
+            setRealtimeMessage(payload.message || 'Realtime collaboration hit an error.');
+          }
+        };
+
+        nextSocket.onclose = () => {
+          if (cancelled) {
+            return;
+          }
+          socketRef.current = null;
+          setRealtimeStatus('offline');
+          setRealtimeMessage('Realtime disconnected. Local saves will continue and retry.');
+          reconnectHandle = window.setTimeout(() => {
+            void connectRealtime();
+          }, 1_500);
+          reconnectTimerRef.current = reconnectHandle;
+        };
+
+        nextSocket.onerror = () => {
+          if (!cancelled) {
+            setRealtimeStatus('offline');
+          }
+        };
+      } catch (nextError) {
+        if (!cancelled) {
+          setRealtimeStatus('offline');
+          setRealtimeMessage(nextError.message || 'Realtime collaboration is unavailable right now.');
+        }
+      }
+    }
+
+    void connectRealtime();
+
+    return () => {
+      cancelled = true;
+      if (reconnectHandle) {
+        window.clearTimeout(reconnectHandle);
+      }
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
+      setPresence([]);
+    };
+  }, [doc, id, syncRealtimeDocument, user]);
+
+  useEffect(() => {
+    if (
+      role === 'viewer'
+      || !doc
+      || saveStatus !== 'unsaved'
+      || realtimeStatus !== 'connected'
+      || conflictState
+    ) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: 'content_update',
+            content: contentRef.current,
+            base_revision: revisionRef.current,
+          })
+        );
+      }
+    }, REALTIME_SEND_DELAY);
+
+    return () => window.clearTimeout(timer);
+  }, [conflictState, content, doc, realtimeStatus, role, saveStatus]);
+
+  useEffect(() => {
+    if (realtimeStatus !== 'connected' || !socketRef.current) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: 'heartbeat',
+            last_known_revision: revisionRef.current,
+          })
+        );
+      }
+    }, 10_000);
+
+    return () => window.clearInterval(timer);
+  }, [realtimeStatus]);
+
   const isReadOnly = role === 'viewer';
 
   if (error) {
@@ -461,6 +783,16 @@ export default function EditorPage() {
           You have view-only access to this document.
         </div>
       )}
+
+      <PresenceBar
+        users={presence}
+        currentUserId={user?.user_id ?? user?.id ?? null}
+        realtimeStatus={realtimeStatus}
+        realtimeMessage={realtimeMessage}
+        conflictState={conflictState}
+        onAcceptRemote={applyRemoteConflictVersion}
+        onKeepLocal={keepLocalDraft}
+      />
 
       <div
         className={`editor-layout ${isAiOpen ? 'editor-layout-ai-open' : 'editor-layout-ai-closed'}`}

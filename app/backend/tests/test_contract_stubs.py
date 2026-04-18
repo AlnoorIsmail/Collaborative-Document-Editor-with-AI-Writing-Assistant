@@ -76,6 +76,7 @@ def test_session_bootstrap_returns_contract_shaped_response(
     assert body["active_collaborators"] == [
         {
             "user_id": 1,
+            "display_name": "Fixture User",
             "session_id": "sess_1",
             "last_known_revision": 0,
             "joined_at": body["active_collaborators"][0]["joined_at"],

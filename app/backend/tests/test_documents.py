@@ -426,6 +426,7 @@ def test_session_bootstrap_reports_resync_and_active_collaborators() -> None:
     assert owner_session.json()["missed_revision_count"] == 1
     assert len(owner_session.json()["active_collaborators"]) == 1
     assert owner_session.json()["active_collaborators"][0]["user_id"] == owner["user_id"]
+    assert owner_session.json()["active_collaborators"][0]["display_name"] == "Owner"
 
     assert editor_session.status_code == 201
     assert editor_session.json()["resync_required"] is False
@@ -435,6 +436,10 @@ def test_session_bootstrap_reports_resync_and_active_collaborators() -> None:
         collaborator["user_id"]
         for collaborator in editor_session.json()["active_collaborators"]
     } == {owner["user_id"], editor["user_id"]}
+    assert {
+        collaborator["display_name"]
+        for collaborator in editor_session.json()["active_collaborators"]
+    } == {"Owner", "Editor"}
 
 
 def test_unauthenticated_access_rejected() -> None:
