@@ -1,144 +1,324 @@
 # Collaborative Document Editor with AI Writing Assistant
 
+This project implements a React + FastAPI collaborative document editor for Assignment 2. It includes JWT authentication with refresh tokens, role-based sharing, version history and restore, realtime collaboration over authenticated WebSockets, and an AI assistant with streamed responses, reviewable suggestions, undo-after-apply, and per-document interaction history.
 
-This repository contains a university software engineering project with:
+## Stack
 
-- a FastAPI backend in `app/backend`
-- a React + Vite frontend in `app/frontend`
+- Frontend: React + Vite
+- Backend: FastAPI + SQLAlchemy
+- Persistence: SQLite by default
+- Auth: JWT access tokens + rotated refresh tokens
+- Realtime: authenticated WebSockets
+- AI responses: FastAPI `StreamingResponse` with SSE (`text/event-stream`)
 
-The backend now includes the assigned implementation scope for:
+## Implemented Scope
 
-- JWT authentication with refresh-token rotation
-- protected route dependencies for bearer-token validation
-- document CRUD for authenticated users
-- append-only version history and restore
-- pytest unit and integration coverage for auth and document flows
-- safe idempotent document saves for repeated same-content submissions
-- richer session bootstrap metadata for resync and active collaborator presence
-- AI interaction audit metadata including rendered prompt, scope inputs, usage, and outcome tracking
+### Authentication and sessions
 
-**Project Purpose**
-The system supports collaborative document work with AI-assisted writing features. The backend in this repository focuses on secure authentication, document persistence, version tracking, sharing-related extensions already present in the repo, and clean API contracts for the frontend.
+- Registration and login with securely hashed passwords
+- Short-lived access tokens and refresh tokens
+- Silent token refresh in the frontend so expired access tokens do not drop the user into raw `401` editing failures
+- Session persistence across page refreshes
 
-**Backend Setup**
-Create and activate a Python virtual environment, then install dependencies:
+### Document management
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+- Document CRUD with metadata
+- Responsive dashboard card grid
+- Rich-text editor built on Tiptap
+- Headings, bold, italic, lists, code blocks, blockquotes, undo/redo
+- Autosave with status indication
+- Version history with restore
+- Export flows
 
-Create a local environment file:
+### Access control and sharing
+
+- Owner, editor, and viewer roles
+- Server-side permission enforcement
+- Share by email with role assignment
+- Share links with expiration and revocation support
+
+### Realtime collaboration
+
+- Authenticated session bootstrap
+- Authenticated WebSocket collaboration channel
+- Presence list and activity updates
+- Reconnect handling
+- Offline draft recovery and reconciliation
+- Conflict banner when remote changes arrive while local unsaved edits exist
+
+### AI assistant
+
+- Rewrite
+- Summarize
+- Custom prompt / Ask AI
+- Whole-document and selected-text scopes
+- Streamed token-style output in the sidebar
+- Cancel in-progress generation
+- Review before apply
+- Accept / reject / edit / undo-after-apply flow
+- Prompt rendering through a dedicated prompt builder
+- Provider abstraction behind a single integration seam
+- Per-document AI history UI and backend interaction audit log
+
+## Quick Start
+
+### 1. Create the environment file
 
 ```bash
 cp .env.example .env
 ```
 
-**Environment Variables**
-The backend reads `.env` values through `pydantic-settings`. The main variables are:
-
-- `SECRET_KEY`: signing secret for JWT access and refresh tokens
-- `ACCESS_TOKEN_EXPIRE_MINUTES`: short-lived access token TTL
-- `REFRESH_TOKEN_EXPIRE_DAYS`: refresh token TTL
-- `DATABASE_URL`: SQLite connection string by default
-- `JWT_ALGORITHM`: JWT signing algorithm, default `HS256`
-- `AI_COLLAB_ALLOWED_ORIGINS`: JSON-list CORS origins; the default local list already includes `http://localhost:5173`
-
-An example file is included at [.env.example](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/.env.example).
-
-**How To Run**
-Use the helper script from the repository root:
+### 2. Install backend and frontend dependencies
 
 ```bash
 ./run.sh install
+```
+
+### 3. Start the full app with one command
+
+```bash
+./run.sh dev
+```
+
+That starts:
+
+- FastAPI backend on `http://127.0.0.1:8000`
+- Vite frontend on `http://localhost:5173`
+
+### Optional single-process commands
+
+Backend only:
+
+```bash
 ./run.sh backend
 ```
 
-Equivalent manual backend command:
+Frontend only:
 
 ```bash
-uvicorn app.backend.main:app --reload
+./run.sh frontend
 ```
 
-Useful local URLs:
+## Environment Variables
 
-- API docs: `http://127.0.0.1:8000/docs`
-- OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
-- Health check: `http://127.0.0.1:8000/health`
+The main variables are defined in `.env.example`.
 
-For local frontend development, Vite proxies `/v1` requests to `http://127.0.0.1:8000` in [vite.config.js](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/frontend/vite.config.js). If you point the frontend directly at the backend with `VITE_API_BASE_URL`, the backend's default CORS list already allows `http://localhost:5173`.
+- `SECRET_KEY`: JWT signing secret
+- `ACCESS_TOKEN_EXPIRE_MINUTES`: access-token TTL
+- `REFRESH_TOKEN_EXPIRE_DAYS`: refresh-token TTL
+- `DATABASE_URL`: SQLite database URL by default
+- `JWT_ALGORITHM`: JWT signing algorithm
+- `AI_COLLAB_ALLOWED_ORIGINS`: allowed CORS origins
+- `AI_COLLAB_AI_API_KEY`: optional real AI provider key
+- `AI_COLLAB_AI_API_URL`: OpenAI-compatible endpoint URL
+- `AI_COLLAB_AI_MODEL`: configured model name
 
-**How To Run Tests**
-Run all backend tests:
+If the AI key and URL are not configured, the backend falls back to the local stub AI provider.
+
+## Running Tests
+
+Backend:
 
 ```bash
 ./run.sh tests
 ```
 
-Equivalent manual command:
+Equivalent:
 
 ```bash
 pytest app/backend/tests -q
 ```
 
-**Implemented Backend API Scope**
-Authentication:
+Frontend:
 
-- `POST /v1/auth/register`
-- `POST /v1/auth/login`
-- `POST /v1/auth/refresh`
-- `GET /v1/auth/me`
+```bash
+cd app/frontend
+npm test -- --run
+```
 
-Documents:
+## API Docs
 
-- `POST /v1/documents`
-- `GET /v1/documents`
-- `GET /v1/documents/{documentId}`
-- `PATCH /v1/documents/{documentId}`
-- `DELETE /v1/documents/{documentId}`
-- `PATCH /v1/documents/{documentId}/content`
-- `GET /v1/documents/{documentId}/versions`
-- `POST /v1/documents/{documentId}/versions/{versionId}/restore`
+FastAPI docs:
 
-**Architecture Overview**
-Auth flow:
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
+- Health check: `http://127.0.0.1:8000/health`
 
-- passwords are hashed in [security.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/core/security.py)
-- login issues a short-lived access JWT and a persisted refresh JWT
-- refresh tokens are stored in SQLite through [refresh_token.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/models/refresh_token.py) and rotated on refresh
-- protected routes use shared dependencies from [deps.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/api/deps.py)
+## Auth Lifecycle
 
-Document flow:
+The auth model is:
 
-- route handlers live in [documents.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/api/routes/documents.py) and [versions.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/api/routes/versions.py)
-- orchestration is handled in [document_service.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/services/document_service.py) and [version_service.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/services/version_service.py)
-- persistence uses SQLAlchemy models and lightweight repositories against SQLite
-- content saves append version entries, and restore creates a brand-new version instead of mutating history
-- repeated saves of already-persisted content reuse the current version instead of creating duplicate version rows
+1. `POST /v1/auth/login` returns an access token, refresh token, and current user.
+2. The frontend stores both tokens in browser storage.
+3. Protected API requests use the access token.
+4. If a protected request gets `401`, the frontend automatically calls `POST /v1/auth/refresh`.
+5. The refresh endpoint rotates the refresh token and returns a fresh access token.
+6. If refresh fails, the frontend clears auth state and sends the user back to login.
 
-Collaboration bootstrap:
+This keeps the editing experience stable during token expiration without showing raw backend auth errors in normal use.
 
-- `POST /v1/documents/{documentId}/sessions` now returns the current server revision plus `resync_required`, `missed_revision_count`, and an `active_collaborators` snapshot from the in-memory session repository
-- reconnecting the same user to the same document reuses the existing session identity while refreshing presence timestamps
+## Realtime Collaboration Architecture
 
-AI flow:
+### Session bootstrap
 
-- AI suggestions remain reviewable before apply, but the backend now records the rendered prompt, selected scope inputs, provider/model metadata, token usage, and the accept/reject/edited outcome on the interaction record
-- AI document-apply flows only record acceptance or modification outcomes after the document/version write commits successfully
+The editor first creates or resumes a collaboration session with:
 
-**Testing Overview**
-Relevant backend coverage includes:
+- `POST /v1/documents/{documentId}/sessions`
 
-- unit tests for password hashing and JWT logic in [test_security.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/tests/unit/test_security.py)
-- auth integration tests in [test_auth.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/tests/test_auth.py)
-- document CRUD integration tests in [test_documents.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/tests/test_documents.py)
-- version restore tests in [test_versions.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/tests/test_versions.py)
-- end-to-end contract coverage in [test_backend_contracts.py](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/app/backend/tests/test_backend_contracts.py)
-- collaboration-focused coverage for repeated saves, resync metadata, and active collaborator snapshots in [test_documents.py](/Users/alnoor.ismail/Documents/GitHub/Collaborative-Document-Editor-with-AI-Writing-Assistant/app/backend/tests/test_documents.py)
-- AI audit/usage contract coverage in [test_contract_stubs.py](/Users/alnoor.ismail/Documents/GitHub/Collaborative-Document-Editor-with-AI-Writing-Assistant/app/backend/tests/test_contract_stubs.py) and [test_ai_provider.py](/Users/alnoor.ismail/Documents/GitHub/Collaborative-Document-Editor-with-AI-Writing-Assistant/app/backend/tests/test_ai_provider.py)
+That response includes:
 
-**Notes**
-- SQLite is used as the default assignment-friendly persistence layer.
-- The repository still contains frontend, sharing, invitation, session bootstrap, and AI suggestion code that pre-existed this backend scope, and the new backend changes were integrated with that structure rather than replacing it.
-- A short design note for assignment changes is included in [DEVIATIONS.md](/Users/alnoor.ismail/Collaborative-Document-Editor-with-AI-Writing-Assistant-3/DEVIATIONS.md).
+- `session_id`
+- `session_token`
+- `revision`
+- `realtime_url`
+- `resync_required`
+- `missed_revision_count`
+- `active_collaborators`
+
+### WebSocket auth
+
+The frontend opens:
+
+- `/v1/documents/{documentId}/sessions/{sessionId}/ws`
+
+The backend validates:
+
+- bearer access token
+- session token from session bootstrap
+
+No valid auth means no collaboration session.
+
+### Message protocol
+
+Current server/client message types include:
+
+- `session_joined`
+- `presence_snapshot`
+- `content_updated`
+- `conflict_detected`
+- `heartbeat`
+- `typing`
+- `error`
+
+### Sync strategy
+
+The app uses revision-based synchronization rather than CRDTs. That means:
+
+- background edits are sent with `base_revision`
+- the backend broadcasts authoritative document content and revision
+- if the document changed remotely while a local draft is unsaved, the UI does not silently overwrite the local draft
+- instead it surfaces a conflict/reconciliation choice
+
+### Offline and reconnect behavior
+
+- local unsent drafts are stored client-side
+- reconnect attempts happen automatically
+- if realtime is unavailable, direct HTTP saves still continue
+- recovered drafts are restored when the editor reopens
+
+## AI Streaming Architecture
+
+### Stream route
+
+The sidebar uses:
+
+- `POST /v1/documents/{documentId}/ai/interactions/stream`
+
+The backend returns an SSE stream with events such as:
+
+- `meta`
+- `chunk`
+- `complete`
+- `cancelled`
+- `error`
+
+### Cancel route
+
+- `POST /v1/ai/interactions/{interactionId}/cancel`
+
+The frontend can cancel in-progress AI generation. Partial output is preserved in the sidebar when cancellation happens after some text has already streamed in.
+
+### Suggestion workflow
+
+AI responses are not blindly inserted into the document. The current flow is:
+
+1. run AI on whole document or selected text
+2. review streamed output in the sidebar
+3. accept, reject, or edit
+4. apply approved content to the document
+5. optionally undo the most recent AI-applied rewrite
+
+### Prompting and provider abstraction
+
+- prompt rendering lives in the backend prompt builder
+- context is assembled intentionally instead of dumping the entire document blindly every time
+- the AI provider is abstracted behind the backend provider client, so switching providers is localized
+
+### AI history
+
+Every interaction records:
+
+- feature type
+- scope
+- rendered prompt
+- user instruction
+- response
+- model name
+- token usage when available
+- accept / reject / modified outcome
+
+The frontend exposes a document-level AI history panel in the sidebar.
+
+## Manual QA Guide
+
+### Multi-user collaboration
+
+Use isolated browser storage contexts:
+
+- User A: normal browser window
+- User B: incognito/private window
+- Optional User C: separate browser profile or different browser
+
+For each user:
+
+1. log into a different account
+2. open the same shared document
+3. verify presence updates
+4. verify owner/editor/viewer permissions
+5. verify edits propagate across sessions
+6. verify overlapping edits show the conflict flow instead of silently overwriting local work
+
+### Session isolation note
+
+If you log in as another user in the same browser storage context, that entire session changes identity. That is expected with the current token storage model and is not a valid simulation of two independent collaborators.
+
+### Export QA
+
+1. create a rich-text document with headings, paragraphs, bold text, and lists
+2. export as HTML
+3. open the downloaded file in a browser
+4. verify the output renders formatted HTML instead of showing literal tags like `<p>`
+
+### Version history QA
+
+1. make several manual saves and trigger autosaves
+2. open version history
+3. confirm the modal scrolls
+4. confirm autosaves are hidden by default
+5. confirm the autosave toggle reveals them
+6. confirm restore still works
+
+Version history is restore/audit history, not the same feature as editor undo.
+
+## Project Structure
+
+- `app/backend`: FastAPI app, services, repositories, models, tests
+- `app/frontend`: React app, editor UI, AI sidebar, tests
+- `run.sh`: install, dev, backend, frontend, tests
+- `.env.example`: example environment config
+- `SHIP_FREEZE_ASSIGNMENT2.md`: current ship/freeze decisions
+- `DEVIATIONS.md`: documented deviations from Assignment 1
+
+## Deviations
+
+This repository documents Assignment 1 deviations in `DEVIATIONS.md`. The most important implementation choice is that realtime collaboration uses revision-based synchronization and explicit conflict handling rather than CRDT/OT. That was a deliberate baseline-scope tradeoff, not an accidental omission.
