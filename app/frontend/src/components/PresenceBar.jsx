@@ -17,6 +17,9 @@ export default function PresenceBar({
   onAcceptRemote,
   onKeepLocal,
 }) {
+  const showLivePresence = realtimeStatus === 'connected';
+  const connectedAndSolo =
+    realtimeStatus === 'connected' && users.length <= 1 && !realtimeMessage;
   const typingUsers = users.filter(
     (user) => user.typing && user.user_id !== currentUserId
   );
@@ -25,16 +28,24 @@ export default function PresenceBar({
     <>
       <div className="presence-bar">
         <div className="presence-pill-group">
-          <span className="presence-pill presence-pill-primary">
-            Live: {formatNames(users, currentUserId)}
-          </span>
-          <span className={`presence-pill presence-pill-status presence-pill-status-${realtimeStatus}`}>
-            {realtimeStatus === 'connected'
-              ? 'Realtime connected'
-              : realtimeStatus === 'connecting'
-                ? 'Connecting…'
-                : 'Realtime offline'}
-          </span>
+          {showLivePresence ? (
+            <span className="presence-pill presence-pill-primary">
+              Live: {formatNames(users, currentUserId)}
+            </span>
+          ) : null}
+          {!connectedAndSolo ? (
+            <span className={`presence-pill presence-pill-status presence-pill-status-${realtimeStatus}`}>
+              {realtimeStatus === 'connected'
+                ? 'Realtime connected'
+                : realtimeStatus === 'connecting'
+                  ? 'Connecting…'
+                  : realtimeStatus === 'reconnecting'
+                    ? 'Reconnecting…'
+                    : realtimeStatus === 'unsupported'
+                      ? 'Realtime unsupported'
+                      : 'Realtime offline'}
+            </span>
+          ) : null}
           {typingUsers.length ? (
             <span className="presence-pill">
               {typingUsers.map((user) => user.display_name).join(', ')} typing…

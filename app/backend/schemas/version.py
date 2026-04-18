@@ -18,6 +18,10 @@ class VersionResponse(BaseModel):
         ...,
         description="True when this version was created by restoring a prior snapshot.",
     )
+    save_source: str = Field(
+        ...,
+        description="How this version was created: manual, autosave, or restore.",
+    )
 
 
 class VersionRestoreResponse(BaseModel):

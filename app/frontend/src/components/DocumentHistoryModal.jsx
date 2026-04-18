@@ -22,6 +22,7 @@ export default function DocumentHistoryModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [restoringId, setRestoringId] = useState(null);
+  const [showAutosaves, setShowAutosaves] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +58,55 @@ export default function DocumentHistoryModal({
     [currentRevision, versions]
   );
 
+  const autosaveVersions = useMemo(
+    () => versions.filter((version) => version.save_source === 'autosave'),
+    [versions]
+  );
+
+  const visibleVersions = useMemo(() => {
+    if (showAutosaves) {
+      return versions;
+    }
+
+    const nonAutosaveVersions = versions.filter((version) => version.save_source !== 'autosave');
+    if (nonAutosaveVersions.length > 0) {
+      return nonAutosaveVersions;
+    }
+
+    return autosaveVersions.length > 0 ? [autosaveVersions[0]] : [];
+  }, [autosaveVersions, showAutosaves, versions]);
+
+  const isShowingAutosaveFallback =
+    !showAutosaves
+    && visibleVersions.length === 1
+    && visibleVersions[0]?.save_source === 'autosave'
+    && autosaveVersions.length === versions.length
+    && autosaveVersions.length > 0;
+
+  function getSaveSourceLabel(version) {
+    if (version.save_source === 'restore' || version.is_restore_version) {
+      return 'Restore';
+    }
+
+    if (version.save_source === 'autosave') {
+      return 'Autosave';
+    }
+
+    return 'Manual save';
+  }
+
+  function getSaveSourceBadgeClass(version) {
+    if (version.save_source === 'restore' || version.is_restore_version) {
+      return 'history-badge history-badge-restore';
+    }
+
+    if (version.save_source === 'autosave') {
+      return 'history-badge history-badge-autosave';
+    }
+
+    return 'history-badge history-badge-manual';
+  }
+
   async function handleRestore(version) {
     const confirmed = window.confirm(
       `Restore version ${version.version_number}? This will create a new version entry.`
@@ -79,7 +129,7 @@ export default function DocumentHistoryModal({
 
   return (
     <div className="modal-overlay" onClick={(event) => event.target === event.currentTarget && onClose()}>
-      <div className="modal modal-wide" role="dialog" aria-modal="true" aria-label="Version history">
+      <div className="modal modal-wide modal-tall" role="dialog" aria-modal="true" aria-label="Version history">
         <div className="modal-header">
           <h2 className="modal-title">Version history</h2>
           <button className="modal-close" type="button" onClick={onClose} aria-label="Close">
@@ -87,10 +137,22 @@ export default function DocumentHistoryModal({
           </button>
         </div>
 
-        <div className="modal-body">
-          <p className="share-helper-text">
-            Review previous saved snapshots and restore an earlier state without deleting later history.
-          </p>
+        <div className="modal-body modal-scroll">
+          <div className="history-header">
+            <p className="share-helper-text">
+              Review previous saved snapshots and restore an earlier state without deleting later
+              history.
+            </p>
+            {autosaveVersions.length > 0 ? (
+              <button
+                type="button"
+                className="btn btn-secondary history-toggle"
+                onClick={() => setShowAutosaves((current) => !current)}
+              >
+                {showAutosaves ? 'Hide autosaves' : 'Show autosaves'}
+              </button>
+            ) : null}
+          </div>
 
           {error && <div className="error-banner">{error}</div>}
 
@@ -100,7 +162,14 @@ export default function DocumentHistoryModal({
             <div className="history-empty-state">No saved versions yet.</div>
           ) : (
             <div className="history-list" role="list">
-              {versions.map((version) => {
+              {isShowingAutosaveFallback ? (
+                <div className="history-helper-note">
+                  Only autosave snapshots exist so far. Open autosaves if you want to browse the
+                  full background-save history.
+                </div>
+              ) : null}
+
+              {visibleVersions.map((version) => {
                 const isCurrent = version.version_id === currentVersionId;
                 return (
                   <div className="history-card" role="listitem" key={version.version_id}>
@@ -109,9 +178,9 @@ export default function DocumentHistoryModal({
                         <strong>Version {version.version_number}</strong>
                         <div className="history-card-badges">
                           {isCurrent ? <span className="history-badge">Current</span> : null}
-                          {version.is_restore_version ? (
-                            <span className="history-badge history-badge-muted">Restored</span>
-                          ) : null}
+                          <span className={getSaveSourceBadgeClass(version)}>
+                            {getSaveSourceLabel(version)}
+                          </span>
                         </div>
                       </div>
                       <p className="history-card-meta">

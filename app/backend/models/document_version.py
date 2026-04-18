@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.backend.core.contracts import utc_now
@@ -23,6 +32,8 @@ class DocumentVersion(Base):
     )
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     content_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    line_spacing_snapshot: Mapped[float] = mapped_column(Float, default=1.15, nullable=False)
+    save_source: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
     created_by: Mapped[int] = mapped_column(
         ForeignKey("users.id"), index=True, nullable=False
     )

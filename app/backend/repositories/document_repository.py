@@ -16,6 +16,7 @@ class DocumentRepository:
         content: str,
         content_format: str,
         ai_enabled: bool,
+        line_spacing: float,
         owner_id: int,
     ) -> Document:
         document = Document(
@@ -23,6 +24,7 @@ class DocumentRepository:
             content=content,
             content_format=content_format,
             ai_enabled=ai_enabled,
+            line_spacing=line_spacing,
             owner_id=owner_id,
         )
         self.db.add(document)

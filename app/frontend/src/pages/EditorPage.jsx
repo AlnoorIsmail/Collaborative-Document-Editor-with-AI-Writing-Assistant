@@ -46,6 +46,7 @@ export default function EditorPage() {
   const [role, setRole] = useState('owner');
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [lineSpacing, setLineSpacing] = useState(1.15);
   const [revision, setRevision] = useState(0);
   const [saveStatus, setSaveStatus] = useState('saved');
   const [selection, setSelection] = useState(null);
@@ -65,6 +66,7 @@ export default function EditorPage() {
   const contentRef = useRef('');
   const titleRef = useRef('');
   const revisionRef = useRef(0);
+  const lineSpacingRef = useRef(1.15);
   const userRef = useRef(null);
   const selectionRef = useRef(null);
   const lastAiUndoRef = useRef(null);
@@ -82,6 +84,10 @@ export default function EditorPage() {
     const initialContent = docData.current_content || docData.content || '';
     setContent(initialContent);
     contentRef.current = initialContent;
+
+    const nextLineSpacing = Number(docData.line_spacing) || 1.15;
+    setLineSpacing(nextLineSpacing);
+    lineSpacingRef.current = nextLineSpacing;
 
     const nextRevision = docData.revision ?? 0;
     setRevision(nextRevision);
@@ -113,12 +119,16 @@ export default function EditorPage() {
   const syncRealtimeDocument = useCallback(
     ({
       nextContent,
+      nextLineSpacing,
       nextRevision,
       nextLatestVersionId,
       updatedAt,
     }) => {
+      const resolvedLineSpacing = nextLineSpacing ?? lineSpacingRef.current ?? 1.15;
       setContent(nextContent);
       contentRef.current = nextContent;
+      setLineSpacing(resolvedLineSpacing);
+      lineSpacingRef.current = resolvedLineSpacing;
       setRevision(nextRevision);
       revisionRef.current = nextRevision;
       isDirtyRef.current = false;
@@ -131,6 +141,7 @@ export default function EditorPage() {
         const nextDoc = {
           ...current,
           current_content: nextContent,
+          line_spacing: resolvedLineSpacing ?? current.line_spacing,
           revision: nextRevision,
           latest_version_id: nextLatestVersionId ?? current.latest_version_id,
           updated_at: updatedAt ?? current.updated_at,
@@ -157,9 +168,37 @@ export default function EditorPage() {
         setUser(userData);
         applyDocumentState(docData, userData);
         const recoveredDraft = readOfflineDraft(id);
-        if (recoveredDraft?.content && recoveredDraft.content !== (docData.current_content || '')) {
-          setContent(recoveredDraft.content);
-          contentRef.current = recoveredDraft.content;
+        const recoveredContent = recoveredDraft?.content;
+        const recoveredLineSpacing = Number(recoveredDraft?.lineSpacing);
+        const contentChanged =
+          typeof recoveredContent === 'string'
+          && recoveredContent !== (docData.current_content || '');
+        const lineSpacingChanged =
+          Number.isFinite(recoveredLineSpacing)
+          && recoveredLineSpacing !== (Number(docData.line_spacing) || 1.15);
+
+        if (contentChanged || lineSpacingChanged) {
+          if (contentChanged) {
+            setContent(recoveredContent);
+            contentRef.current = recoveredContent;
+          }
+          if (lineSpacingChanged) {
+            setLineSpacing(recoveredLineSpacing);
+            lineSpacingRef.current = recoveredLineSpacing;
+          }
+          setDoc((current) => {
+            if (!current) {
+              return current;
+            }
+
+            const nextDoc = {
+              ...current,
+              current_content: contentChanged ? recoveredContent : current.current_content,
+              line_spacing: lineSpacingChanged ? recoveredLineSpacing : current.line_spacing,
+            };
+            docRef.current = nextDoc;
+            return nextDoc;
+          });
           if (typeof recoveredDraft.revision === 'number') {
             setRevision(recoveredDraft.revision);
             revisionRef.current = recoveredDraft.revision;
@@ -175,11 +214,12 @@ export default function EditorPage() {
       });
   }, [applyDocumentState, id, navigate]);
 
-  const performSaveContent = useCallback(async ({ force = false } = {}) => {
+  const performSaveContent = useCallback(async ({ force = false, saveSource = 'manual' } = {}) => {
     if (role === 'viewer') return true;
     if (!isDirtyRef.current && !force) return true;
 
     const contentToSave = contentRef.current;
+    const lineSpacingToSave = lineSpacingRef.current;
     const baseRevision = revisionRef.current;
     setSaveStatus('saving');
     try {
@@ -188,6 +228,8 @@ export default function EditorPage() {
         body: JSON.stringify({
           content: contentToSave,
           base_revision: baseRevision,
+          line_spacing: lineSpacingToSave,
+          save_source: saveSource,
         }),
       });
 
@@ -200,6 +242,7 @@ export default function EditorPage() {
               ? {
                   ...current,
                   current_content: contentToSave,
+                  line_spacing: saved.line_spacing ?? lineSpacingToSave,
                   revision: saved.revision,
                   latest_version_id: saved.latest_version_id,
                 }
@@ -209,7 +252,8 @@ export default function EditorPage() {
         }
       );
 
-      const hasNewUnsavedChanges = contentRef.current !== contentToSave;
+      const hasNewUnsavedChanges =
+        contentRef.current !== contentToSave || lineSpacingRef.current !== lineSpacingToSave;
       isDirtyRef.current = hasNewUnsavedChanges;
       setSaveStatus(hasNewUnsavedChanges ? 'unsaved' : 'saved');
       return !hasNewUnsavedChanges;
@@ -223,7 +267,7 @@ export default function EditorPage() {
     savePromiseRef.current = null;
   }, [id]);
 
-  const saveContent = useCallback(async ({ force = false } = {}) => {
+  const saveContent = useCallback(async ({ force = false, saveSource = 'manual' } = {}) => {
     if (savePromiseRef.current) {
       await savePromiseRef.current;
       if (!isDirtyRef.current && !force) {
@@ -231,7 +275,7 @@ export default function EditorPage() {
       }
     }
 
-    const savePromise = performSaveContent({ force });
+    const savePromise = performSaveContent({ force, saveSource });
     savePromiseRef.current = savePromise;
 
     try {
@@ -256,6 +300,8 @@ export default function EditorPage() {
         body: JSON.stringify({
           content: contentRef.current,
           base_revision: revisionRef.current,
+          line_spacing: lineSpacingRef.current,
+          save_source: 'manual',
         }),
       });
 
@@ -269,6 +315,7 @@ export default function EditorPage() {
             ? {
                 ...current,
                 current_content: contentRef.current,
+                line_spacing: baselineSave.line_spacing ?? lineSpacingRef.current,
                 revision: baselineSave.revision,
                 latest_version_id: baselineSave.latest_version_id,
               }
@@ -282,6 +329,7 @@ export default function EditorPage() {
       documentId: id,
       title: titleRef.current,
       content: contentRef.current,
+      lineSpacing: lineSpacingRef.current,
       revision: revisionRef.current,
       latestVersionId: docRef.current?.latest_version_id ?? null,
     };
@@ -293,11 +341,11 @@ export default function EditorPage() {
     }
 
     const timer = window.setTimeout(() => {
-      void saveContent();
+      void saveContent({ saveSource: 'autosave' });
     }, AUTO_SAVE_DELAY);
 
     return () => window.clearTimeout(timer);
-  }, [content, doc, role, saveContent, saveStatus]);
+  }, [content, doc, lineSpacing, role, saveContent, saveStatus]);
 
   useEffect(() => {
     function handleUnload() {
@@ -316,6 +364,8 @@ export default function EditorPage() {
           body: JSON.stringify({
             content: contentRef.current,
             base_revision: revisionRef.current,
+            line_spacing: lineSpacingRef.current,
+            save_source: 'autosave',
           }),
           keepalive: true,
         }).catch(() => {});
@@ -336,6 +386,7 @@ export default function EditorPage() {
     setRealtimeMessage('');
     writeOfflineDraft(id, {
       content: newContent,
+      lineSpacing: lineSpacingRef.current,
       revision: revisionRef.current,
       updatedAt: Date.now(),
     });
@@ -357,6 +408,34 @@ export default function EditorPage() {
     selectionRef.current = nextSelection;
   }
 
+  function handleLineSpacingChange(nextLineSpacing) {
+    clearLastAiUndo();
+    const normalizedLineSpacing = Math.min(3, Math.max(1, Number(nextLineSpacing) || 1.15));
+    setLineSpacing(normalizedLineSpacing);
+    lineSpacingRef.current = normalizedLineSpacing;
+    isDirtyRef.current = true;
+    setSaveStatus('unsaved');
+    setRealtimeMessage('');
+    setDoc((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const nextDoc = {
+        ...current,
+        line_spacing: normalizedLineSpacing,
+      };
+      docRef.current = nextDoc;
+      return nextDoc;
+    });
+    writeOfflineDraft(id, {
+      content: contentRef.current,
+      lineSpacing: normalizedLineSpacing,
+      revision: revisionRef.current,
+      updatedAt: Date.now(),
+    });
+  }
+
   async function handleTitleChange(newTitle) {
     clearLastAiUndo();
     try {
@@ -375,6 +454,7 @@ export default function EditorPage() {
           ...current,
           title: updated.title,
           ai_enabled: updated.ai_enabled,
+          line_spacing: updated.line_spacing,
           updated_at: updated.updated_at,
         };
         docRef.current = nextDoc;
@@ -386,11 +466,11 @@ export default function EditorPage() {
   }
 
   function handleSaveNow() {
-    saveContent({ force: true });
+    saveContent({ force: true, saveSource: 'manual' });
   }
 
   const handleRestoreVersion = useCallback(async (version) => {
-    const saved = await saveContent({ force: true });
+    const saved = await saveContent({ force: true, saveSource: 'manual' });
     if (!saved) {
       throw new Error('Save the latest document changes before restoring a version.');
     }
@@ -431,6 +511,22 @@ export default function EditorPage() {
     rememberLastAiUndo(undoSnapshot);
   }, [clearLastAiUndo, getAiUndoSnapshot, refreshDocument, rememberLastAiUndo]);
 
+  const applyEditedDocumentSuggestion = useCallback(async ({ suggestionId, editedOutput, applyRange }) => {
+    clearLastAiUndo();
+    const undoSnapshot = getAiUndoSnapshot();
+
+    await apiJSON(`/ai/suggestions/${suggestionId}/apply-edited`, {
+      method: 'POST',
+      body: JSON.stringify({
+        edited_output: editedOutput,
+        apply_to_range: applyRange,
+      }),
+    });
+
+    await refreshDocument();
+    rememberLastAiUndo(undoSnapshot);
+  }, [clearLastAiUndo, getAiUndoSnapshot, refreshDocument, rememberLastAiUndo]);
+
   const applySelectionSuggestion = useCallback(async ({ replacement, selection: selectionOverride }) => {
     clearLastAiUndo();
     const undoSnapshot = getAiUndoSnapshot();
@@ -458,7 +554,7 @@ export default function EditorPage() {
     isDirtyRef.current = true;
     setSaveStatus('unsaved');
 
-    const saved = await saveContent({ force: true });
+    const saved = await saveContent({ force: true, saveSource: 'manual' });
 
     if (!saved) {
       throw new Error('The AI text was inserted, but saving failed. Try saving again.');
@@ -488,7 +584,7 @@ export default function EditorPage() {
   }, [clearLastAiUndo, id, refreshDocument]);
 
   async function handleBack() {
-    const saved = await saveContent({ force: true });
+    const saved = await saveContent({ force: true, saveSource: 'manual' });
     if (saved) {
       navigate('/');
     }
@@ -501,6 +597,7 @@ export default function EditorPage() {
 
     syncRealtimeDocument({
       nextContent: conflictState.content,
+      nextLineSpacing: conflictState.line_spacing,
       nextRevision: conflictState.revision,
       nextLatestVersionId: conflictState.latest_version_id,
     });
@@ -522,6 +619,7 @@ export default function EditorPage() {
 
       const nextDoc = {
         ...current,
+        line_spacing: conflictState.line_spacing ?? current.line_spacing,
         revision: conflictState.revision,
         latest_version_id: conflictState.latest_version_id ?? current.latest_version_id,
       };
@@ -534,7 +632,9 @@ export default function EditorPage() {
       JSON.stringify({
         type: 'content_update',
         content: contentRef.current,
+        line_spacing: lineSpacingRef.current,
         base_revision: conflictState.revision,
+        save_source: 'autosave',
       })
     );
   }, [conflictState]);
@@ -547,18 +647,22 @@ export default function EditorPage() {
     let cancelled = false;
     let reconnectHandle = null;
 
-    async function connectRealtime() {
+    async function connectRealtime({ reconnecting = false } = {}) {
       const accessToken = localStorage.getItem('access_token');
       if (!accessToken) {
         return;
       }
       if (typeof WebSocket === 'undefined') {
-        setRealtimeStatus('offline');
+        setRealtimeStatus('unsupported');
         setRealtimeMessage('This browser does not support realtime collaboration.');
         return;
       }
 
-      setRealtimeStatus('connecting');
+      setPresence([]);
+      setRealtimeStatus(reconnecting ? 'reconnecting' : 'connecting');
+      if (!reconnecting) {
+        setRealtimeMessage('');
+      }
 
       try {
         const bootstrap = await apiJSON(`/documents/${id}/sessions`, {
@@ -600,6 +704,14 @@ export default function EditorPage() {
         nextSocket.onmessage = (event) => {
           const payload = JSON.parse(event.data);
           if (payload.type === 'session_joined') {
+            if (!isDirtyRef.current) {
+              syncRealtimeDocument({
+                nextContent: payload.content,
+                nextLineSpacing: payload.line_spacing,
+                nextRevision: payload.revision,
+                nextLatestVersionId: payload.latest_version_id,
+              });
+            }
             setPresence(payload.presence || []);
             setRealtimeStatus('connected');
             return;
@@ -617,6 +729,7 @@ export default function EditorPage() {
             if (isOwnUpdate || !isDirtyRef.current) {
               syncRealtimeDocument({
                 nextContent: payload.content,
+                nextLineSpacing: payload.line_spacing,
                 nextRevision: payload.revision,
                 nextLatestVersionId: payload.latest_version_id,
                 updatedAt: payload.saved_at,
@@ -632,6 +745,7 @@ export default function EditorPage() {
 
             setConflictState({
               content: payload.content,
+              line_spacing: payload.line_spacing,
               revision: payload.revision,
               latest_version_id: payload.latest_version_id,
               message: `${payload.actor_display_name || 'Another collaborator'} updated this document while you were still editing.`,
@@ -642,6 +756,7 @@ export default function EditorPage() {
           if (payload.type === 'conflict_detected') {
             setConflictState({
               content: payload.content,
+              line_spacing: payload.line_spacing,
               revision: payload.revision,
               latest_version_id: payload.latest_version_id,
               message: payload.message,
@@ -654,26 +769,42 @@ export default function EditorPage() {
           }
         };
 
-        nextSocket.onclose = () => {
+        nextSocket.onclose = (event = { code: 1006, reason: '' }) => {
           if (cancelled) {
             return;
           }
           socketRef.current = null;
-          setRealtimeStatus('offline');
-          setRealtimeMessage('Realtime disconnected. Local saves will continue and retry.');
+          setPresence([]);
+
+          if (event.code === 4401 || event.code === 4403) {
+            setRealtimeStatus('offline');
+            setRealtimeMessage(
+              event.reason || 'Realtime authentication failed. Refresh the page to reconnect.'
+            );
+            return;
+          }
+
+          setRealtimeStatus('reconnecting');
+          setRealtimeMessage(
+            event.reason
+              ? `Realtime disconnected (${event.code}: ${event.reason}). Trying to reconnect while local saves continue.`
+              : 'Realtime disconnected. Trying to reconnect while local saves continue.'
+          );
           reconnectHandle = window.setTimeout(() => {
-            void connectRealtime();
+            void connectRealtime({ reconnecting: true });
           }, 1_500);
           reconnectTimerRef.current = reconnectHandle;
         };
 
         nextSocket.onerror = () => {
           if (!cancelled) {
-            setRealtimeStatus('offline');
+            setPresence([]);
+            setRealtimeMessage('Realtime hit a network error.');
           }
         };
       } catch (nextError) {
         if (!cancelled) {
+          setPresence([]);
           setRealtimeStatus('offline');
           setRealtimeMessage(nextError.message || 'Realtime collaboration is unavailable right now.');
         }
@@ -716,14 +847,16 @@ export default function EditorPage() {
           JSON.stringify({
             type: 'content_update',
             content: contentRef.current,
+            line_spacing: lineSpacingRef.current,
             base_revision: revisionRef.current,
+            save_source: 'autosave',
           })
         );
       }
     }, REALTIME_SEND_DELAY);
 
     return () => window.clearTimeout(timer);
-  }, [conflictState, content, doc, realtimeStatus, role, saveStatus]);
+  }, [conflictState, content, doc, lineSpacing, realtimeStatus, role, saveStatus]);
 
   useEffect(() => {
     if (realtimeStatus !== 'connected' || !socketRef.current) {
@@ -803,6 +936,8 @@ export default function EditorPage() {
             content={content}
             onChange={handleContentChange}
             onSelectionUpdate={handleSelectionUpdate}
+            lineSpacing={lineSpacing}
+            onLineSpacingChange={handleLineSpacingChange}
             readOnly={isReadOnly}
             placeholder="Start writing…"
           />
@@ -829,6 +964,7 @@ export default function EditorPage() {
           ensureSavedDocument={ensureSavedDocument}
           lastAiUndo={lastAiUndo}
           applyDocumentSuggestion={applyDocumentSuggestion}
+          applyEditedDocumentSuggestion={applyEditedDocumentSuggestion}
           applySelectionSuggestion={applySelectionSuggestion}
           undoLastAiApply={undoLastAiApply}
           isOpen={isAiOpen}

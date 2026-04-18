@@ -171,6 +171,7 @@ class CollaborationService:
                 "document_id": access.document.id,
                 "revision": access.current_revision,
                 "content": access.document.content,
+                "line_spacing": access.document.line_spacing,
                 "presence": await self._hub.get_presence_snapshot(access.document.id),
             },
         )
@@ -236,6 +237,7 @@ class CollaborationService:
                     "type": "content_updated",
                     "document_id": access.document.id,
                     "content": access.document.content,
+                    "line_spacing": access.document.line_spacing,
                     "revision": access.current_revision,
                     "latest_version_id": access.document.latest_version_id,
                     "actor_user_id": None,
@@ -263,6 +265,8 @@ class CollaborationService:
                 payload=DocumentContentSaveRequest(
                     content=str(payload.get("content") or ""),
                     base_revision=int(payload.get("base_revision")),
+                    line_spacing=payload.get("line_spacing"),
+                    save_source=str(payload.get("save_source") or "autosave"),
                 ),
                 current_user=current_user,
             )
@@ -302,6 +306,7 @@ class CollaborationService:
                     "message": error.detail["message"],
                     "revision": access.current_revision,
                     "content": access.document.content,
+                    "line_spacing": access.document.line_spacing,
                     "latest_version_id": access.document.latest_version_id,
                 },
             )
@@ -327,6 +332,7 @@ class CollaborationService:
                 "type": "content_updated",
                 "document_id": access.document.id,
                 "content": access.document.content,
+                "line_spacing": access.document.line_spacing,
                 "revision": response.revision,
                 "latest_version_id": response.latest_version_id,
                 "actor_user_id": current_user.id,
