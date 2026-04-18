@@ -1,9 +1,15 @@
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
 class SharingUserResponse(BaseModel):
     user_id: str = Field(..., description="Prefixed user identifier.")
     email: str = Field(..., description="Email address for the shared user.")
+    username: Optional[str] = Field(
+        default=None,
+        description="Unique username for the shared user when available.",
+    )
     display_name: str = Field(..., description="Display name for the shared user.")
 
 

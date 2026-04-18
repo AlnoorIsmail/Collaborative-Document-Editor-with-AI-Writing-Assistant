@@ -320,6 +320,7 @@ def test_owner_can_fetch_sharing_overview() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
     invited_user, _ = create_user_and_token(client, "viewer@example.com", "Viewer")
+    pending_user, _ = create_user_and_token(client, "pending@example.com", "Pending")
     create_document = client.post(
         "/v1/documents",
         json={"title": "Doc", "initial_content": ""},
@@ -366,7 +367,7 @@ def test_owner_can_fetch_sharing_overview() -> None:
     assert body["collaborators"][0]["user"]["email"] == "viewer@example.com"
     assert body["collaborators"][0]["role"] == "editor"
     assert len(body["invitations"]) == 1
-    assert body["invitations"][0]["invited_email"] == "pending@example.com"
+    assert body["invitations"][0]["invited_email"] == pending_user["email"]
     assert len(body["share_links"]) == 1
     assert body["share_links"][0]["role"] == "viewer"
 

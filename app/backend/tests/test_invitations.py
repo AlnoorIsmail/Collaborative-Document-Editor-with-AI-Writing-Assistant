@@ -10,6 +10,7 @@ from app.backend.tests.test_documents import create_user_and_token
 def test_owner_can_send_invitation() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_user_and_token(client, "editor@example.com", "Editor")
     create_response = client.post(
         "/v1/documents",
         json={"title": "Doc", "initial_content": ""},
@@ -30,6 +31,53 @@ def test_owner_can_send_invitation() -> None:
     assert response.json()["role"] == "commenter"
     assert response.json()["status"] == "pending"
     assert response.json()["expires_at"]
+
+
+def test_owner_cannot_invite_email_without_existing_account() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Doc", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+    document_id = create_response.json()["document_id"]
+
+    response = client.post(
+        "/v1/documents/{document_id}/invitations".format(document_id=document_id),
+        json={"invited_email": "missing@example.com", "role": "commenter"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error_code": "USER_NOT_FOUND",
+        "message": "No account exists for this email.",
+        "retryable": False,
+    }
+
+
+def test_owner_can_send_invitation_by_username() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_user_and_token(client, "editor@example.com", "Editor Name")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Doc", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+    document_id = create_response.json()["document_id"]
+
+    response = client.post(
+        "/v1/documents/{document_id}/invitations".format(document_id=document_id),
+        json={"invitee": "editor_name", "role": "editor"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["document_id"] == "doc_{id}".format(id=document_id)
+    assert response.json()["invited_email"] == "editor@example.com"
+    assert response.json()["role"] == "editor"
 
 
 def test_non_owner_cannot_send_invitation() -> None:

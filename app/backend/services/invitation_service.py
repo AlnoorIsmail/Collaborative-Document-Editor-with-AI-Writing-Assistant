@@ -5,6 +5,7 @@ from fastapi import status
 
 from app.backend.core.contracts import parse_resource_id, prefixed_id, utc_now, utc_z
 from app.backend.core.errors import ApiError
+from app.backend.core.usernames import normalize_username_seed
 from app.backend.models.user import User
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.invitation_repository import InvitationRepository
@@ -49,11 +50,32 @@ class InvitationService:
             user_id=current_user.id,
         )
         role = self.access_service.validate_role(payload.role)
+        raw_invitee = payload.invitee.strip()
+        normalized_email = raw_invitee.lower() if "@" in raw_invitee else ""
+        normalized_username = (
+            normalize_username_seed(raw_invitee) if "@" not in raw_invitee else ""
+        )
+        invited_user = (
+            self.user_repository.get_by_email(normalized_email)
+            if normalized_email
+            else self.user_repository.get_by_username(normalized_username)
+        )
+
+        if invited_user is None:
+            raise ApiError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="USER_NOT_FOUND",
+                message=(
+                    "No account exists for this email."
+                    if normalized_email
+                    else "No account exists for this username."
+                ),
+            )
 
         expires_at = utc_now() + timedelta(days=INVITATION_EXPIRY_DAYS)
         invitation = self.invitation_repository.create(
             document_id=access.document.id,
-            email=payload.invited_email.lower(),
+            email=invited_user.email.lower(),
             role=role,
             token=secrets.token_urlsafe(24),
             invited_by=current_user.id,

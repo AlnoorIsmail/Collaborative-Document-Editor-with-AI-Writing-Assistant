@@ -50,6 +50,7 @@ class SharingService:
                 user=SharingUserResponse(
                     user_id=prefixed_id("usr", permission.user.id),
                     email=permission.user.email,
+                    username=permission.user.username,
                     display_name=permission.user.display_name,
                 ),
                 role=permission.role,
@@ -87,6 +88,7 @@ class SharingService:
             owner=SharingUserResponse(
                 user_id=prefixed_id("usr", owner.id),
                 email=owner.email,
+                username=owner.username,
                 display_name=owner.display_name,
             ),
             collaborators=collaborators,
