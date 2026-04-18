@@ -63,11 +63,18 @@ class AuthService:
         normalized_email = email.strip().lower()
         user = self.user_repository.get_by_email(normalized_email)
 
-        if not user or not verify_password(password, user.password_hash):
+        if not user:
             raise ApiError(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 error_code="UNAUTHORIZED",
-                message="Invalid email or password.",
+                message="No account exists for this email.",
+            )
+
+        if not verify_password(password, user.password_hash):
+            raise ApiError(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                error_code="UNAUTHORIZED",
+                message="Incorrect password.",
             )
 
         return LoginResponse(

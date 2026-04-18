@@ -1,4 +1,9 @@
 const BASE = '/v1';
+const AUTH_REFRESH_EXEMPT_PATHS = new Set([
+  '/auth/login',
+  '/auth/register',
+  '/auth/refresh',
+]);
 
 // Shared refresh promise so concurrent 401s only fire one refresh request
 let refreshPromise = null;
@@ -35,6 +40,18 @@ function buildHeaders(token, extra = {}) {
   };
 }
 
+function shouldAttemptRefresh(path, token) {
+  return Boolean(token) && !AUTH_REFRESH_EXEMPT_PATHS.has(path);
+}
+
+export function getErrorMessage(errorData, fallback) {
+  if (errorData && typeof errorData === 'object') {
+    return errorData.message || errorData.detail || fallback;
+  }
+
+  return fallback;
+}
+
 export async function apiFetch(path, options = {}) {
   const { headers: extraHeaders, ...rest } = options;
   const token = localStorage.getItem('access_token');
@@ -44,7 +61,7 @@ export async function apiFetch(path, options = {}) {
     headers: buildHeaders(token, extraHeaders),
   });
 
-  if (res.status !== 401) return res;
+  if (res.status !== 401 || !shouldAttemptRefresh(path, token)) return res;
 
   // Attempt token refresh (deduplicated)
   try {
@@ -68,7 +85,7 @@ export async function apiJSON(path, options = {}) {
   if (!res.ok) {
     let errData;
     try { errData = await res.json(); } catch { errData = { detail: res.statusText }; }
-    const err = new Error(errData.detail || `HTTP ${res.status}`);
+    const err = new Error(getErrorMessage(errData, `HTTP ${res.status}`));
     err.status = res.status;
     err.data = errData;
     throw err;

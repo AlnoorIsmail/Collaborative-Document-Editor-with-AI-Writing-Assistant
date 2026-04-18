@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { apiFetch } from '../api';
+import { apiFetch, getErrorMessage } from '../api';
 
 const ROLES = [
   { value: 'editor', label: 'Editor' },
@@ -35,7 +35,7 @@ export default function ShareModal({ docId, collaborators: initialCollabs, onClo
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.detail || 'Failed to update sharing settings');
+      throw new Error(getErrorMessage(data, 'Failed to update sharing settings'));
     }
     return updated;
   }

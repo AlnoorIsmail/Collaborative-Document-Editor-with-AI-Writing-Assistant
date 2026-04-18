@@ -1,66 +1,168 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { apiFetch } from '../api';
+import { apiFetch, getErrorMessage } from '../api';
+import {
+  getLoginFieldErrors,
+  normalizeEmail,
+  validateEmailField,
+  validatePasswordField,
+} from '../authValidation';
+
+const INITIAL_TOUCHED = {
+  email: false,
+  password: false,
+};
+
+const INITIAL_ERRORS = {
+  email: '',
+  password: '',
+};
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [touched, setTouched] = useState(INITIAL_TOUCHED);
+  const [fieldErrors, setFieldErrors] = useState(INITIAL_ERRORS);
+  const [bannerError, setBannerError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  function setFieldError(field, value) {
+    setFieldErrors((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  function handleEmailChange(event) {
+    const nextEmail = event.target.value;
+    setEmail(nextEmail);
+    setBannerError('');
+    setFieldError('email', validateEmailField(nextEmail));
+  }
+
+  function handlePasswordChange(event) {
+    const nextPassword = event.target.value;
+    setPassword(nextPassword);
+    setBannerError('');
+    setFieldError(
+      'password',
+      touched.password ? validatePasswordField(nextPassword, { required: true }) : ''
+    );
+  }
+
+  function handleEmailBlur() {
+    setTouched((current) => ({
+      ...current,
+      email: true,
+    }));
+    setFieldError('email', validateEmailField(email, { required: true }));
+  }
+
+  function handlePasswordBlur() {
+    setTouched((current) => ({
+      ...current,
+      password: true,
+    }));
+    setFieldError('password', validatePasswordField(password, { required: true }));
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
-    setError('');
+    setBannerError('');
+
+    const nextFieldErrors = getLoginFieldErrors({ email, password });
+    setTouched({
+      email: true,
+      password: true,
+    });
+    setFieldErrors(nextFieldErrors);
+
+    if (nextFieldErrors.email || nextFieldErrors.password) {
+      return;
+    }
+
     setLoading(true);
     try {
+      const normalizedEmail = normalizeEmail(email);
       const res = await apiFetch('/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: normalizedEmail, password }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || 'Login failed');
+        const message = getErrorMessage(data, 'Login failed');
+        if (message === 'No account exists for this email.') {
+          setFieldError('email', message);
+          return;
+        }
+
+        if (message === 'Incorrect password.') {
+          setFieldError('password', message);
+          return;
+        }
+
+        throw new Error(message);
       }
       const data = await res.json();
       localStorage.setItem('access_token', data.access_token);
       localStorage.setItem('refresh_token', data.refresh_token);
       navigate('/');
     } catch (err) {
-      setError(err.message);
+      setBannerError(err.message);
     } finally {
       setLoading(false);
     }
   }
 
+  const emailErrorId = fieldErrors.email ? 'login-email-error' : undefined;
+  const passwordErrorId = fieldErrors.password ? 'login-password-error' : undefined;
+
   return (
     <div className="auth-page">
       <div className="auth-card">
         <h1 className="auth-title">Sign in</h1>
-        <form onSubmit={handleSubmit} className="auth-form">
-          {error && <div className="error-banner">{error}</div>}
+        <form onSubmit={handleSubmit} className="auth-form" noValidate>
+          {bannerError && <div className="error-banner">{bannerError}</div>}
           <label className="field-label">
             Email
             <input
-              className="field-input"
+              className={`field-input ${fieldErrors.email ? 'field-input-error' : ''}`}
               type="email"
               value={email}
-              onChange={e => setEmail(e.target.value)}
+              onChange={handleEmailChange}
+              onBlur={handleEmailBlur}
               required
+              inputMode="email"
               autoFocus
               autoComplete="email"
+              aria-invalid={fieldErrors.email ? 'true' : 'false'}
+              aria-describedby={emailErrorId}
             />
+            {fieldErrors.email ? (
+              <span className="field-help field-help-error" id={emailErrorId}>
+                {fieldErrors.email}
+              </span>
+            ) : null}
           </label>
           <label className="field-label">
             Password
             <input
-              className="field-input"
+              className={`field-input ${fieldErrors.password ? 'field-input-error' : ''}`}
               type="password"
               value={password}
-              onChange={e => setPassword(e.target.value)}
+              onChange={handlePasswordChange}
+              onBlur={handlePasswordBlur}
               required
               autoComplete="current-password"
+              aria-invalid={fieldErrors.password ? 'true' : 'false'}
+              aria-describedby={passwordErrorId}
             />
+            {fieldErrors.password ? (
+              <span className="field-help field-help-error" id={passwordErrorId}>
+                {fieldErrors.password}
+              </span>
+            ) : null}
           </label>
           <button className="btn btn-primary btn-full" type="submit" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign in'}

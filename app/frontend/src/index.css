@@ -96,12 +96,33 @@ html, body {
   background: var(--color-surface);
   color: var(--color-text);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
 .field-input:focus,
 .field-select:focus { border-color: var(--color-border-focus); box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
 
 .field-select { cursor: pointer; }
+
+.field-input-error {
+  border-color: #e53e3e;
+  box-shadow: 0 0 0 3px rgba(229, 62, 62, 0.14);
+  background: #fffafa;
+}
+
+.field-input-error:focus {
+  border-color: #e53e3e;
+  box-shadow: 0 0 0 3px rgba(229, 62, 62, 0.18);
+}
+
+.field-help {
+  min-height: 1.2em;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.field-help-error {
+  color: var(--color-danger);
+}
 
 /* ── Error banner ─────────────────────────────────── */
 .error-banner {
@@ -474,9 +495,8 @@ html, body {
   margin: 24px 0;
 }
 
-/* Placeholder */
-.editor-content .ProseMirror .is-editor-empty:first-child::before,
-.editor-content .ProseMirror p.is-empty::before {
+/* Only show the placeholder for a truly empty document, not every blank paragraph. */
+.editor-content .ProseMirror .is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: var(--color-text-muted);
   pointer-events: none;

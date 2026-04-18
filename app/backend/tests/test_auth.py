@@ -123,7 +123,23 @@ def test_login_success() -> None:
     }
 
 
-def test_invalid_login_rejected() -> None:
+def test_login_rejects_unknown_email() -> None:
+    client = create_test_client()
+
+    response = client.post(
+        "/v1/auth/login",
+        json={"email": "missing@example.com", "password": "wrong-password"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "error_code": "UNAUTHORIZED",
+        "message": "No account exists for this email.",
+        "retryable": False,
+    }
+
+
+def test_login_rejects_wrong_password() -> None:
     client = create_test_client()
     client.post(
         "/v1/auth/register",
@@ -142,7 +158,7 @@ def test_invalid_login_rejected() -> None:
     assert response.status_code == 401
     assert response.json() == {
         "error_code": "UNAUTHORIZED",
-        "message": "Invalid email or password.",
+        "message": "Incorrect password.",
         "retryable": False,
     }
 
