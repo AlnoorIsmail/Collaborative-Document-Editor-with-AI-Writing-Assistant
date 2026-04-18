@@ -90,5 +90,8 @@ export async function apiJSON(path, options = {}) {
     err.data = errData;
     throw err;
   }
+  if (res.status === 204) {
+    return null;
+  }
   return res.json();
 }

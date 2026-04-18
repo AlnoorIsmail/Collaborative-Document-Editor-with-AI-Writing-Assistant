@@ -18,6 +18,7 @@ from app.backend.api.deps import (
     get_session_repository,
 )
 from app.backend.core.database import Base, get_db
+from app.backend.integrations.ai_provider import StubAIProviderClient
 from app.backend.main import create_app
 
 
@@ -48,6 +49,7 @@ def create_test_client() -> TestClient:
 
     app = create_app()
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_ai_provider] = lambda: StubAIProviderClient()
     client = TestClient(app)
     client.session_factory = testing_session_local
     return client

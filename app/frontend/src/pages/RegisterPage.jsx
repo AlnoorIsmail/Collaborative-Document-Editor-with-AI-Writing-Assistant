@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { apiFetch, getErrorMessage } from '../api';
 import {
   getRegisterFieldErrors,
@@ -8,6 +8,10 @@ import {
   validateNameField,
   validatePasswordField,
 } from '../authValidation';
+import {
+  clearPendingShareLinkToken,
+  getPendingShareLinkToken,
+} from '../shareLinks';
 
 const INITIAL_TOUCHED = {
   name: false,
@@ -30,6 +34,7 @@ export default function RegisterPage() {
   const [bannerError, setBannerError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   function setFieldError(field, value) {
     setFieldErrors((current) => ({
@@ -133,7 +138,12 @@ export default function RegisterPage() {
       if (data.access_token) {
         localStorage.setItem('access_token', data.access_token);
         localStorage.setItem('refresh_token', data.refresh_token);
-        navigate('/');
+        const pendingShareToken = getPendingShareLinkToken();
+        const redirectTo =
+          location.state?.redirectTo
+          || (pendingShareToken ? `/share/${pendingShareToken}` : null);
+        clearPendingShareLinkToken();
+        navigate(redirectTo || '/');
       } else {
         navigate('/login');
       }

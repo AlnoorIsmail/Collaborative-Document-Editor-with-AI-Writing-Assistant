@@ -75,6 +75,14 @@ class StubAIProviderClient(AIProviderClient):
                 usage=self._estimate_usage(prompt=prompt, completion=output),
             )
 
+        if normalized_feature == "chat_assistant":
+            output = self._chat_assistant(prompt)
+            return GeneratedSuggestion(
+                generated_output=output,
+                model_name="local-chat-assistant-fallback",
+                usage=self._estimate_usage(prompt=prompt, completion=output),
+            )
+
         output = self._rewrite(prompt)
         return GeneratedSuggestion(
             generated_output=output,
@@ -114,6 +122,23 @@ class StubAIProviderClient(AIProviderClient):
             for keyword in ("formal", "professional", "polish", "clear")
         )
         return self._polish_text(source_text, formal=use_formal_tone)
+
+    def _chat_assistant(self, prompt: str) -> str:
+        source_text = self._extract_source_text(prompt)
+        instruction = self._extract_instruction(prompt)
+
+        if not source_text and not instruction:
+            return "Ask a question or provide document text for AI help."
+
+        if not source_text:
+            return self._sentence_case(instruction.strip())
+
+        summary = self._summarize(prompt)
+        if not instruction:
+            return summary
+
+        cleaned_instruction = self._sentence_case(instruction.strip())
+        return f"{cleaned_instruction} Relevant context: {summary}"
 
     def _extract_source_text(self, prompt: str) -> str:
         source_text = (
@@ -264,6 +289,13 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
             return (
                 "You summarize collaborative documents. Respond with the summary only, "
                 "without markdown or meta commentary."
+            )
+
+        if normalized_feature == "chat_assistant":
+            return (
+                "You are a helpful document assistant. Answer the user's request using "
+                "the provided document text as the primary source, and respond with plain "
+                "text only."
             )
 
         return (

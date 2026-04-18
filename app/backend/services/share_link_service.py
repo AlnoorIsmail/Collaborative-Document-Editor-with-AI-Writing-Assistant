@@ -97,7 +97,7 @@ class ShareLinkService:
                 message="Authentication is required to redeem this share link.",
             )
 
-        if share_link.require_sign_in and current_user is not None:
+        if current_user is not None:
             permission = self.permission_repository.get_by_document_and_user(
                 document_id=share_link.document_id,
                 user_id=current_user.id,
@@ -123,6 +123,29 @@ class ShareLinkService:
             role=share_link.role,
             access_granted=True,
         )
+
+    def revoke_share_link(
+        self,
+        *,
+        link_id: str | int,
+        current_user: User,
+    ) -> None:
+        share_link = self.share_link_repository.get_by_id(
+            parse_resource_id(link_id, "link")
+        )
+        if share_link is None:
+            raise ApiError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SHARE_LINK_NOT_FOUND",
+                message="Share link not found.",
+            )
+
+        self.access_service.require_owner_access(
+            document_id=share_link.document_id,
+            user_id=current_user.id,
+        )
+        self.share_link_repository.update(share_link, revoked=True)
+        self.share_link_repository.db.commit()
 
     def _to_create_response(self, share_link) -> ShareLinkCreateResponse:
         return ShareLinkCreateResponse(

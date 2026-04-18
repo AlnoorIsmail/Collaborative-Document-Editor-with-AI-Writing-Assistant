@@ -7,3 +7,4 @@ __pycache__/
 dist/
 collab_editor.db
 node_modules/
+/.venv

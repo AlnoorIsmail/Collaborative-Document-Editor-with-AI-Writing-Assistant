@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import Navbar from '../components/Navbar';
 
 const defaultProps = {
@@ -9,8 +9,10 @@ const defaultProps = {
   onSaveNow: () => {},
   onShare: () => {},
   onBack: () => {},
+  onToggleAi: vi.fn(),
   isOwner: false,
   isReadOnly: false,
+  isAiOpen: true,
   user: null,
 };
 
@@ -48,5 +50,10 @@ describe('Navbar save status indicator', () => {
       </MemoryRouter>
     );
     expect(screen.queryByRole('button', { name: /save now/i })).not.toBeInTheDocument();
+  });
+
+  it('shows the AI toggle label for the current sidebar state', () => {
+    renderNavbar('saved');
+    expect(screen.getByRole('button', { name: /hide ai/i })).toBeInTheDocument();
   });
 });

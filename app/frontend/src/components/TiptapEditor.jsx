@@ -135,10 +135,11 @@ function Toolbar({ editor }) {
  *   onChange     - called with new HTML on every change
  *   readOnly     - boolean, disables editing
  *   placeholder  - placeholder text
- *   onSelectionUpdate - (selectedText: string) => void, called when selection changes
+ *   onSelectionUpdate - ({ text, from, to }) => void, called when selection changes
  *
  * Ref methods:
- *   getSelectedText() - returns the currently selected text
+ *   getSelectionData() - returns the current selected text and range
+ *   replaceRange({ from, to, text }) - replaces a specific editor range
  */
 const TiptapEditor = forwardRef(function TiptapEditor(
   { content, onChange, readOnly = false, placeholder = 'Start writing…', onSelectionUpdate },
@@ -158,21 +159,39 @@ const TiptapEditor = forwardRef(function TiptapEditor(
       if (onSelectionUpdate) {
         const { from, to } = editor.state.selection;
         const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ');
-        onSelectionUpdate(text);
+        onSelectionUpdate({ text, from, to });
       }
     },
   });
 
   // Expose imperative API via ref
   useImperativeHandle(ref, () => ({
-    getSelectedText() {
-      if (!editor) return '';
+    getSelectionData() {
+      if (!editor) {
+        return { text: '', from: 0, to: 0 };
+      }
       const { from, to } = editor.state.selection;
-      if (from === to) return '';
-      return editor.state.doc.textBetween(from, to, ' ');
+      const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ');
+      return { text, from, to };
     },
     getHTML() {
       return editor?.getHTML() ?? '';
+    },
+    replaceRange({ from, to, text }) {
+      if (!editor) {
+        return { applied: false, html: '' };
+      }
+
+      const didApply = editor
+        .chain()
+        .focus()
+        .insertContentAt({ from, to }, text)
+        .run();
+
+      return {
+        applied: didApply,
+        html: editor.getHTML(),
+      };
     },
     focus() {
       editor?.commands.focus();

@@ -1,14 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiJSON } from '../api';
+import ShareModal from '../components/ShareModal';
+import { buildUniqueDisplayTitles, getRoleLabel } from '../documentDisplay';
 
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [activeMenuId, setActiveMenuId] = useState(null);
+  const [sharingDocument, setSharingDocument] = useState(null);
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
+
+  const displayTitles = useMemo(
+    () => buildUniqueDisplayTitles(documents),
+    [documents]
+  );
 
   useEffect(() => {
     Promise.all([
@@ -23,12 +32,29 @@ export default function DocumentsPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (!activeMenuId) {
+      return undefined;
+    }
+
+    function handlePointerDown(event) {
+      if (event.target.closest('[data-doc-actions]')) {
+        return;
+      }
+
+      setActiveMenuId(null);
+    }
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [activeMenuId]);
+
   async function createDocument() {
     setCreating(true);
     try {
       const doc = await apiJSON('/documents', {
         method: 'POST',
-        body: JSON.stringify({ title: 'Untitled document', initial_content: '' }),
+        body: JSON.stringify({ initial_content: '' }),
       });
       navigate(`/documents/${doc.document_id}`);
     } catch (err) {
@@ -49,6 +75,67 @@ export default function DocumentsPage() {
       day: 'numeric',
       year: 'numeric',
     });
+  }
+
+  function openDocument(documentId) {
+    navigate(`/documents/${documentId}`);
+  }
+
+  async function renameDocument(doc) {
+    const currentTitle = displayTitles.get(doc.document_id) || doc.title;
+    const nextTitle = window.prompt('Rename document', currentTitle ?? '');
+    setActiveMenuId(null);
+
+    if (nextTitle === null) {
+      return;
+    }
+
+    try {
+      const updated = await apiJSON(`/documents/${doc.document_id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title: nextTitle }),
+      });
+
+      setDocuments((current) =>
+        current.map((entry) =>
+          entry.document_id === doc.document_id
+            ? {
+                ...entry,
+                title: updated.title,
+                updated_at: updated.updated_at,
+                ai_enabled: updated.ai_enabled,
+              }
+            : entry
+        )
+      );
+    } catch (nextError) {
+      setError(nextError.message);
+    }
+  }
+
+  async function deleteDocument(doc) {
+    setActiveMenuId(null);
+    const confirmed = window.confirm(`Delete "${displayTitles.get(doc.document_id) || doc.title}"?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await apiJSON(`/documents/${doc.document_id}`, {
+        method: 'DELETE',
+      });
+      setDocuments((current) =>
+        current.filter((entry) => entry.document_id !== doc.document_id)
+      );
+    } catch (nextError) {
+      setError(nextError.message);
+    }
+  }
+
+  function shareDocument(doc) {
+    setActiveMenuId(null);
+    setSharingDocument(doc);
   }
 
   return (
@@ -81,23 +168,99 @@ export default function DocumentsPage() {
             </button>
           </div>
         ) : (
-          <ul className="docs-list">
+          <div className="docs-grid" role="list" aria-label="Document dashboard">
             {documents.map(doc => (
-              <li
+              <article
                 key={doc.document_id}
                 className="doc-card"
-                onClick={() => navigate(`/documents/${doc.document_id}`)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={e => e.key === 'Enter' && navigate(`/documents/${doc.document_id}`)}
               >
-                <span className="doc-card-title">{doc.title || 'Untitled document'}</span>
-                <span className="doc-card-date">{formatDate(doc.updated_at || doc.created_at)}</span>
-              </li>
+                {doc.role === 'owner' && (
+                  <div className="doc-card-actions" data-doc-actions>
+                    <button
+                      type="button"
+                      className="doc-card-menu-trigger"
+                      aria-label={`More actions for ${displayTitles.get(doc.document_id) || doc.title}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setActiveMenuId((current) =>
+                          current === doc.document_id ? null : doc.document_id
+                        );
+                      }}
+                    >
+                      &#8942;
+                    </button>
+
+                    {activeMenuId === doc.document_id && (
+                      <div className="doc-card-menu" role="menu">
+                        <button
+                          type="button"
+                          className="doc-card-menu-item"
+                          onClick={() => renameDocument(doc)}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          className="doc-card-menu-item"
+                          onClick={() => shareDocument(doc)}
+                        >
+                          Share
+                        </button>
+                        <button
+                          type="button"
+                          className="doc-card-menu-item doc-card-menu-item-danger"
+                          onClick={() => deleteDocument(doc)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="doc-card-button"
+                  onClick={() => openDocument(doc.document_id)}
+                  aria-label={`Open ${displayTitles.get(doc.document_id) || doc.title}`}
+                >
+                  <div className="doc-card-top">
+                    <div className="doc-card-labels">
+                      <span className="doc-card-role">{getRoleLabel(doc.role)}</span>
+                      {doc.owner?.display_name && (
+                        <span className="doc-card-owner">
+                          {doc.role === 'owner'
+                            ? 'Owned by you'
+                            : `Owner: ${doc.owner.display_name}`}
+                        </span>
+                      )}
+                    </div>
+                    <span className="doc-card-date">
+                      Last edited {formatDate(doc.updated_at || doc.created_at)}
+                    </span>
+                  </div>
+
+                  <div className="doc-card-body">
+                    <h3 className="doc-card-title">
+                      {displayTitles.get(doc.document_id) || doc.title}
+                    </h3>
+                    <p className="doc-card-preview">
+                      {doc.preview_text || 'Empty document'}
+                    </p>
+                  </div>
+                </button>
+              </article>
             ))}
-          </ul>
+          </div>
         )}
       </main>
+
+      {sharingDocument && (
+        <ShareModal
+          docId={sharingDocument.document_id}
+          onClose={() => setSharingDocument(null)}
+        />
+      )}
     </div>
   );
 }

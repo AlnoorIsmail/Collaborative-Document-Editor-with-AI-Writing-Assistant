@@ -5,9 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DocumentCreate(BaseModel):
-    title: str = Field(
-        ...,
-        min_length=1,
+    title: Optional[str] = Field(
+        default=None,
         max_length=255,
         description="Human-readable document title.",
     )
@@ -30,7 +29,6 @@ class DocumentCreate(BaseModel):
 class DocumentUpdate(BaseModel):
     title: Optional[str] = Field(
         default=None,
-        min_length=1,
         max_length=255,
         description="Updated document title.",
     )
@@ -68,6 +66,10 @@ class LatestVersionReference(BaseModel):
 class DocumentSummaryResponse(BaseModel):
     document_id: int = Field(..., description="Numeric document identifier.")
     title: str = Field(..., description="Current document title.")
+    preview_text: str = Field(
+        ...,
+        description="Short plain-text preview of the current document content.",
+    )
     content_format: str = Field(..., description="Persisted document content format.")
     owner: DocumentOwnerResponse
     owner_user_id: int = Field(..., description="Numeric owner user identifier.")

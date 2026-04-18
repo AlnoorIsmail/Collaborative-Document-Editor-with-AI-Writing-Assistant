@@ -36,6 +36,17 @@ class ShareLinkRepository:
     def get_by_token(self, token: str) -> Optional[ShareLink]:
         return self.db.query(ShareLink).filter(ShareLink.token == token).first()
 
+    def get_by_id(self, share_link_id: int) -> Optional[ShareLink]:
+        return self.db.query(ShareLink).filter(ShareLink.id == share_link_id).first()
+
+    def list_for_document(self, document_id: int) -> list[ShareLink]:
+        return (
+            self.db.query(ShareLink)
+            .filter(ShareLink.document_id == document_id)
+            .order_by(ShareLink.created_at.desc(), ShareLink.id.desc())
+            .all()
+        )
+
     def update(self, share_link: ShareLink, **fields) -> ShareLink:
         for key, value in fields.items():
             setattr(share_link, key, value)

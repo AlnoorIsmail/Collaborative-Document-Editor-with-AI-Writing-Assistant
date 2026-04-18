@@ -1,5 +1,8 @@
 from fastapi.testclient import TestClient
 
+from app.backend.services.document_service import (
+    generate_unique_document_title,
+)
 from app.backend.tests.conftest import create_test_client
 
 
@@ -101,6 +104,7 @@ def test_list_documents_success() -> None:
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["title"] == "Readable Doc"
+    assert response.json()[0]["preview_text"] == "Body"
     assert response.json()[0]["role"] == "owner"
     assert response.json()[0]["created_at"]
     assert response.json()[0]["updated_at"]
@@ -137,6 +141,7 @@ def test_list_documents_includes_shared_documents_for_grantee() -> None:
         {
             "document_id": document_id,
             "title": "Shared Doc",
+            "preview_text": "Body",
             "content_format": "plain_text",
             "owner": {
                 "user_id": owner["user_id"],
@@ -152,6 +157,119 @@ def test_list_documents_includes_shared_documents_for_grantee() -> None:
             "updated_at": response.json()[0]["updated_at"],
         }
     ]
+
+
+def test_generate_unique_document_title_adds_predictable_suffixes() -> None:
+    assert generate_unique_document_title(None, []) == "Untitled Document"
+    assert generate_unique_document_title("", ["Untitled Document"]) == "Untitled Document 1"
+    assert (
+        generate_unique_document_title("", ["Untitled Document 1", "Untitled Document 2"])
+        == "Untitled Document 3"
+    )
+    assert (
+        generate_unique_document_title(
+            "Notes",
+            ["Notes", "Notes 1", "Project Plan"],
+        )
+        == "Notes 2"
+    )
+    assert generate_unique_document_title("Notes", ["Notes 2"]) == "Notes 3"
+    assert (
+        generate_unique_document_title(
+            "Notes 1",
+            ["Notes", "Notes 1"],
+        )
+        == "Notes 2"
+    )
+
+
+def test_create_multiple_untitled_documents_gets_distinct_titles() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    first = client.post(
+        "/v1/documents",
+        json={"initial_content": ""},
+        headers=headers,
+    )
+    second = client.post(
+        "/v1/documents",
+        json={"initial_content": ""},
+        headers=headers,
+    )
+    third = client.post(
+        "/v1/documents",
+        json={"initial_content": ""},
+        headers=headers,
+    )
+    listed = client.get("/v1/documents", headers=headers)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert third.status_code == 201
+    assert first.json()["document_id"] != second.json()["document_id"]
+    assert second.json()["document_id"] != third.json()["document_id"]
+    assert first.json()["title"] == "Untitled Document"
+    assert second.json()["title"] == "Untitled Document 1"
+    assert third.json()["title"] == "Untitled Document 2"
+    assert [doc["title"] for doc in listed.json()] == [
+        "Untitled Document 2",
+        "Untitled Document 1",
+        "Untitled Document",
+    ]
+
+
+def test_update_document_renames_duplicates_predictably() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    headers = {"Authorization": f"Bearer {token}"}
+    original = client.post(
+        "/v1/documents",
+        json={"title": "Notes", "initial_content": ""},
+        headers=headers,
+    )
+    renamed = client.post(
+        "/v1/documents",
+        json={"title": "Draft", "initial_content": ""},
+        headers=headers,
+    )
+    document_id = renamed.json()["document_id"]
+
+    response = client.patch(
+        f"/v1/documents/{document_id}",
+        json={"title": "Notes"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Notes 1"
+
+
+def test_create_document_keeps_incrementing_existing_name_family() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    client.post(
+        "/v1/documents",
+        json={"title": "Notes 1", "initial_content": ""},
+        headers=headers,
+    )
+    client.post(
+        "/v1/documents",
+        json={"title": "Notes 2", "initial_content": ""},
+        headers=headers,
+    )
+
+    response = client.post(
+        "/v1/documents",
+        json={"title": "Notes", "initial_content": ""},
+        headers=headers,
+    )
+
+    assert response.status_code == 201
+    assert response.json()["title"] == "Notes 3"
 
 
 def test_update_document_success() -> None:
