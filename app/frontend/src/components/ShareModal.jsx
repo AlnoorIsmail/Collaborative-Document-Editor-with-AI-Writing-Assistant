@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiJSON } from '../api';
+import { normalizeEmail, validateEmailField } from '../authValidation';
 import { buildShareLinkUrl } from '../shareLinks';
 
 const ROLE_OPTIONS = [
@@ -30,6 +31,31 @@ function formatDate(iso) {
   });
 }
 
+function looksLikeEmail(value) {
+  return value.includes('@');
+}
+
+function normalizeInvitee(value) {
+  const trimmed = value.trim();
+  return looksLikeEmail(trimmed) ? normalizeEmail(trimmed) : trimmed.toLowerCase();
+}
+
+function validateInviteeField(value, { required = false } = {}) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return required ? 'Email address or username is required.' : '';
+  }
+
+  if (looksLikeEmail(trimmed)) {
+    return validateEmailField(trimmed);
+  }
+
+  return /^[a-zA-Z0-9._-]{3,64}$/.test(trimmed)
+    ? ''
+    : 'Enter a valid email address or username.';
+}
+
 export default function ShareModal({ docId, onClose }) {
   const [overview, setOverview] = useState(null);
   const [loadingOverview, setLoadingOverview] = useState(true);
@@ -37,19 +63,34 @@ export default function ShareModal({ docId, onClose }) {
   const [creatingLink, setCreatingLink] = useState(false);
   const [busyPermissionId, setBusyPermissionId] = useState(null);
   const [busyLinkId, setBusyLinkId] = useState(null);
-  const [email, setEmail] = useState('');
+  const [invitee, setInvitee] = useState('');
   const [inviteRole, setInviteRole] = useState('editor');
   const [linkRole, setLinkRole] = useState('viewer');
   const [linkRequiresSignIn, setLinkRequiresSignIn] = useState(true);
   const [linkExpiryDays, setLinkExpiryDays] = useState(7);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [inviteEmailTouched, setInviteEmailTouched] = useState(false);
+  const [inviteSubmitAttempted, setInviteSubmitAttempted] = useState(false);
+  const [inviteEmailServerError, setInviteEmailServerError] = useState('');
   const emailInputRef = useRef(null);
 
   const activeLinks = useMemo(
     () => overview?.share_links?.filter((shareLink) => !shareLink.revoked) ?? [],
     [overview]
   );
+  const inviteEmailError = useMemo(() => {
+    if (inviteEmailServerError) {
+      return inviteEmailServerError;
+    }
+    if (inviteSubmitAttempted) {
+      return validateInviteeField(invitee, { required: true });
+    }
+    if (inviteEmailTouched || invitee.trim()) {
+      return validateInviteeField(invitee);
+    }
+    return '';
+  }, [inviteEmailServerError, inviteEmailTouched, inviteSubmitAttempted, invitee]);
 
   async function loadOverview() {
     setLoadingOverview(true);
@@ -81,30 +122,47 @@ export default function ShareModal({ docId, onClose }) {
 
   async function handleInviteSubmit(event) {
     event.preventDefault();
-    const trimmedEmail = email.trim().toLowerCase();
+    setInviteSubmitAttempted(true);
+    setInviteEmailTouched(true);
 
-    if (!trimmedEmail) {
+    const validationError = validateInviteeField(invitee, { required: true });
+    if (validationError) {
+      setError('');
+      setSuccess('');
       return;
     }
+
+    const trimmedInvitee = normalizeInvitee(invitee);
 
     setSubmittingInvite(true);
     setError('');
     setSuccess('');
+    setInviteEmailServerError('');
 
     try {
       const invitation = await apiJSON(`/documents/${docId}/invitations`, {
         method: 'POST',
         body: JSON.stringify({
-          invited_email: trimmedEmail,
+          invitee: trimmedInvitee,
           role: inviteRole,
         }),
       });
       setSuccess(`Invitation sent to ${invitation.invited_email}.`);
-      setEmail('');
+      setInvitee('');
       setInviteRole('editor');
+      setInviteEmailTouched(false);
+      setInviteSubmitAttempted(false);
+      setInviteEmailServerError('');
       await loadOverview();
     } catch (nextError) {
-      setError(nextError.message || 'Failed to send invitation.');
+      if (
+        nextError.message === 'No account exists for this email.'
+        || nextError.message === 'No account exists for this username.'
+      ) {
+        setInviteEmailServerError(nextError.message);
+      } else {
+        setError(nextError.message || 'Failed to send invitation.');
+      }
     } finally {
       setSubmittingInvite(false);
     }
@@ -198,33 +256,61 @@ export default function ShareModal({ docId, onClose }) {
 
           <section className="share-section">
             <div className="share-section-header">
-              <h3 className="share-section-title">Invite by email</h3>
+              <h3 className="share-section-title">Invite by email or username</h3>
             </div>
 
             <form onSubmit={handleInviteSubmit} className="share-form">
-              <div className="share-form-row">
-                <input
-                  ref={emailInputRef}
-                  className="field-input share-email-input"
-                  type="email"
-                  placeholder="Add by email address"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                />
-                <select
-                  className="field-select"
-                  value={inviteRole}
-                  onChange={(event) => setInviteRole(event.target.value)}
-                >
-                  {ROLE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <button className="btn btn-primary" type="submit" disabled={submittingInvite || !email.trim()}>
-                  {submittingInvite ? 'Sending…' : 'Invite'}
-                </button>
+              <div className="share-invite-grid">
+                <label className="field-label share-field share-field-email">
+                  Email or username
+                  <input
+                    ref={emailInputRef}
+                    className={`field-input share-email-input ${inviteEmailError ? 'field-input-error' : ''}`}
+                    type="text"
+                    placeholder="Add by email address or username"
+                    value={invitee}
+                    onChange={(event) => {
+                      setInvitee(event.target.value);
+                      setError('');
+                      setSuccess('');
+                      setInviteEmailServerError('');
+                    }}
+                    onBlur={() => setInviteEmailTouched(true)}
+                    aria-invalid={inviteEmailError ? 'true' : 'false'}
+                    aria-describedby="share-invite-email-help"
+                  />
+                  <span
+                    id="share-invite-email-help"
+                    className={`field-help ${inviteEmailError ? 'field-help-error' : 'share-field-help'}`}
+                  >
+                    {inviteEmailError || 'Send an invitation to a valid email address or username.'}
+                  </span>
+                </label>
+
+                <label className="field-label share-field">
+                  Role
+                  <select
+                    className="field-select"
+                    value={inviteRole}
+                    onChange={(event) => setInviteRole(event.target.value)}
+                  >
+                    {ROLE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="share-invite-actions">
+                  <button
+                    className="btn btn-primary"
+                    type="submit"
+                    disabled={submittingInvite || Boolean(inviteEmailError) || !invitee.trim()}
+                  >
+                    {submittingInvite ? 'Sending…' : 'Invite'}
+                  </button>
+                </div>
               </div>
             </form>
           </section>
@@ -295,7 +381,10 @@ export default function ShareModal({ docId, onClose }) {
                 <div className="share-section-header">
                   <h3 className="share-section-title">Current access</h3>
                   {overview?.owner ? (
-                    <span className="share-owner-pill">Owner: {overview.owner.display_name}</span>
+                    <span className="share-owner-pill">
+                      Owner: {overview.owner.display_name}
+                      {overview.owner.username ? ` (@${overview.owner.username})` : ''}
+                    </span>
                   ) : null}
                 </div>
 
@@ -308,6 +397,9 @@ export default function ShareModal({ docId, onClose }) {
                         <div className="share-list-text">
                           <strong>{collaborator.user.display_name}</strong>
                           <span>{collaborator.user.email}</span>
+                          {collaborator.user.username ? (
+                            <span>@{collaborator.user.username}</span>
+                          ) : null}
                           <span>
                             {collaborator.role}
                             {collaborator.ai_allowed ? ' • AI enabled' : ''}

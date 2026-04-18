@@ -17,7 +17,7 @@ from app.backend.api.deps import (
     get_ai_repository,
     get_session_repository,
 )
-from app.backend.core.database import Base, get_db
+from app.backend.core.database import Base, ensure_runtime_schema, get_db
 from app.backend.integrations.ai_provider import StubAIProviderClient
 from app.backend.main import create_app
 
@@ -39,6 +39,7 @@ def create_test_client() -> TestClient:
         bind=engine,
     )
     Base.metadata.create_all(bind=engine)
+    ensure_runtime_schema(engine)
 
     def override_get_db():
         db = testing_session_local()

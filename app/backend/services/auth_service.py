@@ -14,6 +14,7 @@ from app.backend.core.security import (
     get_password_hash,
     verify_password,
 )
+from app.backend.core.usernames import normalize_username_seed
 from app.backend.repositories.refresh_token_repository import RefreshTokenRepository
 from app.backend.repositories.user_repository import UserRepository
 from app.backend.schemas.auth import (
@@ -36,7 +37,12 @@ class AuthService:
         self.refresh_token_repository = refresh_token_repository
 
     def register(
-        self, *, email: str, display_name: str, password: str
+        self,
+        *,
+        email: str,
+        display_name: str,
+        password: str,
+        username: str | None = None,
     ) -> RegisterResponse:
         normalized_email = email.strip().lower()
         if self.user_repository.get_by_email(normalized_email):
@@ -46,8 +52,14 @@ class AuthService:
                 message="A user with this email already exists.",
             )
 
+        resolved_username = self._resolve_unique_username(
+            requested_username=username,
+            display_name=display_name,
+            email=normalized_email,
+        )
         user = self.user_repository.create(
             email=normalized_email,
+            username=resolved_username,
             display_name=display_name.strip(),
             password_hash=get_password_hash(password),
         )
@@ -183,3 +195,24 @@ class AuthService:
             access_token_expires_in=settings.access_token_expire_minutes * 60,
             refresh_token_expires_in=settings.refresh_token_expire_days * 24 * 60 * 60,
         )
+
+    def _resolve_unique_username(
+        self,
+        *,
+        requested_username: str | None,
+        display_name: str,
+        email: str,
+    ) -> str:
+        seed = requested_username or display_name or email.split("@", 1)[0]
+        base_username = normalize_username_seed(seed)
+        candidate = base_username
+        suffix = 1
+
+        while self.user_repository.get_by_username(candidate) is not None:
+            candidate = f"{base_username}_{suffix}"
+            if len(candidate) > 32:
+                trimmed_base = base_username[: max(1, 32 - len(str(suffix)) - 1)].rstrip("_")
+                candidate = f"{trimmed_base}_{suffix}"
+            suffix += 1
+
+        return candidate

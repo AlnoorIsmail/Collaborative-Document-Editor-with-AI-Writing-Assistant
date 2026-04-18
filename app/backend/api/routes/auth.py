@@ -32,6 +32,7 @@ def register(
     return auth_service.register(
         email=payload.email,
         display_name=payload.display_name,
+        username=payload.username,
         password=payload.password,
     )
 

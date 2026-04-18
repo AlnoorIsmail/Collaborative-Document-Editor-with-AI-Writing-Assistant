@@ -25,6 +25,13 @@ class RegisterRequest(BaseModel):
         pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
     )
     display_name: str = Field(..., min_length=1, max_length=255)
+    username: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9._-]+$",
+        description="Optional unique username used for sharing and lookup.",
+    )
     password: str = Field(
         ..., min_length=8, description="Raw password to hash securely."
     )

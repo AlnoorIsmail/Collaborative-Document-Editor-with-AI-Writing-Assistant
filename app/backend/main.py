@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.backend.api.router import api_router
 from app.backend.core.config import get_settings
-from app.backend.core.database import Base, engine
+from app.backend.core.database import Base, engine, ensure_runtime_schema
 from app.backend.core.errors import register_exception_handlers
 from app.backend.schemas.common import HealthResponse
 
@@ -23,6 +23,7 @@ from app.backend.models import user as _user
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    ensure_runtime_schema(engine)
     yield
 
 
@@ -36,7 +37,8 @@ def create_app() -> FastAPI:
             "Backend API for the Collaborative Document Editor with AI Writing "
             "Assistant. The documented scope includes JWT-based authentication, "
             "document CRUD, append-only version history, sharing flows, realtime "
-            "session bootstrap, and suggestion-based AI endpoints."
+            "session bootstrap and collaboration sockets, plus streamed and "
+            "suggestion-based AI endpoints."
         ),
         lifespan=lifespan,
     )

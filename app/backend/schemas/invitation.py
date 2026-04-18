@@ -1,11 +1,16 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 EmailField = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class InvitationCreateRequest(BaseModel):
-    invited_email: str = EmailField
+    invitee: str = Field(
+        min_length=3,
+        max_length=255,
+        validation_alias=AliasChoices("invitee", "invited_email"),
+        serialization_alias="invitee",
+    )
     role: str
 
     model_config = ConfigDict(extra="forbid")
