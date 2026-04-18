@@ -19,6 +19,31 @@ COMMON_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     (r"\bit's\b", "it is"),
 )
 
+TRANSLATION_FALLBACKS: dict[str, dict[str, str]] = {
+    "spanish": {
+        "hello": "hola",
+        "meeting": "reunion",
+        "document": "documento",
+        "summary": "resumen",
+        "risk": "riesgo",
+        "action": "accion",
+        "plan": "plan",
+        "team": "equipo",
+        "draft": "borrador",
+    },
+    "french": {
+        "hello": "bonjour",
+        "meeting": "reunion",
+        "document": "document",
+        "summary": "resume",
+        "risk": "risque",
+        "action": "action",
+        "plan": "plan",
+        "team": "equipe",
+        "draft": "brouillon",
+    },
+}
+
 FORMAL_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     (r"\bi cannot attend\b", "I am unable to attend"),
     (r"\bbecause I am sick\b", "because I am unwell"),
@@ -66,7 +91,7 @@ class StubAIProviderClient(AIProviderClient):
     def generate_suggestion(
         self, *, feature_type: str, prompt: str
     ) -> GeneratedSuggestion:
-        normalized_feature = feature_type.strip().lower()
+        normalized_feature = feature_type.strip().lower().replace("-", "_")
         if normalized_feature == "summarize":
             output = self._summarize(prompt)
             return GeneratedSuggestion(
@@ -80,6 +105,38 @@ class StubAIProviderClient(AIProviderClient):
             return GeneratedSuggestion(
                 generated_output=output,
                 model_name="local-chat-assistant-fallback",
+                usage=self._estimate_usage(prompt=prompt, completion=output),
+            )
+
+        if normalized_feature == "translate":
+            output = self._translate(prompt)
+            return GeneratedSuggestion(
+                generated_output=output,
+                model_name="local-translate-fallback",
+                usage=self._estimate_usage(prompt=prompt, completion=output),
+            )
+
+        if normalized_feature in {"grammar_fix", "fix_grammar", "grammar"}:
+            output = self._grammar_fix(prompt)
+            return GeneratedSuggestion(
+                generated_output=output,
+                model_name="local-grammar-fallback",
+                usage=self._estimate_usage(prompt=prompt, completion=output),
+            )
+
+        if normalized_feature in {"expand", "elaborate"}:
+            output = self._expand(prompt)
+            return GeneratedSuggestion(
+                generated_output=output,
+                model_name="local-expand-fallback",
+                usage=self._estimate_usage(prompt=prompt, completion=output),
+            )
+
+        if normalized_feature in {"restructure", "reorganize"}:
+            output = self._restructure(prompt)
+            return GeneratedSuggestion(
+                generated_output=output,
+                model_name="local-restructure-fallback",
                 usage=self._estimate_usage(prompt=prompt, completion=output),
             )
 
@@ -140,6 +197,66 @@ class StubAIProviderClient(AIProviderClient):
         cleaned_instruction = self._sentence_case(instruction.strip())
         return f"{cleaned_instruction} Relevant context: {summary}"
 
+    def _translate(self, prompt: str) -> str:
+        source_text = self._extract_source_text(prompt)
+        if not source_text:
+            return "No document content was available to translate."
+
+        parameters = self._extract_parameters(prompt)
+        target_language = str(
+            parameters.get("target_language")
+            or parameters.get("language")
+            or self._extract_instruction(prompt)
+            or "Spanish"
+        ).strip()
+        normalized_language = target_language.lower()
+        translated = self._translate_words(source_text, language=normalized_language)
+        readable_language = target_language[0].upper() + target_language[1:] if target_language else "Spanish"
+        return f"Translated to {readable_language}: {translated}"
+
+    def _grammar_fix(self, prompt: str) -> str:
+        source_text = self._extract_source_text(prompt)
+        if not source_text:
+            return "No document content was available to improve."
+
+        parameters = self._extract_parameters(prompt)
+        style = str(parameters.get("style") or "preserve").lower()
+        return self._polish_text(source_text, formal=style == "formal")
+
+    def _expand(self, prompt: str) -> str:
+        source_text = self._extract_source_text(prompt)
+        if not source_text:
+            return "No document content was available to expand."
+
+        polished = self._polish_text(source_text)
+        parameters = self._extract_parameters(prompt)
+        detail_level = str(parameters.get("detail_level") or "medium").lower()
+        instruction = self._extract_instruction(prompt)
+
+        expansion_by_level = {
+            "light": " Add one clarifying detail so the reader understands the main point faster.",
+            "medium": " Add useful context, explain why it matters, and make the idea easier to act on.",
+            "detailed": " Add context, practical implications, and a concrete next step so the idea feels complete.",
+        }
+        suffix = expansion_by_level.get(detail_level, expansion_by_level["medium"])
+        if instruction:
+            suffix += f" Focus on: {self._sentence_case(instruction.strip())}"
+        return f"{polished}{suffix}"
+
+    def _restructure(self, prompt: str) -> str:
+        source_text = self._extract_source_text(prompt)
+        if not source_text:
+            return "No document content was available to restructure."
+
+        polished = self._polish_text(source_text)
+        sentences = self._split_sentences(polished)
+        if len(sentences) <= 1:
+            return f"Overview: {polished}\n\nNext step: Clarify the main takeaway and supporting detail."
+
+        opening = sentences[0]
+        supporting = " ".join(sentences[1:])
+        return f"Overview: {opening}\n\nDetails: {supporting}"
+
     def _extract_source_text(self, prompt: str) -> str:
         source_text = (
             self._extract_section(prompt, "DOCUMENT_TEXT")
@@ -157,6 +274,27 @@ class StubAIProviderClient(AIProviderClient):
             or self._extract_section(prompt, "FOCUS_INSTRUCTION")
             or ""
         )
+
+    def _extract_parameters(self, prompt: str) -> dict[str, str]:
+        raw_parameters = self._extract_section(prompt, "PARAMETERS_JSON")
+        if not raw_parameters or raw_parameters == "{}":
+            return {}
+
+        try:
+            import json
+
+            payload = json.loads(raw_parameters)
+        except ValueError:
+            return {}
+
+        if not isinstance(payload, dict):
+            return {}
+
+        return {
+            str(key): str(value)
+            for key, value in payload.items()
+            if isinstance(key, str) and value is not None
+        }
 
     def _polish_text(self, text: str, *, formal: bool = False) -> str:
         polished = text.strip()
@@ -212,6 +350,29 @@ class StubAIProviderClient(AIProviderClient):
         if not normalized:
             return 0
         return max(1, math.ceil(len(normalized) / 4))
+
+    def _translate_words(self, text: str, *, language: str) -> str:
+        dictionary = TRANSLATION_FALLBACKS.get(language)
+        if not dictionary:
+            return self._polish_text(text)
+
+        parts = re.split(r"(\W+)", text)
+        translated_parts: list[str] = []
+        for part in parts:
+            key = part.lower()
+            replacement = dictionary.get(key)
+            if replacement is None:
+                translated_parts.append(part)
+                continue
+
+            if part.istitle():
+                translated_parts.append(replacement.capitalize())
+            elif part.isupper():
+                translated_parts.append(replacement.upper())
+            else:
+                translated_parts.append(replacement)
+
+        return "".join(translated_parts)
 
 
 class OpenAICompatibleAIProviderClient(AIProviderClient):
@@ -284,7 +445,7 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
         )
 
     def _system_instruction(self, feature_type: str) -> str:
-        normalized_feature = feature_type.strip().lower()
+        normalized_feature = feature_type.strip().lower().replace("-", "_")
         if normalized_feature == "summarize":
             return (
                 "You summarize collaborative documents. Respond with the summary only, "
@@ -296,6 +457,30 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
                 "You are a helpful document assistant. Answer the user's request using "
                 "the provided document text as the primary source, and respond with plain "
                 "text only."
+            )
+
+        if normalized_feature == "translate":
+            return (
+                "You translate document text while preserving meaning and readability. "
+                "Return only the translated text without markdown or commentary."
+            )
+
+        if normalized_feature in {"grammar_fix", "fix_grammar", "grammar"}:
+            return (
+                "You improve grammar, spelling, and clarity while preserving the writer's "
+                "meaning. Return only the improved text."
+            )
+
+        if normalized_feature in {"expand", "elaborate"}:
+            return (
+                "You expand document text with useful detail and context while staying "
+                "consistent with the source. Return only the improved text."
+            )
+
+        if normalized_feature in {"restructure", "reorganize"}:
+            return (
+                "You reorganize document text to improve flow and readability. Return only "
+                "the reorganized text."
             )
 
         return (

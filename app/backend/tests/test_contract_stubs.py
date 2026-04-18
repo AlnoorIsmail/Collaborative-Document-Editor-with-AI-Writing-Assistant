@@ -1,5 +1,7 @@
 """Contract-shaped tests for session and AI endpoints backed by stub repositories."""
 
+import json
+
 DEFAULT_DOCUMENT_CONTENT = "Original selected paragraph"
 CREATE_AI_PAYLOAD = {
     "feature_type": "rewrite",
@@ -11,6 +13,32 @@ CREATE_AI_PAYLOAD = {
     "base_revision": 0,
     "options": {"tone": "formal"},
 }
+
+
+def parse_sse_events(response) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    event_name = None
+    data_lines: list[str] = []
+
+    for line in response.iter_lines():
+        if not line:
+            if event_name and data_lines:
+                events.append((event_name, json.loads("\n".join(data_lines))))
+            event_name = None
+            data_lines = []
+            continue
+
+        if line.startswith("event:"):
+            event_name = line.split(":", 1)[1].strip()
+            continue
+
+        if line.startswith("data:"):
+            data_lines.append(line.split(":", 1)[1].strip())
+
+    if event_name and data_lines:
+        events.append((event_name, json.loads("\n".join(data_lines))))
+
+    return events
 
 
 def create_document(
@@ -70,7 +98,7 @@ def test_session_bootstrap_returns_contract_shaped_response(
     assert body["session_token"]
     assert body["document_id"] == document["document_id"]
     assert body["revision"] == 0
-    assert body["realtime_url"] == "wss://api.example.com/realtime"
+    assert body["realtime_url"] == "/v1/documents/1/sessions/sess_1/ws"
     assert body["resync_required"] is False
     assert body["missed_revision_count"] == 0
     assert body["active_collaborators"] == [
@@ -109,11 +137,15 @@ def test_list_ai_interactions_returns_history_stub(client, auth_headers) -> None
     assert response.json() == [
         {
             "interaction_id": interaction["interaction_id"],
+            "conversation_id": "conv_doc_1_usr_1",
+            "entry_kind": "suggestion",
+            "message_role": "assistant",
             "feature_type": "rewrite",
             "scope_type": "selection",
             "user_id": 1,
             "status": "completed",
             "created_at": interaction["created_at"],
+            "source_revision": 0,
             "model_name": "local-rewrite-fallback",
             "outcome": None,
             "total_tokens": response.json()[0]["total_tokens"],
@@ -133,10 +165,14 @@ def test_get_ai_interaction_returns_suggestion_stub(client, auth_headers) -> Non
     assert response.status_code == 200
     body = response.json()
     assert body["interaction_id"] == interaction["interaction_id"]
+    assert body["conversation_id"] == "conv_doc_1_usr_1"
+    assert body["entry_kind"] == "suggestion"
+    assert body["message_role"] == "assistant"
     assert body["feature_type"] == "rewrite"
     assert body["scope_type"] == "selection"
     assert body["status"] == "completed"
     assert body["document_id"] == document_id
+    assert body["source_revision"] == 0
     assert body["base_revision"] == 0
     assert body["created_at"] == interaction["created_at"]
     assert body["completed_at"] == "2026-03-25T10:40:02Z"
@@ -162,6 +198,83 @@ def test_get_ai_interaction_returns_suggestion_stub(client, auth_headers) -> Non
     }
     assert body["suggestion"]["usage"]["prompt_tokens"] > 0
     assert body["suggestion"]["usage"]["completion_tokens"] > 0
+
+
+def test_chat_thread_returns_user_and_assistant_entries(client, auth_headers) -> None:
+    document_id, interaction = create_ai_interaction(client, auth_headers)
+
+    response = client.get(
+        f"/v1/documents/{document_id}/ai/chat/thread",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 2
+    assert body[0]["message_role"] == "user"
+    assert body[0]["entry_kind"] == "suggestion"
+    assert body[0]["content"] == "Suggest edits for selected text. Request: Make this more formal"
+    assert body[1]["message_role"] == "assistant"
+    assert body[1]["interaction_id"] == interaction["interaction_id"]
+    assert body[1]["entry_kind"] == "suggestion"
+    assert body[1]["suggestion"]["suggestion_id"] == "sug_1"
+
+
+def test_stream_ai_interaction_returns_sse_events_and_completes(
+    client, auth_headers
+) -> None:
+    document = create_document(
+        client,
+        auth_headers,
+        initial_content="Streaming paragraph " * 8,
+    )
+
+    with client.stream(
+        "POST",
+        f"/v1/documents/{document['document_id']}/ai/interactions/stream",
+        headers=auth_headers,
+        json=CREATE_AI_PAYLOAD
+        | {
+            "selected_text_snapshot": "Streaming paragraph " * 8,
+            "selection_range": {"start": 0, "end": len("Streaming paragraph " * 8)},
+        },
+    ) as response:
+        assert response.status_code == 202
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = parse_sse_events(response)
+
+    event_types = [event_type for event_type, _ in events]
+    assert event_types[0] == "meta"
+    assert "chunk" in event_types
+    assert event_types[-1] == "complete"
+    assert events[0][1]["status"] == "processing"
+    assert events[-1][1]["status"] == "completed"
+    assert events[-1][1]["suggestion"]["generated_output"]
+
+
+def test_cancel_ai_interaction_marks_interaction_failed(
+    client, auth_headers
+) -> None:
+    _, interaction = create_ai_interaction(client, auth_headers)
+
+    cancel_response = client.post(
+        f"/v1/ai/interactions/{interaction['interaction_id']}/cancel",
+        headers=auth_headers,
+    )
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json() == {
+        "interaction_id": interaction["interaction_id"],
+        "status": "failed",
+        "canceled_at": cancel_response.json()["canceled_at"],
+    }
+
+    detail_response = client.get(
+        f"/v1/ai/interactions/{interaction['interaction_id']}",
+        headers=auth_headers,
+    )
+    assert detail_response.status_code == 200
+    assert detail_response.json()["status"] == "failed"
 
 
 def test_accept_suggestion_returns_applied_contract(client, auth_headers) -> None:

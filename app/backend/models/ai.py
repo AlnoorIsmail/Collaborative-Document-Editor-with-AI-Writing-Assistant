@@ -27,6 +27,9 @@ class AIInteractionRecord:
     interaction_id: str
     document_id: int
     user_id: int
+    conversation_id: str
+    entry_kind: str
+    message_role: str
     feature_type: str
     scope_type: str
     status: str
@@ -39,6 +42,7 @@ class AIInteractionRecord:
     selected_text_snapshot: Optional[str] = None
     surrounding_context: Optional[str] = None
     user_instruction: Optional[str] = None
+    reply_to_interaction_id: Optional[str] = None
     parameters: dict[str, Any] | None = None
     outcome: Optional[str] = None
     outcome_recorded_at: Optional[datetime] = None
@@ -51,14 +55,40 @@ class AIInteractionRecord:
 @dataclass(frozen=True)
 class AIInteractionHistoryRecord:
     interaction_id: str
+    conversation_id: str
+    entry_kind: str
+    message_role: str
     feature_type: str
     scope_type: str
     user_id: int
     status: str
     created_at: datetime
+    source_revision: int
     model_name: Optional[str] = None
     outcome: Optional[str] = None
     total_tokens: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class AIChatThreadEntryRecord:
+    entry_id: str
+    interaction_id: Optional[str]
+    conversation_id: str
+    entry_kind: str
+    message_role: str
+    feature_type: str
+    scope_type: str
+    status: str
+    created_at: datetime
+    source_revision: int
+    content: str
+    selected_range_start: Optional[int] = None
+    selected_range_end: Optional[int] = None
+    selected_text_snapshot: Optional[str] = None
+    surrounding_context: Optional[str] = None
+    reply_to_interaction_id: Optional[str] = None
+    outcome: Optional[str] = None
+    suggestion: Optional[AISuggestionRecord] = None
 
 
 @dataclass(frozen=True)

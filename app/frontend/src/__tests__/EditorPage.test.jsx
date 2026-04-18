@@ -17,7 +17,10 @@ vi.mock('../api', async (importOriginal) => {
 });
 
 vi.mock('../components/TiptapEditor', () => ({
-  default: forwardRef(function MockTiptapEditor({ content, onChange, onSelectionUpdate }, ref) {
+  default: forwardRef(function MockTiptapEditor(
+    { content, onChange, onSelectionUpdate, lineSpacing = 1.15, onLineSpacingChange },
+    ref
+  ) {
     const [currentContent, setCurrentContent] = useState(content);
 
     useImperativeHandle(ref, () => ({
@@ -50,8 +53,12 @@ vi.mock('../components/TiptapEditor', () => ({
     return (
       <div>
         <div data-testid="editor-content">{currentContent}</div>
+        <div data-testid="editor-line-spacing">{lineSpacing}</div>
         <button type="button" onClick={() => onChange('<p>Updated body</p>')}>
           Edit document
+        </button>
+        <button type="button" onClick={() => onLineSpacingChange?.(1.5)}>
+          Change line spacing
         </button>
         <button
           type="button"
@@ -92,12 +99,140 @@ function buildDocument(overrides = {}) {
     document_id: 1,
     title: 'Draft',
     current_content: '<p>Initial body</p>',
+    line_spacing: 1.15,
     revision: 0,
     owner_user_id: 1,
     collaborators: [],
     ai_enabled: true,
     ...overrides,
   };
+}
+
+function buildInteractionDetail(overrides = {}) {
+  return {
+    interaction_id: 'ai_1',
+    conversation_id: 'conv_doc_1_usr_1',
+    entry_kind: 'suggestion',
+    message_role: 'assistant',
+    feature_type: 'rewrite',
+    scope_type: 'document',
+    status: 'completed',
+    document_id: 1,
+    source_revision: 0,
+    base_revision: 0,
+    created_at: '2026-01-01T00:00:00Z',
+    completed_at: '2026-01-01T00:00:01Z',
+    rendered_prompt: 'prompt',
+    selected_range: null,
+    selected_text_snapshot: 'Initial body',
+    surrounding_context: 'Document title: Draft',
+    user_instruction: null,
+    reply_to_interaction_id: null,
+    parameters: {},
+    outcome: null,
+    outcome_recorded_at: null,
+    suggestion: {
+      suggestion_id: 'sug_1',
+      generated_output: 'AI output',
+      model_name: 'local-rewrite-fallback',
+      stale: false,
+      usage: null,
+    },
+    ...overrides,
+  };
+}
+
+function buildHistoryItem(overrides = {}) {
+  return {
+    interaction_id: 'ai_1',
+    conversation_id: 'conv_doc_1_usr_1',
+    entry_kind: 'suggestion',
+    message_role: 'assistant',
+    feature_type: 'rewrite',
+    scope_type: 'document',
+    user_id: 1,
+    status: 'completed',
+    created_at: '2026-01-01T00:00:00Z',
+    source_revision: 0,
+    model_name: 'local-rewrite-fallback',
+    outcome: null,
+    total_tokens: 42,
+    ...overrides,
+  };
+}
+
+function buildThreadEntries(entries) {
+  return entries.map((entry, index) => ({
+    entry_id: `thread_${index + 1}`,
+    interaction_id: null,
+    conversation_id: 'conv_doc_1_usr_1',
+    entry_kind: 'chat_message',
+    message_role: 'user',
+    feature_type: 'chat_assistant',
+    scope_type: 'document',
+    status: 'completed',
+    created_at: `2026-01-01T00:00:0${index}Z`,
+    source_revision: 0,
+    content: '',
+    selected_range: null,
+    selected_text_snapshot: null,
+    surrounding_context: null,
+    reply_to_interaction_id: null,
+    outcome: null,
+    review_only: true,
+    suggestion: null,
+    ...entry,
+  }));
+}
+
+function createSseResponse(events, { delayMs = 0, signal } = {}) {
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      let aborted = false;
+
+      function handleAbort() {
+        aborted = true;
+        const abortError = new Error('Aborted');
+        abortError.name = 'AbortError';
+        controller.error(abortError);
+      }
+
+      signal?.addEventListener?.('abort', handleAbort, { once: true });
+
+      try {
+        for (const event of events) {
+          if (aborted) {
+            return;
+          }
+
+          controller.enqueue(
+            encoder.encode(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`)
+          );
+
+          if (delayMs) {
+            await new Promise((resolve) => {
+              window.setTimeout(resolve, delayMs);
+            });
+          }
+        }
+
+        if (!aborted) {
+          controller.close();
+        }
+      } finally {
+        signal?.removeEventListener?.('abort', handleAbort);
+      }
+    },
+  });
+
+  return new Response(stream, {
+    status: 202,
+    headers: {
+      'Content-Type': 'text/event-stream',
+    },
+  });
 }
 
 class MockWebSocket {
@@ -119,9 +254,9 @@ class MockWebSocket {
     this.sentMessages.push(JSON.parse(message));
   }
 
-  close() {
+  close(event = { code: 1006, reason: '' }) {
     this.readyState = 3;
-    this.onclose?.();
+    this.onclose?.(event);
   }
 
   emit(payload) {
@@ -134,6 +269,9 @@ class MockWebSocket {
 describe('EditorPage save flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    api.apiFetch.mockReset();
+    api.apiFetch.mockResolvedValue(null);
+    api.apiJSON.mockReset();
     localStorage.clear();
     sessionStorage.clear();
     localStorage.setItem('access_token', 'test-token');
@@ -154,10 +292,15 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/content') {
         return Promise.resolve({
           document_id: 1,
           latest_version_id: 10,
+          line_spacing: 1.15,
           revision: 1,
           saved_at: '2026-01-01T00:00:00Z',
         });
@@ -191,6 +334,8 @@ describe('EditorPage save flow', () => {
         body: JSON.stringify({
           content: '<p>Updated body</p>',
           base_revision: 0,
+          line_spacing: 1.15,
+          save_source: 'autosave',
         }),
       })
     );
@@ -212,6 +357,8 @@ describe('EditorPage save flow', () => {
           body: JSON.stringify({
             content: '<p>Updated body</p>',
             base_revision: 0,
+            line_spacing: 1.15,
+            save_source: 'manual',
           }),
         })
       );
@@ -235,12 +382,39 @@ describe('EditorPage save flow', () => {
           body: JSON.stringify({
             content: '<p>Updated body</p>',
             base_revision: 0,
+            line_spacing: 1.15,
+            save_source: 'manual',
           }),
         })
       );
     });
 
     await screen.findByText('Documents page');
+  });
+
+  it('saves line spacing changes with the current revision', async () => {
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Change line spacing' }));
+    fireEvent.click(screen.getByRole('button', { name: /save now/i }));
+
+    await waitFor(() => {
+      expect(api.apiJSON).toHaveBeenCalledWith(
+        '/documents/1/content',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({
+            content: '<p>Initial body</p>',
+            base_revision: 0,
+            line_spacing: 1.5,
+            save_source: 'manual',
+          }),
+        })
+      );
+    });
+
+    expect(screen.getByTestId('editor-line-spacing')).toHaveTextContent('1.5');
   });
 
   it('runs rewrite AI after saving unsaved changes and applies the result', async () => {
@@ -265,51 +439,43 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/content') {
         return Promise.resolve({
           document_id: 1,
           latest_version_id: 10,
+          line_spacing: 1.15,
           revision: 1,
           saved_at: '2026-01-01T00:00:00Z',
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/ai/interactions') {
-        return Promise.resolve({
-          interaction_id: 'ai_1',
-          status: 'pending',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-        });
+        return Promise.resolve([buildHistoryItem()]);
       }
 
       if (path === '/ai/interactions/ai_1') {
-        return Promise.resolve({
-          interaction_id: 'ai_1',
-          feature_type: 'rewrite',
-          scope_type: 'document',
-          status: 'completed',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-          completed_at: '2026-01-01T00:00:01Z',
-          rendered_prompt: 'prompt',
-          selected_range: null,
-          selected_text_snapshot: 'Initial body',
-          surrounding_context: 'Document title: Draft',
-          user_instruction: 'Make it clearer',
-          parameters: {},
-          outcome: null,
-          outcome_recorded_at: null,
-          suggestion: {
-            suggestion_id: 'sug_1',
-            generated_output: 'AI rewritten document',
-            model_name: 'local-rewrite-fallback',
-            stale: false,
-            usage: null,
-          },
-        });
+        return Promise.resolve(
+          buildInteractionDetail({
+            user_instruction: 'Make it clearer',
+            source_revision: 1,
+            base_revision: 1,
+            suggestion: {
+              suggestion_id: 'sug_1',
+              generated_output: 'AI rewritten document',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
       }
 
       if (path === '/ai/suggestions/sug_1/accept') {
@@ -324,31 +490,70 @@ describe('EditorPage save flow', () => {
       throw new Error(`Unexpected apiJSON call: ${path}`);
     });
 
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_1',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 1,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_1',
+            delta: 'AI rewritten document',
+            output: 'AI rewritten document',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_1',
+            user_instruction: 'Make it clearer',
+            source_revision: 1,
+            base_revision: 1,
+            suggestion: {
+              suggestion_id: 'sug_1',
+              generated_output: 'AI rewritten document',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
     renderEditorPage();
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Edit document' }));
-    fireEvent.change(screen.getByLabelText('Feature'), {
-      target: { value: 'rewrite' },
-    });
-    fireEvent.change(screen.getByLabelText('Rewrite instruction'), {
+    fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Make it clearer' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Generate rewrite' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
 
     await screen.findByText('AI rewritten document');
 
     const saveCallIndex = api.apiJSON.mock.calls.findIndex(
       ([path]) => path === '/documents/1/content'
     );
-    const aiCallIndex = api.apiJSON.mock.calls.findIndex(
-      ([path]) => path === '/documents/1/ai/interactions'
+    const aiCallIndex = api.apiFetch.mock.calls.findIndex(
+      ([path]) => path === '/documents/1/ai/interactions/stream'
     );
+    const saveCallOrder = api.apiJSON.mock.invocationCallOrder[saveCallIndex];
+    const aiCallOrder = api.apiFetch.mock.invocationCallOrder[aiCallIndex];
 
     expect(saveCallIndex).toBeGreaterThan(-1);
-    expect(aiCallIndex).toBeGreaterThan(saveCallIndex);
+    expect(aiCallIndex).toBeGreaterThan(-1);
+    expect(aiCallOrder).toBeGreaterThan(saveCallOrder);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('editor-content')).toHaveTextContent('AI final content');
@@ -383,55 +588,86 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/ai/interactions') {
-        return Promise.resolve({
-          interaction_id: 'ai_2',
-          status: 'pending',
-          document_id: 1,
-          base_revision: 0,
-          created_at: '2026-01-01T00:00:00Z',
-        });
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_2',
+            feature_type: 'summarize',
+            entry_kind: 'chat_message',
+          }),
+        ]);
       }
 
       if (path === '/ai/interactions/ai_2') {
-        return Promise.resolve({
-          interaction_id: 'ai_2',
-          feature_type: 'summarize',
-          scope_type: 'document',
-          status: 'completed',
-          document_id: 1,
-          base_revision: 0,
-          created_at: '2026-01-01T00:00:00Z',
-          completed_at: '2026-01-01T00:00:01Z',
-          rendered_prompt: 'prompt',
-          selected_range: null,
-          selected_text_snapshot: 'Initial body',
-          surrounding_context: 'Document title: Draft',
-          user_instruction: null,
-          parameters: {},
-          outcome: null,
-          outcome_recorded_at: null,
-          suggestion: {
-            suggestion_id: 'sug_2',
-            generated_output: 'A short review-only summary',
-            model_name: 'local-summary-fallback',
-            stale: false,
-            usage: null,
-          },
-        });
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_2',
+            entry_kind: 'chat_message',
+            feature_type: 'summarize',
+            suggestion: {
+              suggestion_id: 'sug_2',
+              generated_output: 'A short review-only summary',
+              model_name: 'local-summary-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
       }
 
       throw new Error(`Unexpected apiJSON call: ${path}`);
     });
 
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_2',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 0,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_2',
+            delta: 'A short review-only summary',
+            output: 'A short review-only summary',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_2',
+            entry_kind: 'chat_message',
+            feature_type: 'summarize',
+            suggestion: {
+              suggestion_id: 'sug_2',
+              generated_output: 'A short review-only summary',
+              model_name: 'local-summary-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
     renderEditorPage();
 
     await screen.findByText('Draft');
-    fireEvent.click(screen.getByRole('button', { name: 'Generate summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Summarize' }));
 
     await screen.findByText('A short review-only summary');
 
-    expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
   });
 
@@ -449,12 +685,14 @@ describe('EditorPage save flow', () => {
       {
         document_id: 1,
         latest_version_id: 10,
+        line_spacing: 1.15,
         revision: 1,
         saved_at: '2026-01-01T00:00:00Z',
       },
       {
         document_id: 1,
         latest_version_id: 11,
+        line_spacing: 1.15,
         revision: 2,
         saved_at: '2026-01-01T00:00:01Z',
       },
@@ -472,42 +710,39 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/ai/interactions') {
-        return Promise.resolve({
-          interaction_id: 'ai_sel',
-          status: 'pending',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-        });
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_sel',
+            scope_type: 'selection',
+            source_revision: 1,
+          }),
+        ]);
       }
 
       if (path === '/ai/interactions/ai_sel') {
-        return Promise.resolve({
-          interaction_id: 'ai_sel',
-          feature_type: 'rewrite',
-          scope_type: 'selection',
-          status: 'completed',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-          completed_at: '2026-01-01T00:00:01Z',
-          rendered_prompt: 'prompt',
-          selected_range: { start: 4, end: 21 },
-          selected_text_snapshot: 'Selected sentence',
-          surrounding_context: 'Document title: Draft',
-          user_instruction: 'Tighten this section',
-          parameters: {},
-          outcome: null,
-          outcome_recorded_at: null,
-          suggestion: {
-            suggestion_id: 'sug_sel',
-            generated_output: 'Sharper text',
-            model_name: 'local-rewrite-fallback',
-            stale: false,
-            usage: null,
-          },
-        });
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_sel',
+            scope_type: 'selection',
+            source_revision: 1,
+            base_revision: 1,
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'Tighten this section',
+            suggestion: {
+              suggestion_id: 'sug_sel',
+              generated_output: 'Sharper text',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
       }
 
       if (path === '/documents/1/content') {
@@ -517,25 +752,61 @@ describe('EditorPage save flow', () => {
       throw new Error(`Unexpected apiJSON call: ${path}`);
     });
 
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_sel',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 1,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_sel',
+            delta: 'Sharper text',
+            output: 'Sharper text',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_sel',
+            scope_type: 'selection',
+            source_revision: 1,
+            base_revision: 1,
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'Tighten this section',
+            suggestion: {
+              suggestion_id: 'sug_sel',
+              generated_output: 'Sharper text',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
     renderEditorPage();
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
-    fireEvent.change(screen.getByLabelText('Feature'), {
-      target: { value: 'rewrite' },
-    });
-    fireEvent.change(screen.getByLabelText('Scope'), {
-      target: { value: 'selection' },
-    });
-    fireEvent.change(screen.getByLabelText('Rewrite instruction'), {
+    fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Tighten this section' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Generate rewrite' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
 
     await screen.findByText('Sharper text');
 
-    expect(api.apiJSON).toHaveBeenCalledWith(
-      '/documents/1/ai/interactions',
+    expect(api.apiFetch).toHaveBeenCalledWith(
+      '/documents/1/ai/interactions/stream',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
@@ -549,12 +820,14 @@ describe('EditorPage save flow', () => {
           surrounding_context: 'Document title: Draft\n\nDocument context: Initial body',
           user_instruction: 'Tighten this section',
           base_revision: 1,
-          parameters: {},
+          parameters: {
+            tone: 'neutral',
+          },
         }),
       })
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('editor-content')).toHaveTextContent('Before AI rewrite after');
@@ -567,6 +840,8 @@ describe('EditorPage save flow', () => {
         body: JSON.stringify({
           content: '<p>Before AI rewrite after</p>',
           base_revision: 1,
+          line_spacing: 1.15,
+          save_source: 'manual',
         }),
       })
     );
@@ -587,41 +862,520 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/ai/interactions') {
-        return Promise.resolve({
-          interaction_id: 'ai_chat',
-          status: 'pending',
-          document_id: 1,
-          base_revision: 0,
-          created_at: '2026-01-01T00:00:00Z',
-        });
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_chat',
+            entry_kind: 'chat_message',
+            feature_type: 'chat_assistant',
+            scope_type: 'selection',
+          }),
+        ]);
       }
 
       if (path === '/ai/interactions/ai_chat') {
-        return Promise.resolve({
-          interaction_id: 'ai_chat',
-          feature_type: 'chat_assistant',
-          scope_type: 'selection',
-          status: 'completed',
-          document_id: 1,
-          base_revision: 0,
-          created_at: '2026-01-01T00:00:00Z',
-          completed_at: '2026-01-01T00:00:01Z',
-          rendered_prompt: 'prompt',
-          selected_range: { start: 4, end: 21 },
-          selected_text_snapshot: 'Selected sentence',
-          surrounding_context: 'Document title: Draft',
-          user_instruction: 'What should I improve here?',
-          parameters: {},
-          outcome: null,
-          outcome_recorded_at: null,
-          suggestion: {
-            suggestion_id: 'sug_chat',
-            generated_output: 'You should make this sentence more specific.',
-            model_name: 'local-chat-assistant-fallback',
-            stale: false,
-            usage: null,
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_chat',
+            entry_kind: 'chat_message',
+            feature_type: 'chat_assistant',
+            scope_type: 'selection',
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'What should I improve here?',
+            suggestion: {
+              suggestion_id: 'sug_chat',
+              generated_output: 'You should make this sentence more specific.',
+              model_name: 'local-chat-assistant-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_chat',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 0,
+            created_at: '2026-01-01T00:00:00Z',
           },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_chat',
+            delta: 'You should make this sentence more specific.',
+            output: 'You should make this sentence more specific.',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_chat',
+            entry_kind: 'chat_message',
+            feature_type: 'chat_assistant',
+            scope_type: 'selection',
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'What should I improve here?',
+            suggestion: {
+              suggestion_id: 'sug_chat',
+              generated_output: 'You should make this sentence more specific.',
+              model_name: 'local-chat-assistant-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'What should I improve here?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await screen.findByText('You should make this sentence more specific.');
+
+    expect(screen.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+  });
+
+  it('sends translate parameters and lets the user apply the translated result', async () => {
+    const documentResponses = [
+      buildDocument({
+        latest_version_id: 9,
+      }),
+      buildDocument({
+        current_content: '<p>Translated copy</p>',
+        revision: 1,
+        latest_version_id: 10,
+      }),
+    ];
+
+    const saveResponses = [
+      {
+        document_id: 1,
+        latest_version_id: 10,
+        line_spacing: 1.15,
+        revision: 1,
+        saved_at: '2026-01-01T00:00:01Z',
+      },
+    ];
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(documentResponses.shift() ?? documentResponses[0]);
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      if (path === '/documents/1/ai/interactions') {
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_translate',
+            scope_type: 'selection',
+            feature_type: 'translate',
+          }),
+        ]);
+      }
+
+      if (path === '/ai/interactions/ai_translate') {
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_translate',
+            feature_type: 'translate',
+            scope_type: 'selection',
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'Translate for a Spanish-speaking teammate.',
+            parameters: { target_language: 'Spanish' },
+            suggestion: {
+              suggestion_id: 'sug_translate',
+              generated_output: 'Texto traducido',
+              model_name: 'local-translate-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
+      }
+
+      if (path === '/documents/1/content') {
+        return Promise.resolve(saveResponses.shift());
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_translate',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 0,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_translate',
+            delta: 'Texto traducido',
+            output: 'Texto traducido',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_translate',
+            feature_type: 'translate',
+            scope_type: 'selection',
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'Translate for a Spanish-speaking teammate.',
+            parameters: { target_language: 'Spanish' },
+            suggestion: {
+              suggestion_id: 'sug_translate',
+              generated_output: 'Texto traducido',
+              model_name: 'local-translate-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'Translate for a Spanish-speaking teammate.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }));
+
+    await screen.findByText('Texto traducido');
+
+    expect(api.apiFetch).toHaveBeenCalledWith(
+      '/documents/1/ai/interactions/stream',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          feature_type: 'translate',
+          scope_type: 'selection',
+          selected_range: {
+            start: 4,
+            end: 21,
+          },
+          selected_text_snapshot: 'Selected sentence',
+          surrounding_context: 'Document title: Draft\n\nDocument context: Initial body',
+          user_instruction: 'Translate for a Spanish-speaking teammate.',
+          base_revision: 0,
+          parameters: {
+            target_language: 'Spanish',
+          },
+        }),
+      })
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('editor-content')).toHaveTextContent('Before AI rewrite after');
+    });
+
+    expect(screen.getByText('Suggestion applied to the selected text.')).toBeInTheDocument();
+  });
+
+  it('streams AI output progressively through the sidebar stream endpoint', async () => {
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      if (path === '/documents/1/ai/interactions') {
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_stream',
+            feature_type: 'summarize',
+            entry_kind: 'chat_message',
+          }),
+        ]);
+      }
+
+      if (path === '/ai/interactions/ai_stream') {
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_stream',
+            entry_kind: 'chat_message',
+            feature_type: 'summarize',
+            suggestion: {
+              suggestion_id: 'sug_stream',
+              generated_output: 'A short streamed summary',
+              model_name: 'local-summary-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_stream',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 0,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_stream',
+            delta: 'A short',
+            output: 'A short',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_stream',
+            delta: ' streamed summary',
+            output: 'A short streamed summary',
+          },
+        },
+        {
+          type: 'complete',
+          data: {
+            interaction_id: 'ai_stream',
+            feature_type: 'summarize',
+            scope_type: 'document',
+            status: 'completed',
+            document_id: 1,
+            base_revision: 0,
+            created_at: '2026-01-01T00:00:00Z',
+            completed_at: '2026-01-01T00:00:01Z',
+            rendered_prompt: 'prompt',
+            selected_range: null,
+            selected_text_snapshot: 'Initial body',
+            surrounding_context: 'Document title: Draft',
+            user_instruction: null,
+            parameters: {},
+            outcome: null,
+            outcome_recorded_at: null,
+            suggestion: {
+              suggestion_id: 'sug_stream',
+              generated_output: 'A short streamed summary',
+              model_name: 'local-summary-fallback',
+              stale: false,
+              usage: null,
+            },
+          },
+        },
+      ])
+    );
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Summarize' }));
+
+    await screen.findByText('A short streamed summary');
+    expect(api.apiFetch).toHaveBeenCalledWith(
+      '/documents/1/ai/interactions/stream',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          Accept: 'text/event-stream',
+        },
+      })
+    );
+    expect(screen.getByText('Summary ready to review.')).toBeInTheDocument();
+  });
+
+  it('can cancel a streamed AI run and preserve partial output', async () => {
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      if (path === '/ai/interactions/ai_cancel/cancel') {
+        return Promise.resolve({
+          interaction_id: 'ai_cancel',
+          status: 'failed',
+          canceled_at: '2026-01-01T00:00:01Z',
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    api.apiFetch.mockImplementation((path, options) =>
+      Promise.resolve(
+        createSseResponse(
+          [
+            {
+              type: 'meta',
+              data: {
+                interaction_id: 'ai_cancel',
+                status: 'processing',
+                document_id: 1,
+                base_revision: 0,
+                created_at: '2026-01-01T00:00:00Z',
+              },
+            },
+            {
+              type: 'chunk',
+              data: {
+                interaction_id: 'ai_cancel',
+                delta: 'Partial answer',
+                output: 'Partial answer',
+              },
+            },
+            {
+              type: 'chunk',
+              data: {
+                interaction_id: 'ai_cancel',
+                delta: ' that should not finish',
+                output: 'Partial answer that should not finish',
+              },
+            },
+          ],
+          { delayMs: 50, signal: options.signal }
+        )
+      )
+    );
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Summarize' }));
+
+    await screen.findByText('Partial answer');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => {
+      expect(api.apiJSON).toHaveBeenCalledWith(
+        '/ai/interactions/ai_cancel/cancel',
+        expect.objectContaining({
+          method: 'POST',
+        })
+      );
+    });
+
+    expect(screen.getByText('AI generation canceled.')).toBeInTheDocument();
+    expect(screen.getByText('Partial answer')).toBeInTheDocument();
+  });
+
+  it('shows document-level AI history in the sidebar', async () => {
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      if (path === '/documents/1/ai/interactions' && !options) {
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_hist_1',
+            feature_type: 'rewrite',
+            scope_type: 'selection',
+            outcome: 'accepted',
+          }),
+        ]);
+      }
+
+      if (path === '/ai/interactions/ai_hist_1') {
+        return Promise.resolve({
+          ...buildInteractionDetail({
+            interaction_id: 'ai_hist_1',
+            feature_type: 'rewrite',
+            scope_type: 'selection',
+            outcome: 'accepted',
+            outcome_recorded_at: '2026-01-01T00:00:02Z',
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'Make this clearer',
+            suggestion: {
+              suggestion_id: 'sug_hist_1',
+              generated_output: 'A clearer version of the selected sentence.',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+          interaction_id: 'ai_hist_1',
+          rendered_prompt: 'FEATURE_TYPE:\nrewrite\n\nUSER_INSTRUCTION:\nMake this clearer',
         });
       }
 
@@ -631,22 +1385,14 @@ describe('EditorPage save flow', () => {
     renderEditorPage();
 
     await screen.findByText('Draft');
-    fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
-    fireEvent.change(screen.getByLabelText('Feature'), {
-      target: { value: 'chat_assistant' },
-    });
-    fireEvent.change(screen.getByLabelText('Scope'), {
-      target: { value: 'selection' },
-    });
-    fireEvent.change(screen.getByLabelText('Ask AI'), {
-      target: { value: 'What should I improve here?' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Ask AI' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'AI History' }));
 
-    await screen.findByText('You should make this sentence more specific.');
-
-    expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
+    await screen.findByText(
+      'Audit completed AI interactions for this document, including chat replies and suggestion outcomes.'
+    );
+    expect(screen.getAllByText('Rewrite').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('A clearer version of the selected sentence.')).toBeInTheDocument();
+    expect(screen.getByText(/FEATURE_TYPE:/)).toBeInTheDocument();
   });
 
   it('undoes the last whole-document AI rewrite with version restore', async () => {
@@ -676,51 +1422,46 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/content') {
         return Promise.resolve({
           document_id: 1,
           latest_version_id: 10,
+          line_spacing: 1.15,
           revision: 1,
           saved_at: '2026-01-01T00:00:00Z',
         });
       }
 
       if (path === '/documents/1/ai/interactions') {
-        return Promise.resolve({
-          interaction_id: 'ai_undo_doc',
-          status: 'pending',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-        });
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_undo_doc',
+            source_revision: 1,
+          }),
+        ]);
       }
 
       if (path === '/ai/interactions/ai_undo_doc') {
-        return Promise.resolve({
-          interaction_id: 'ai_undo_doc',
-          feature_type: 'rewrite',
-          scope_type: 'document',
-          status: 'completed',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-          completed_at: '2026-01-01T00:00:01Z',
-          rendered_prompt: 'prompt',
-          selected_range: null,
-          selected_text_snapshot: 'Updated body',
-          surrounding_context: 'Document title: Draft',
-          user_instruction: 'Make it clearer',
-          parameters: {},
-          outcome: null,
-          outcome_recorded_at: null,
-          suggestion: {
-            suggestion_id: 'sug_undo_doc',
-            generated_output: 'AI rewritten document',
-            model_name: 'local-rewrite-fallback',
-            stale: false,
-            usage: null,
-          },
-        });
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_undo_doc',
+            source_revision: 1,
+            base_revision: 1,
+            selected_text_snapshot: 'Updated body',
+            user_instruction: 'Make it clearer',
+            suggestion: {
+              suggestion_id: 'sug_undo_doc',
+              generated_output: 'AI rewritten document',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
       }
 
       if (path === '/ai/suggestions/sug_undo_doc/accept') {
@@ -744,17 +1485,57 @@ describe('EditorPage save flow', () => {
       throw new Error(`Unexpected apiJSON call: ${path}`);
     });
 
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_undo_doc',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 1,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_undo_doc',
+            delta: 'AI rewritten document',
+            output: 'AI rewritten document',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_undo_doc',
+            source_revision: 1,
+            base_revision: 1,
+            selected_text_snapshot: 'Updated body',
+            user_instruction: 'Make it clearer',
+            suggestion: {
+              suggestion_id: 'sug_undo_doc',
+              generated_output: 'AI rewritten document',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
     renderEditorPage();
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Edit document' }));
-    fireEvent.change(screen.getByLabelText('Feature'), {
-      target: { value: 'rewrite' },
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'Make it clearer' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Generate rewrite' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
 
     await screen.findByText('AI rewritten document');
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
     await screen.findByRole('button', { name: 'Undo AI' });
     fireEvent.click(screen.getByRole('button', { name: 'Undo AI' }));
@@ -792,12 +1573,14 @@ describe('EditorPage save flow', () => {
       {
         document_id: 1,
         latest_version_id: 10,
+        line_spacing: 1.15,
         revision: 1,
         saved_at: '2026-01-01T00:00:00Z',
       },
       {
         document_id: 1,
         latest_version_id: 11,
+        line_spacing: 1.15,
         revision: 2,
         saved_at: '2026-01-01T00:00:01Z',
       },
@@ -815,46 +1598,43 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/content') {
         return Promise.resolve(saveResponses.shift());
       }
 
       if (path === '/documents/1/ai/interactions') {
-        return Promise.resolve({
-          interaction_id: 'ai_undo_sel',
-          status: 'pending',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-        });
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_undo_sel',
+            scope_type: 'selection',
+            source_revision: 1,
+          }),
+        ]);
       }
 
       if (path === '/ai/interactions/ai_undo_sel') {
-        return Promise.resolve({
-          interaction_id: 'ai_undo_sel',
-          feature_type: 'rewrite',
-          scope_type: 'selection',
-          status: 'completed',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-          completed_at: '2026-01-01T00:00:01Z',
-          rendered_prompt: 'prompt',
-          selected_range: { start: 4, end: 21 },
-          selected_text_snapshot: 'Selected sentence',
-          surrounding_context: 'Document title: Draft',
-          user_instruction: 'Tighten this section',
-          parameters: {},
-          outcome: null,
-          outcome_recorded_at: null,
-          suggestion: {
-            suggestion_id: 'sug_undo_sel',
-            generated_output: 'Sharper text',
-            model_name: 'local-rewrite-fallback',
-            stale: false,
-            usage: null,
-          },
-        });
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_undo_sel',
+            scope_type: 'selection',
+            source_revision: 1,
+            base_revision: 1,
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'Tighten this section',
+            suggestion: {
+              suggestion_id: 'sug_undo_sel',
+              generated_output: 'Sharper text',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
       }
 
       if (path === '/documents/1/versions/10/restore') {
@@ -869,20 +1649,59 @@ describe('EditorPage save flow', () => {
       throw new Error(`Unexpected apiJSON call: ${path}`);
     });
 
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_undo_sel',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 1,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_undo_sel',
+            delta: 'Sharper text',
+            output: 'Sharper text',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_undo_sel',
+            scope_type: 'selection',
+            source_revision: 1,
+            base_revision: 1,
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'Tighten this section',
+            suggestion: {
+              suggestion_id: 'sug_undo_sel',
+              generated_output: 'Sharper text',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
     renderEditorPage();
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
-    fireEvent.change(screen.getByLabelText('Feature'), {
-      target: { value: 'rewrite' },
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'Tighten this section' },
     });
-    fireEvent.change(screen.getByLabelText('Scope'), {
-      target: { value: 'selection' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Generate rewrite' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
 
     await screen.findByText('Sharper text');
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
     await screen.findByRole('button', { name: 'Undo AI' });
     fireEvent.click(screen.getByRole('button', { name: 'Undo AI' }));
@@ -926,47 +1745,38 @@ describe('EditorPage save flow', () => {
         return Promise.resolve({
           document_id: 1,
           latest_version_id: 10,
+          line_spacing: 1.15,
           revision: 1,
           saved_at: '2026-01-01T00:00:00Z',
         });
       }
 
       if (path === '/documents/1/ai/interactions') {
-        return Promise.resolve({
-          interaction_id: 'ai_clear_edit',
-          status: 'pending',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-        });
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_clear_edit',
+            source_revision: 1,
+          }),
+        ]);
       }
 
       if (path === '/ai/interactions/ai_clear_edit') {
-        return Promise.resolve({
-          interaction_id: 'ai_clear_edit',
-          feature_type: 'rewrite',
-          scope_type: 'document',
-          status: 'completed',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-          completed_at: '2026-01-01T00:00:01Z',
-          rendered_prompt: 'prompt',
-          selected_range: null,
-          selected_text_snapshot: 'Updated body',
-          surrounding_context: 'Document title: Draft',
-          user_instruction: 'Make it clearer',
-          parameters: {},
-          outcome: null,
-          outcome_recorded_at: null,
-          suggestion: {
-            suggestion_id: 'sug_clear_edit',
-            generated_output: 'AI rewritten document',
-            model_name: 'local-rewrite-fallback',
-            stale: false,
-            usage: null,
-          },
-        });
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_clear_edit',
+            source_revision: 1,
+            base_revision: 1,
+            selected_text_snapshot: 'Updated body',
+            user_instruction: 'Make it clearer',
+            suggestion: {
+              suggestion_id: 'sug_clear_edit',
+              generated_output: 'AI rewritten document',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
       }
 
       if (path === '/ai/suggestions/sug_clear_edit/accept') {
@@ -981,17 +1791,57 @@ describe('EditorPage save flow', () => {
       throw new Error(`Unexpected apiJSON call: ${path}`);
     });
 
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_clear_edit',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 1,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_clear_edit',
+            delta: 'AI rewritten document',
+            output: 'AI rewritten document',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_clear_edit',
+            source_revision: 1,
+            base_revision: 1,
+            selected_text_snapshot: 'Updated body',
+            user_instruction: 'Make it clearer',
+            suggestion: {
+              suggestion_id: 'sug_clear_edit',
+              generated_output: 'AI rewritten document',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
     renderEditorPage();
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Edit document' }));
-    fireEvent.change(screen.getByLabelText('Feature'), {
-      target: { value: 'rewrite' },
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'Make it clearer' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Generate rewrite' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
 
     await screen.findByText('AI rewritten document');
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
     await screen.findByRole('button', { name: 'Undo AI' });
     fireEvent.click(screen.getByRole('button', { name: 'Edit document' }));
@@ -1023,50 +1873,55 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/content') {
         return Promise.resolve({
           document_id: 1,
           latest_version_id: 10,
+          line_spacing: 1.15,
           revision: 1,
           saved_at: '2026-01-01T00:00:00Z',
         });
       }
 
       if (path === '/documents/1/ai/interactions') {
-        return Promise.resolve({
-          interaction_id: 'ai_clear_title',
-          status: 'pending',
-          document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-        });
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_clear_title',
+            source_revision: 1,
+          }),
+        ]);
       }
 
       if (path === '/ai/interactions/ai_clear_title') {
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_clear_title',
+            source_revision: 1,
+            base_revision: 1,
+            selected_text_snapshot: 'Updated body',
+            user_instruction: 'Make it clearer',
+            suggestion: {
+              suggestion_id: 'sug_clear_title',
+              generated_output: 'AI rewritten document',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
+      }
+
+      if (path === '/documents/1' && options?.method === 'PATCH') {
         return Promise.resolve({
-          interaction_id: 'ai_clear_title',
-          feature_type: 'rewrite',
-          scope_type: 'document',
-          status: 'completed',
           document_id: 1,
-          base_revision: 1,
-          created_at: '2026-01-01T00:00:00Z',
-          completed_at: '2026-01-01T00:00:01Z',
-          rendered_prompt: 'prompt',
-          selected_range: null,
-          selected_text_snapshot: 'Updated body',
-          surrounding_context: 'Document title: Draft',
-          user_instruction: 'Make it clearer',
-          parameters: {},
-          outcome: null,
-          outcome_recorded_at: null,
-          suggestion: {
-            suggestion_id: 'sug_clear_title',
-            generated_output: 'AI rewritten document',
-            model_name: 'local-rewrite-fallback',
-            stale: false,
-            usage: null,
-          },
+          title: 'Renamed draft',
+          ai_enabled: true,
+          line_spacing: 1.15,
+          updated_at: '2026-01-01T00:00:03Z',
         });
       }
 
@@ -1082,17 +1937,57 @@ describe('EditorPage save flow', () => {
       throw new Error(`Unexpected apiJSON call: ${path}`);
     });
 
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_clear_title',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 1,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_clear_title',
+            delta: 'AI rewritten document',
+            output: 'AI rewritten document',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_clear_title',
+            source_revision: 1,
+            base_revision: 1,
+            selected_text_snapshot: 'Updated body',
+            user_instruction: 'Make it clearer',
+            suggestion: {
+              suggestion_id: 'sug_clear_title',
+              generated_output: 'AI rewritten document',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
     renderEditorPage();
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Edit document' }));
-    fireEvent.change(screen.getByLabelText('Feature'), {
-      target: { value: 'rewrite' },
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'Make it clearer' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Generate rewrite' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
 
     await screen.findByText('AI rewritten document');
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
     await screen.findByRole('button', { name: 'Undo AI' });
     fireEvent.click(screen.getByText('Draft'));
@@ -1119,9 +2014,9 @@ describe('EditorPage save flow', () => {
       selector: 'aside',
       hidden: true,
     });
-    const instructionInput = screen.getByLabelText('Summary focus');
+    const messageInput = screen.getByLabelText('Message');
 
-    fireEvent.change(instructionInput, {
+    fireEvent.change(messageInput, {
       target: { value: 'Call out action items' },
     });
     fireEvent.click(screen.getByRole('button', { name: /close ai sidebar/i }));
@@ -1132,7 +2027,7 @@ describe('EditorPage save flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /show ai/i }));
 
     expect(sidebar).toHaveAttribute('data-state', 'open');
-    expect(screen.getByLabelText('Summary focus')).toHaveValue('Call out action items');
+    expect(screen.getByLabelText('Message')).toHaveValue('Call out action items');
   });
 
   it('shows a restricted AI notice for viewers', async () => {
@@ -1158,6 +2053,10 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       throw new Error(`Unexpected apiJSON call: ${path}`);
     });
 
@@ -1168,7 +2067,7 @@ describe('EditorPage save flow', () => {
     expect(
       screen.getByText('Your role can view this document, but it cannot run AI actions.')
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Generate summary' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Summarize' })).toBeDisabled();
   });
 
   it('shows when AI is disabled for the document', async () => {
@@ -1188,6 +2087,10 @@ describe('EditorPage save flow', () => {
         });
       }
 
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
       throw new Error(`Unexpected apiJSON call: ${path}`);
     });
 
@@ -1196,7 +2099,7 @@ describe('EditorPage save flow', () => {
     await screen.findByText('Draft');
 
     expect(screen.getByText('AI is disabled for this document.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Generate summary' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Summarize' })).toBeDisabled();
   });
 
   it('shows version history and restores an older version', async () => {
@@ -1206,6 +2109,7 @@ describe('EditorPage save flow', () => {
       buildDocument(),
       buildDocument({
         current_content: '<p>Restored body</p>',
+        line_spacing: 2,
         revision: 2,
         latest_version_id: 12,
       }),
@@ -1231,6 +2135,7 @@ describe('EditorPage save flow', () => {
             created_by: 1,
             created_at: '2026-01-01T00:10:00Z',
             is_restore_version: false,
+            save_source: 'manual',
           },
           {
             version_id: 4,
@@ -1238,6 +2143,7 @@ describe('EditorPage save flow', () => {
             created_by: 1,
             created_at: '2026-01-01T00:00:00Z',
             is_restore_version: false,
+            save_source: 'manual',
           },
         ]);
       }
@@ -1246,6 +2152,7 @@ describe('EditorPage save flow', () => {
         return Promise.resolve({
           document_id: 1,
           latest_version_id: 10,
+          line_spacing: 1.15,
           revision: 1,
           saved_at: '2026-01-01T00:05:00Z',
         });
@@ -1269,6 +2176,12 @@ describe('EditorPage save flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'History' }));
 
     await screen.findByText('Version history');
+    expect(screen.getByRole('dialog', { name: 'Version history' })).toHaveClass('modal-tall');
+    expect(
+      screen.getByText(
+        'Review previous saved snapshots and restore an earlier state without deleting later history.'
+      ).closest('.modal-scroll')
+    ).not.toBeNull();
     expect(screen.getByText('Version 1')).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Restore' })[1]);
@@ -1276,6 +2189,7 @@ describe('EditorPage save flow', () => {
     await waitFor(() => {
       expect(screen.getByTestId('editor-content')).toHaveTextContent('Restored body');
     });
+    expect(screen.getByTestId('editor-line-spacing')).toHaveTextContent('2');
 
     expect(api.apiJSON).toHaveBeenCalledWith(
       '/documents/1/versions/4/restore',
@@ -1283,6 +2197,127 @@ describe('EditorPage save flow', () => {
         method: 'POST',
       })
     );
+  });
+
+  it('hides autosaves in version history by default and can reveal them', async () => {
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(
+          buildDocument({
+            revision: 3,
+            latest_version_id: 7,
+          })
+        );
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/versions' && !options) {
+        return Promise.resolve([
+          {
+            version_id: 7,
+            version_number: 3,
+            created_by: 1,
+            created_at: '2026-01-01T00:20:00Z',
+            is_restore_version: false,
+            save_source: 'autosave',
+          },
+          {
+            version_id: 6,
+            version_number: 2,
+            created_by: 1,
+            created_at: '2026-01-01T00:10:00Z',
+            is_restore_version: false,
+            save_source: 'manual',
+          },
+          {
+            version_id: 5,
+            version_number: 1,
+            created_by: 1,
+            created_at: '2026-01-01T00:00:00Z',
+            is_restore_version: true,
+            save_source: 'restore',
+          },
+        ]);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+
+    await screen.findByText('Version history');
+    expect(screen.queryByText('Version 3')).not.toBeInTheDocument();
+    expect(screen.getByText('Version 2')).toBeInTheDocument();
+    expect(screen.getByText('Version 1')).toBeInTheDocument();
+    expect(screen.getByText('Manual save')).toBeInTheDocument();
+    expect(screen.getByText('Restore', { selector: '.history-badge' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show autosaves' }));
+
+    expect(await screen.findByText('Version 3')).toBeInTheDocument();
+    expect(screen.getByText('Autosave')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide autosaves' })).toBeInTheDocument();
+  });
+
+  it('shows the latest autosave with helper copy when autosaves are the only history', async () => {
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(
+          buildDocument({
+            revision: 2,
+            latest_version_id: 4,
+          })
+        );
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/versions' && !options) {
+        return Promise.resolve([
+          {
+            version_id: 4,
+            version_number: 2,
+            created_by: 1,
+            created_at: '2026-01-01T00:10:00Z',
+            is_restore_version: false,
+            save_source: 'autosave',
+          },
+          {
+            version_id: 3,
+            version_number: 1,
+            created_by: 1,
+            created_at: '2026-01-01T00:00:00Z',
+            is_restore_version: false,
+            save_source: 'autosave',
+          },
+        ]);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+
+    await screen.findByText('Only autosave snapshots exist so far. Open autosaves if you want to browse the full background-save history.');
+    expect(screen.getByText('Version 2')).toBeInTheDocument();
+    expect(screen.queryByText('Version 1')).not.toBeInTheDocument();
   });
 
   it('exports the document in the selected format', async () => {
@@ -1312,7 +2347,7 @@ describe('EditorPage save flow', () => {
           format: 'html',
           content_type: 'text/html',
           filename: 'draft.html',
-          exported_content: '<p>Initial body</p>',
+          exported_content: '<!doctype html><html><body><article><p>Initial body</p></article></body></html>',
           revision: 0,
           exported_at: '2026-01-01T00:00:00Z',
         });
@@ -1343,6 +2378,9 @@ describe('EditorPage save flow', () => {
     });
 
     expect(createObjectURL).toHaveBeenCalled();
+    const exportBlob = createObjectURL.mock.calls[0][0];
+    expect(exportBlob).toBeInstanceOf(Blob);
+    await expect(exportBlob.text()).resolves.toContain('<article><p>Initial body</p></article>');
     expect(clickSpy).toHaveBeenCalled();
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:export');
   });
@@ -1369,7 +2407,7 @@ describe('EditorPage save flow', () => {
           session_token: 'socket-token',
           document_id: 1,
           revision: 0,
-          realtime_url: 'ws://localhost:8000/v1/documents/1/sessions/sess_1/ws',
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
           resync_required: false,
           missed_revision_count: 0,
           active_collaborators: [
@@ -1395,6 +2433,9 @@ describe('EditorPage save flow', () => {
     await waitFor(() => {
       expect(MockWebSocket.instances).toHaveLength(1);
     });
+    await waitFor(() => {
+      expect(screen.getByText(/^Live:\s*You$/i)).toBeInTheDocument();
+    });
 
     const socket = MockWebSocket.instances[0];
     expect(socket.url).toContain('/documents/1/sessions/sess_1/ws');
@@ -1403,11 +2444,7 @@ describe('EditorPage save flow', () => {
 
     act(() => {
       socket.emit({
-        type: 'session_joined',
-        session_id: 'sess_1',
-        document_id: 1,
-        revision: 0,
-        content: '<p>Initial body</p>',
+        type: 'presence_snapshot',
         presence: [
           {
             user_id: 1,
@@ -1431,13 +2468,16 @@ describe('EditorPage save flow', () => {
       });
     });
 
-    expect(screen.getByText(/editor typing…/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/editor typing…/i)).toBeInTheDocument();
+    });
 
     act(() => {
       socket.emit({
         type: 'content_updated',
         document_id: 1,
         content: '<p>Remote body</p>',
+        line_spacing: 1.5,
         revision: 1,
         latest_version_id: 11,
         actor_user_id: 2,
@@ -1449,6 +2489,163 @@ describe('EditorPage save flow', () => {
     await waitFor(() => {
       expect(screen.getByTestId('editor-content')).toHaveTextContent('Remote body');
     });
+    expect(screen.getByTestId('editor-line-spacing')).toHaveTextContent('1.5');
+  });
+
+  it('hides the status pill when realtime is connected and only the current user is present', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [
+            {
+              user_id: 1,
+              display_name: 'Owner',
+              session_id: 'sess_1',
+              last_known_revision: 0,
+              joined_at: '2026-01-01T00:00:00Z',
+              last_seen_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/^Live:\s*You$/i)).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Realtime connected')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Only you are here right now/i)).not.toBeInTheDocument();
+  });
+
+  it('transitions to reconnecting when the realtime socket closes unexpectedly', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    act(() => {
+      MockWebSocket.instances[0].close();
+    });
+
+    await screen.findByText('Reconnecting…');
+    expect(
+      screen.getByText('Realtime disconnected. Trying to reconnect while local saves continue.')
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Live:/i)).not.toBeInTheDocument();
+  });
+
+  it('shows an auth-specific realtime error without stale live presence when the socket is rejected', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    act(() => {
+      MockWebSocket.instances[0].close({
+        code: 4401,
+        reason: 'Invalid realtime session.',
+      });
+    });
+
+    await screen.findByText('Realtime offline');
+    expect(screen.getByText('Invalid realtime session.')).toBeInTheDocument();
+    expect(screen.queryByText(/^Live:/i)).not.toBeInTheDocument();
   });
 
   it('keeps a local draft when a remote conflict arrives and can resend it', async () => {
@@ -1473,7 +2670,7 @@ describe('EditorPage save flow', () => {
           session_token: 'socket-token',
           document_id: 1,
           revision: 0,
-          realtime_url: 'ws://localhost:8000/v1/documents/1/sessions/sess_1/ws',
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
           resync_required: false,
           missed_revision_count: 0,
           active_collaborators: [],
@@ -1498,6 +2695,7 @@ describe('EditorPage save flow', () => {
         type: 'content_updated',
         document_id: 1,
         content: '<p>Remote body</p>',
+        line_spacing: 1.15,
         revision: 2,
         latest_version_id: 12,
         actor_user_id: 2,
@@ -1512,7 +2710,9 @@ describe('EditorPage save flow', () => {
     expect(socket.sentMessages).toContainEqual({
       type: 'content_update',
       content: '<p>Updated body</p>',
+      line_spacing: 1.15,
       base_revision: 2,
+      save_source: 'autosave',
     });
   });
 });

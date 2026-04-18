@@ -54,6 +54,7 @@ def test_backend_document_flow_contracts(client) -> None:
         "owner_user_id",
         "role",
         "ai_enabled",
+        "line_spacing",
         "revision",
         "latest_version_id",
         "latest_version",
@@ -70,6 +71,7 @@ def test_backend_document_flow_contracts(client) -> None:
     assert create_body["owner_user_id"] == user_id
     assert create_body["role"] == "owner"
     assert create_body["ai_enabled"] is True
+    assert create_body["line_spacing"] == 1.15
     assert create_body["revision"] == 0
     assert create_body["latest_version_id"] is None
     assert create_body["latest_version"] is None
@@ -92,6 +94,7 @@ def test_backend_document_flow_contracts(client) -> None:
         "owner_user_id",
         "role",
         "ai_enabled",
+        "line_spacing",
         "revision",
         "latest_version_id",
         "latest_version",
@@ -106,6 +109,7 @@ def test_backend_document_flow_contracts(client) -> None:
         "display_name": "Integration User",
     }
     assert get_body["owner_user_id"] == user_id
+    assert get_body["line_spacing"] == 1.15
     assert get_body["revision"] == 0
     assert get_body["latest_version"] is None
 
@@ -123,6 +127,7 @@ def test_backend_document_flow_contracts(client) -> None:
     assert save_body == {
         "document_id": document_id,
         "latest_version_id": 1,
+        "line_spacing": 1.15,
         "revision": 1,
         "saved_at": save_body["saved_at"],
     }
@@ -165,6 +170,10 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
     assert session_body["session_token"]
     assert session_body["document_id"] == document_id
     assert session_body["revision"] == 0
+    assert (
+        session_body["realtime_url"]
+        == f"/v1/documents/{document_id}/sessions/sess_1/ws"
+    )
     assert session_body["resync_required"] is False
     assert session_body["missed_revision_count"] == 0
     assert len(session_body["active_collaborators"]) == 1
@@ -215,11 +224,15 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
     assert len(list_ai_body) == 1
     assert list_ai_body[0] == {
         "interaction_id": create_ai_body["interaction_id"],
+        "conversation_id": f"conv_doc_{document_id}_usr_{user_id}",
+        "entry_kind": "suggestion",
+        "message_role": "assistant",
         "feature_type": "rewrite",
         "scope_type": "selection",
         "user_id": user_id,
         "status": "completed",
         "created_at": create_ai_body["created_at"],
+        "source_revision": 0,
         "model_name": "local-rewrite-fallback",
         "outcome": None,
         "total_tokens": list_ai_body[0]["total_tokens"],
@@ -235,10 +248,14 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
     detail_body = detail_response.json()
     assert set(detail_body) == {
         "interaction_id",
+        "conversation_id",
+        "entry_kind",
+        "message_role",
         "feature_type",
         "scope_type",
         "status",
         "document_id",
+        "source_revision",
         "base_revision",
         "created_at",
         "completed_at",
@@ -247,16 +264,21 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
         "selected_text_snapshot",
         "surrounding_context",
         "user_instruction",
+        "reply_to_interaction_id",
         "parameters",
         "outcome",
         "outcome_recorded_at",
         "suggestion",
     }
     assert detail_body["interaction_id"] == create_ai_body["interaction_id"]
+    assert detail_body["conversation_id"] == f"conv_doc_{document_id}_usr_{user_id}"
+    assert detail_body["entry_kind"] == "suggestion"
+    assert detail_body["message_role"] == "assistant"
     assert detail_body["feature_type"] == "rewrite"
     assert detail_body["scope_type"] == "selection"
     assert detail_body["status"] == "completed"
     assert detail_body["document_id"] == document_id
+    assert detail_body["source_revision"] == 0
     assert detail_body["base_revision"] == 0
     assert detail_body["selected_range"] == {"start": 0, "end": 11}
     assert detail_body["selected_text_snapshot"] == "First draft"
@@ -265,6 +287,7 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
     assert detail_body["parameters"] == {"tone": "formal"}
     assert detail_body["outcome"] is None
     assert detail_body["outcome_recorded_at"] is None
+    assert detail_body["reply_to_interaction_id"] is None
     assert detail_body["suggestion"] == {
         "suggestion_id": "sug_1",
         "generated_output": "First draft.",
