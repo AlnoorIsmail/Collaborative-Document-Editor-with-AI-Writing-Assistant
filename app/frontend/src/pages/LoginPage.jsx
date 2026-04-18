@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { apiFetch, getErrorMessage } from '../api';
 import {
@@ -26,7 +26,13 @@ export default function LoginPage() {
   const [bannerError, setBannerError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  useEffect(() => {
+  document.title = 'Login - CollaboWrite';
+}, []);
 
+
+
+  
   function setFieldError(field, value) {
     setFieldErrors((current) => ({
       ...current,
@@ -121,7 +127,7 @@ export default function LoginPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <h1 className="auth-title">Sign in</h1>
+        <h1 className="auth-title">Login</h1>
         <form onSubmit={handleSubmit} className="auth-form" noValidate>
           {bannerError && <div className="error-banner">{bannerError}</div>}
           <label className="field-label">
