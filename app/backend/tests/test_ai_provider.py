@@ -99,3 +99,40 @@ def test_stub_chat_assistant_returns_contextual_response() -> None:
     )
     assert "What is the biggest risk?" in result.generated_output
     assert "final qa pass" in result.generated_output.lower()
+
+
+def test_stub_translate_uses_requested_target_language() -> None:
+    provider = StubAIProviderClient()
+
+    result = provider.generate_suggestion(
+        feature_type="translate",
+        prompt=_prompt(
+            feature_type="translate",
+            document_text="Hello team. Draft summary for the plan.",
+            user_instruction="Translate this into Spanish.",
+        )
+        + '\nPARAMETERS_JSON:\n{"target_language": "Spanish"}\n',
+    )
+
+    assert result.model_name == "local-translate-fallback"
+    assert "Translated to Spanish:" in result.generated_output
+    assert "Hola" in result.generated_output or "hola" in result.generated_output
+
+
+def test_stub_grammar_fix_polishes_text_without_changing_meaning() -> None:
+    provider = StubAIProviderClient()
+
+    result = provider.generate_suggestion(
+        feature_type="grammar_fix",
+        prompt=_prompt(
+            feature_type="grammar_fix",
+            document_text="i cant join the meeting today please send me the notes after",
+            user_instruction="Fix grammar only.",
+        )
+        + '\nPARAMETERS_JSON:\n{"style": "preserve"}\n',
+    )
+
+    assert result.model_name == "local-grammar-fallback"
+    assert result.generated_output == (
+        "I cannot join the meeting today please send me the notes after."
+    )
