@@ -29,6 +29,11 @@ from app.backend.repositories.user_repository import UserRepository
 from app.backend.repositories.version_repository import VersionRepository
 from app.backend.services.ai.ai_service import AIService
 from app.backend.services.auth_service import AuthService
+from app.backend.services.document_service import DocumentService
+from app.backend.services.realtime.collaboration_service import (
+    CollaborationService,
+    RealtimeHub,
+)
 from app.backend.services.realtime.session_service import SessionService
 
 
@@ -130,6 +135,27 @@ def get_session_service(
         settings=settings,
         document_repository=DocumentRepository(db),
         permission_repository=PermissionRepository(db),
+    )
+
+
+@lru_cache
+def get_realtime_hub() -> RealtimeHub:
+    return RealtimeHub()
+
+
+def get_collaboration_service(
+    session_repository: Annotated[SessionRepository, Depends(get_session_repository)],
+    hub: Annotated[RealtimeHub, Depends(get_realtime_hub)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CollaborationService:
+    return CollaborationService(
+        session_repository=session_repository,
+        hub=hub,
+        document_service=DocumentService(
+            DocumentRepository(db),
+            VersionRepository(db),
+            PermissionRepository(db),
+        ),
     )
 
 

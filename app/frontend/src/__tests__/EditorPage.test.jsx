@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import EditorPage from '../pages/EditorPage';
 import * as api from '../api';
 
+const originalWebSocket = globalThis.WebSocket;
+
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -98,11 +100,45 @@ function buildDocument(overrides = {}) {
   };
 }
 
+class MockWebSocket {
+  static instances = [];
+
+  static OPEN = 1;
+
+  constructor(url) {
+    this.url = url;
+    this.readyState = MockWebSocket.OPEN;
+    this.sentMessages = [];
+    MockWebSocket.instances.push(this);
+    queueMicrotask(() => {
+      this.onopen?.();
+    });
+  }
+
+  send(message) {
+    this.sentMessages.push(JSON.parse(message));
+  }
+
+  close() {
+    this.readyState = 3;
+    this.onclose?.();
+  }
+
+  emit(payload) {
+    this.onmessage?.({
+      data: JSON.stringify(payload),
+    });
+  }
+}
+
 describe('EditorPage save flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    sessionStorage.clear();
     localStorage.setItem('access_token', 'test-token');
+    MockWebSocket.instances = [];
+    globalThis.WebSocket = undefined;
 
     const documentResponses = [buildDocument()];
 
@@ -134,6 +170,7 @@ describe('EditorPage save flow', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    globalThis.WebSocket = originalWebSocket;
   });
 
   it('autosaves shortly after content changes', async () => {
@@ -1308,5 +1345,174 @@ describe('EditorPage save flow', () => {
     expect(createObjectURL).toHaveBeenCalled();
     expect(clickSpy).toHaveBeenCalled();
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:export');
+  });
+
+  it('connects to realtime collaboration and applies remote updates', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          realtime_url: 'ws://localhost:8000/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [
+            {
+              user_id: 1,
+              display_name: 'Owner',
+              session_id: 'sess_1',
+              last_known_revision: 0,
+              joined_at: '2026-01-01T00:00:00Z',
+              last_seen_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = MockWebSocket.instances[0];
+    expect(socket.url).toContain('/documents/1/sessions/sess_1/ws');
+    expect(socket.url).toContain('session_token=socket-token');
+    expect(socket.url).toContain('access_token=test-token');
+
+    act(() => {
+      socket.emit({
+        type: 'session_joined',
+        session_id: 'sess_1',
+        document_id: 1,
+        revision: 0,
+        content: '<p>Initial body</p>',
+        presence: [
+          {
+            user_id: 1,
+            display_name: 'Owner',
+            session_id: 'sess_1',
+            last_known_revision: 0,
+            joined_at: '2026-01-01T00:00:00Z',
+            last_seen_at: '2026-01-01T00:00:00Z',
+            typing: false,
+          },
+          {
+            user_id: 2,
+            display_name: 'Editor',
+            session_id: 'sess_2',
+            last_known_revision: 0,
+            joined_at: '2026-01-01T00:00:00Z',
+            last_seen_at: '2026-01-01T00:00:00Z',
+            typing: true,
+          },
+        ],
+      });
+    });
+
+    expect(screen.getByText(/editor typing…/i)).toBeInTheDocument();
+
+    act(() => {
+      socket.emit({
+        type: 'content_updated',
+        document_id: 1,
+        content: '<p>Remote body</p>',
+        revision: 1,
+        latest_version_id: 11,
+        actor_user_id: 2,
+        actor_display_name: 'Editor',
+        saved_at: '2026-01-01T00:00:05Z',
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('editor-content')).toHaveTextContent('Remote body');
+    });
+  });
+
+  it('keeps a local draft when a remote conflict arrives and can resend it', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          realtime_url: 'ws://localhost:8000/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    const socket = MockWebSocket.instances[0];
+    fireEvent.click(screen.getByRole('button', { name: 'Edit document' }));
+
+    act(() => {
+      socket.emit({
+        type: 'content_updated',
+        document_id: 1,
+        content: '<p>Remote body</p>',
+        revision: 2,
+        latest_version_id: 12,
+        actor_user_id: 2,
+        actor_display_name: 'Editor',
+        saved_at: '2026-01-01T00:00:05Z',
+      });
+    });
+
+    await screen.findByText('Remote changes need review.');
+    fireEvent.click(screen.getByRole('button', { name: 'Keep my draft' }));
+
+    expect(socket.sentMessages).toContainEqual({
+      type: 'content_update',
+      content: '<p>Updated body</p>',
+      base_revision: 2,
+    });
   });
 });

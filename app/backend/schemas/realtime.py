@@ -13,6 +13,7 @@ class SessionBootstrapRequest(AppSchema):
 
 class SessionCollaboratorResponse(AppSchema):
     user_id: int
+    display_name: str
     session_id: str
     last_known_revision: int = Field(ge=0)
     joined_at: datetime

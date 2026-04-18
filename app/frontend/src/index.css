@@ -537,6 +537,74 @@ html, body {
   flex-shrink: 0;
 }
 
+.presence-bar {
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: #f8fbff;
+}
+
+.presence-pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.presence-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.presence-pill-primary {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.presence-pill-status-connecting {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.presence-pill-status-offline {
+  background: #f8fafc;
+  color: #475569;
+}
+
+.presence-pill-status-connected {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.conflict-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #fbbf24;
+  background: #fff7ed;
+}
+
+.conflict-banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #9a3412;
+  font-size: 13px;
+}
+
+.conflict-banner-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 /* ── Tiptap editor ────────────────────────────────── */
 .editor-wrapper {
   flex: 1;
@@ -922,6 +990,11 @@ html, body {
   .doc-card-footer {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .conflict-banner {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 

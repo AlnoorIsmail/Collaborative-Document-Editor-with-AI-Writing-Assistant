@@ -1,20 +1,15 @@
 """Service layer for realtime session bootstrap endpoints."""
 
-from http import HTTPStatus
-
 from app.backend.core.config import Settings
-from app.backend.core.contracts import parse_resource_id
-from app.backend.core.errors import ApiError, AppError
-from app.backend.core.security import AuthenticatedPrincipal
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.sessions import SessionRepository
-from app.backend.schemas.common import ErrorCode
 from app.backend.schemas.realtime import (
     SessionBootstrapRequest,
     SessionBootstrapResponse,
     SessionCollaboratorResponse,
 )
+from app.backend.models.user import User
 from app.backend.services.access_service import DocumentAccessService
 
 
@@ -38,17 +33,17 @@ class SessionService:
         self,
         *,
         document_id: str,
-        principal: AuthenticatedPrincipal,
+        current_user: User,
         payload: SessionBootstrapRequest,
     ) -> SessionBootstrapResponse:
-        user_id = self._principal_user_id(principal)
         access = self._access_service.require_read_access(
             document_id=document_id,
-            user_id=user_id,
+            user_id=current_user.id,
         )
         record = self._repository.create_or_join_session(
             document_id=access.document.id,
-            user_id=user_id,
+            user_id=current_user.id,
+            display_name=current_user.display_name,
             last_known_revision=payload.last_known_revision,
         )
         missed_revision_count = max(access.current_revision - payload.last_known_revision, 0)
@@ -63,6 +58,7 @@ class SessionService:
             active_collaborators=[
                 SessionCollaboratorResponse(
                     user_id=collaborator.user_id,
+                    display_name=collaborator.display_name,
                     session_id=collaborator.session_id,
                     last_known_revision=collaborator.last_known_revision,
                     joined_at=collaborator.joined_at,
@@ -71,13 +67,3 @@ class SessionService:
                 for collaborator in record.active_collaborators
             ],
         )
-
-    def _principal_user_id(self, principal: AuthenticatedPrincipal) -> int:
-        try:
-            return parse_resource_id(principal.user_id, "usr")
-        except ApiError as exc:
-            raise AppError(
-                status_code=HTTPStatus.UNAUTHORIZED,
-                error_code=ErrorCode.UNAUTHORIZED,
-                message="Missing or invalid bearer token.",
-            ) from exc
