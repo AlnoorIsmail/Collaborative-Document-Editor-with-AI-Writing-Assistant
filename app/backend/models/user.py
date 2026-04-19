@@ -56,3 +56,8 @@ class User(Base):
         back_populates="creator",
         foreign_keys="ShareLink.created_by",
     )
+    document_comments: Mapped[List["DocumentComment"]] = relationship(
+        "DocumentComment",
+        back_populates="author",
+        foreign_keys="DocumentComment.author_user_id",
+    )

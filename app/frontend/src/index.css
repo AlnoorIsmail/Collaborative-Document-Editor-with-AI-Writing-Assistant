@@ -1872,6 +1872,203 @@ html, body {
   display: none;
 }
 
+/* ── Comments Sidebar ─────────────────────────────── */
+.comments-sidebar {
+  width: min(360px, 34vw);
+  min-width: 300px;
+  border-left: 1px solid var(--color-border);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 0.24s ease, min-width 0.24s ease, opacity 0.24s ease, transform 0.24s ease, border-color 0.24s ease;
+}
+
+.comments-sidebar-open {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.comments-sidebar-closed {
+  width: 0;
+  min-width: 0;
+  border-left-color: transparent;
+  opacity: 0;
+  transform: translateX(24px);
+  pointer-events: none;
+}
+
+.comments-sidebar-header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.comments-sidebar-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.comments-sidebar-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 20px 18px;
+  overflow: hidden;
+}
+
+.comments-sidebar-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.comments-sidebar-notice,
+.comments-quoted-preview {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #dbe4f0;
+  background: #f8fbff;
+}
+
+.comments-quoted-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.comments-quoted-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text);
+  white-space: pre-wrap;
+}
+
+.comments-textarea {
+  resize: vertical;
+  min-height: 88px;
+  max-height: 180px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.comments-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.comments-thread-shell {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.comments-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.comments-thread-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow-sm);
+}
+
+.comments-thread-card-resolved {
+  background: #f8fafc;
+  border-color: #dbe4f0;
+  opacity: 0.9;
+}
+
+.comments-thread-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.comments-thread-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.comments-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: capitalize;
+}
+
+.comments-status-open {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.comments-status-resolved {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.comments-quoted-block {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid #c7d2fe;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.comments-thread-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text);
+  white-space: pre-wrap;
+}
+
+.comments-thread-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.comments-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
 @media (max-width: 1480px) {
   .navbar {
     display: grid;
@@ -1998,6 +2195,19 @@ html, body {
     box-shadow: -12px 0 28px rgba(15, 23, 42, 0.18);
   }
 
+  .comments-sidebar {
+    position: fixed;
+    top: var(--navbar-height);
+    right: 0;
+    bottom: 0;
+    z-index: 460;
+    width: min(92vw, 380px);
+    min-width: min(92vw, 380px);
+    max-width: 100%;
+    border-left: 1px solid var(--color-border);
+    box-shadow: -12px 0 28px rgba(15, 23, 42, 0.18);
+  }
+
   .ai-sidebar-resize-handle {
     display: none;
   }
@@ -2015,6 +2225,12 @@ html, body {
   }
 
   .ai-sidebar-closed {
+    width: min(92vw, 380px);
+    min-width: min(92vw, 380px);
+    transform: translateX(100%);
+  }
+
+  .comments-sidebar-closed {
     width: min(92vw, 380px);
     min-width: min(92vw, 380px);
     transform: translateX(100%);

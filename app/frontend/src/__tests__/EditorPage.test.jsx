@@ -25,6 +25,7 @@ vi.mock('../components/TiptapEditor', () => ({
       content,
       onChange,
       onSelectionUpdate,
+      readOnly = false,
       lineSpacing = 1.15,
       onLineSpacingChange,
       onSendableSteps,
@@ -108,49 +109,53 @@ vi.mock('../components/TiptapEditor', () => ({
         <div data-testid="remote-awareness">
           {remoteAwareness.map((entry) => `${entry.label}:${entry.from}-${entry.to}`).join('|')}
         </div>
-        <button type="button" onClick={() => onChange('<p>Updated body</p>')}>
-          Edit document
-        </button>
-        <button type="button" onClick={() => onLineSpacingChange?.(1.5)}>
-          Change line spacing
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            const nextContent = '<p>Local collaborative body</p>';
-            setCurrentContent(nextContent);
-            onChange(nextContent, {
-              hasPendingCollaborationSteps: true,
-              collaborationVersion: currentVersion,
-            });
-            const nextPayload = {
-              batchId: 'batch-1',
-              version: currentVersion,
-              clientId: 'client-1',
-              steps: [{ mockStep: true, mockHtml: nextContent }],
-              content: nextContent,
-              lineSpacing,
-              affectedRange: { start: 4, end: 21 },
-              candidateContentSnapshot: 'Local collaborative body',
-              exactTextSnapshot: 'Initial body',
-              prefixContext: 'Before',
-              suffixContext: 'After',
-            };
+        {!readOnly ? (
+          <>
+            <button type="button" onClick={() => onChange('<p>Updated body</p>')}>
+              Edit document
+            </button>
+            <button type="button" onClick={() => onLineSpacingChange?.(1.5)}>
+              Change line spacing
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const nextContent = '<p>Local collaborative body</p>';
+                setCurrentContent(nextContent);
+                onChange(nextContent, {
+                  hasPendingCollaborationSteps: true,
+                  collaborationVersion: currentVersion,
+                });
+                const nextPayload = {
+                  batchId: 'batch-1',
+                  version: currentVersion,
+                  clientId: 'client-1',
+                  steps: [{ mockStep: true, mockHtml: nextContent }],
+                  content: nextContent,
+                  lineSpacing,
+                  affectedRange: { start: 4, end: 21 },
+                  candidateContentSnapshot: 'Local collaborative body',
+                  exactTextSnapshot: 'Initial body',
+                  prefixContext: 'Before',
+                  suffixContext: 'After',
+                };
 
-            if (localInflightRef.current) {
-              queuedBatchRef.current = {
-                ...nextPayload,
-                version: currentVersion + 1,
-              };
-              return;
-            }
+                if (localInflightRef.current) {
+                  queuedBatchRef.current = {
+                    ...nextPayload,
+                    version: currentVersion + 1,
+                  };
+                  return;
+                }
 
-            localInflightRef.current = true;
-            onSendableSteps?.(nextPayload);
-          }}
-        >
-          Send collaboration step
-        </button>
+                localInflightRef.current = true;
+                onSendableSteps?.(nextPayload);
+              }}
+            >
+              Send collaboration step
+            </button>
+          </>
+        ) : null}
         <button
           type="button"
           onClick={() =>
@@ -200,8 +205,20 @@ function renderEditorPage() {
 }
 
 async function clickAiShortcut(label) {
+  const showAiButton = screen.queryByRole('button', { name: /show ai/i });
+  if (showAiButton) {
+    fireEvent.click(showAiButton);
+  }
   fireEvent.click(screen.getByRole('button', { name: /shortcuts/i }));
   fireEvent.click(await screen.findByRole('menuitem', { name: label }));
+}
+
+async function openAiSidebar() {
+  const showAiButton = screen.queryByRole('button', { name: /show ai/i });
+  if (showAiButton) {
+    fireEvent.click(showAiButton);
+  }
+  await screen.findByLabelText('AI Assistant');
 }
 
 function buildDocument(overrides = {}) {
@@ -410,6 +427,10 @@ describe('EditorPage save flow', () => {
         return Promise.resolve([]);
       }
 
+      if (path === '/documents/1/comments') {
+        return Promise.resolve([]);
+      }
+
       if (path === '/documents/1/content') {
         return Promise.resolve({
           document_id: 1,
@@ -479,6 +500,109 @@ describe('EditorPage save flow', () => {
     });
 
     expect(screen.queryByRole('button', { name: /save now/i })).not.toBeInTheDocument();
+  });
+
+  it('treats commenters as read-only and hides AI access', async () => {
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument({ role: 'commenter' }));
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 2,
+          email: 'commenter@example.com',
+        });
+      }
+
+      if (path === '/documents/1/comments') {
+        return Promise.resolve([]);
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    expect(screen.getByText(/comment-only access/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /edit document/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /show ai/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /comments/i })).toBeInTheDocument();
+  });
+
+  it('creates sidebar comments with the selected text snapshot', async () => {
+    let comments = [];
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/comments' && !options) {
+        return Promise.resolve(comments);
+      }
+
+      if (path === '/documents/1/comments' && options?.method === 'POST') {
+        const payload = JSON.parse(options.body);
+        const createdComment = {
+          comment_id: 'cmt_1',
+          document_id: 1,
+          author_user_id: 1,
+          author: { user_id: 1, display_name: 'Owner' },
+          body: payload.body,
+          quoted_text: payload.quoted_text,
+          status: 'open',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          resolved_at: null,
+          resolved_by_user_id: null,
+        };
+        comments = [createdComment];
+        return Promise.resolve(createdComment);
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByRole('button', { name: /comments/i }));
+    fireEvent.click(screen.getByRole('button', { name: /select text/i }));
+    fireEvent.change(screen.getByLabelText(/new comment/i), {
+      target: { value: 'Please tighten this section.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /post comment/i }));
+
+    await waitFor(() =>
+      expect(api.apiJSON).toHaveBeenCalledWith(
+        '/documents/1/comments',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            body: 'Please tighten this section.',
+            quoted_text: 'Selected sentence',
+          }),
+        })
+      )
+    );
+    expect(screen.getByText('Please tighten this section.')).toBeInTheDocument();
+    expect(screen.getAllByText('Selected sentence').length).toBeGreaterThan(0);
   });
 
   it('saves before navigating back to the documents list', async () => {
@@ -663,6 +787,7 @@ describe('EditorPage save flow', () => {
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Edit document' }));
+    await openAiSidebar();
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Make it clearer' },
     });
@@ -928,6 +1053,7 @@ describe('EditorPage save flow', () => {
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
+    await openAiSidebar();
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Tighten this section' },
     });
@@ -1077,6 +1203,7 @@ describe('EditorPage save flow', () => {
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
+    await openAiSidebar();
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'What should I improve here?' },
     });
@@ -1210,6 +1337,7 @@ describe('EditorPage save flow', () => {
 
     await screen.findByText('Draft');
     fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
+    await openAiSidebar();
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Translate for a Spanish-speaking teammate.' },
     });

@@ -10,9 +10,13 @@ const defaultProps = {
   onShare: () => {},
   onBack: () => {},
   onToggleAi: vi.fn(),
+  onToggleComments: vi.fn(),
   isOwner: false,
   isReadOnly: false,
   isAiOpen: true,
+  isCommentsOpen: false,
+  canShowAi: true,
+  canShowComments: true,
   user: null,
 };
 
@@ -55,5 +59,10 @@ describe('Navbar save status indicator', () => {
   it('shows the AI toggle label for the current sidebar state', () => {
     renderNavbar('saved');
     expect(screen.getByRole('button', { name: /hide ai/i })).toBeInTheDocument();
+  });
+
+  it('shows the comments toggle when comments are available', () => {
+    renderNavbar('saved');
+    expect(screen.getByRole('button', { name: /comments/i })).toBeInTheDocument();
   });
 });

@@ -70,3 +70,8 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
     )
+    comments: Mapped[List["DocumentComment"]] = relationship(
+        "DocumentComment",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )

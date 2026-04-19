@@ -1,4 +1,5 @@
 from app.backend.models.document import Document
+from app.backend.models.document_comment import DocumentComment
 from app.backend.models.document_permission import DocumentPermission
 from app.backend.models.document_version import DocumentVersion
 from app.backend.models.invitation import Invitation

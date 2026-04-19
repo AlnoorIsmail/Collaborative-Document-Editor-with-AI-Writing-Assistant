@@ -21,6 +21,7 @@ from app.backend.integrations.ai_provider import (
 )
 from app.backend.models.user import User
 from app.backend.repositories.ai import AIRepository, StubAIRepository
+from app.backend.repositories.comment_repository import CommentRepository
 from app.backend.repositories.conflict_repository import ConflictRepository
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
@@ -29,6 +30,7 @@ from app.backend.repositories.user_repository import UserRepository
 from app.backend.repositories.version_repository import VersionRepository
 from app.backend.services.ai.ai_service import AIService
 from app.backend.services.auth_service import AuthService
+from app.backend.services.comment_service import CommentService
 from app.backend.services.conflict_service import ConflictService
 from app.backend.services.document_service import DocumentService
 from app.backend.services.realtime.collaboration_service import (
@@ -161,6 +163,16 @@ def get_conflict_service(
         document_repository=DocumentRepository(db),
         permission_repository=PermissionRepository(db),
         version_repository=VersionRepository(db),
+    )
+
+
+def get_comment_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> CommentService:
+    return CommentService(
+        comment_repository=CommentRepository(db),
+        document_repository=DocumentRepository(db),
+        permission_repository=PermissionRepository(db),
     )
 
 

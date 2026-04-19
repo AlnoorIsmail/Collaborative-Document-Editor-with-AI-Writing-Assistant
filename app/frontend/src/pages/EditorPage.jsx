@@ -5,6 +5,7 @@ import Navbar from '../components/Navbar';
 import TiptapEditor from '../components/TiptapEditor';
 import ShareModal from '../components/ShareModal';
 import AISidebar from '../components/AISidebar';
+import CommentsSidebar from '../components/CommentsSidebar';
 import DocumentHistoryModal from '../components/DocumentHistoryModal';
 import ExportModal from '../components/ExportModal';
 import PresenceBar, { PresenceSummary } from '../components/PresenceBar';
@@ -75,6 +76,28 @@ function upsertConflict(conflicts, nextConflict) {
   const nextConflicts = [...conflicts];
   nextConflicts[existingIndex] = nextConflict;
   return nextConflicts;
+}
+
+function sortComments(comments) {
+  return [...comments].sort((left, right) => {
+    if (left.status !== right.status) {
+      return left.status === 'open' ? -1 : 1;
+    }
+    return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+  });
+}
+
+function upsertComment(comments, nextComment) {
+  const existingIndex = comments.findIndex(
+    (comment) => comment.comment_id === nextComment.comment_id
+  );
+  if (existingIndex === -1) {
+    return sortComments([...comments, nextComment]);
+  }
+
+  const nextComments = [...comments];
+  nextComments[existingIndex] = nextComment;
+  return sortComments(nextComments);
 }
 
 function parseSseBlock(block) {
@@ -157,10 +180,15 @@ export default function EditorPage() {
   const [saveStatus, setSaveStatus] = useState('saved');
   const [selection, setSelection] = useState(null);
   const [lastAiUndo, setLastAiUndo] = useState(null);
-  const [isAiOpen, setIsAiOpen] = useState(true);
+  const [activeSidebar, setActiveSidebar] = useState('ai');
   const [showShare, setShowShare] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [documentComments, setDocumentComments] = useState([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState('');
+  const [commentCreateLoading, setCommentCreateLoading] = useState(false);
+  const [busyCommentId, setBusyCommentId] = useState(null);
   const [presence, setPresence] = useState([]);
   const [awareness, setAwareness] = useState([]);
   const [awarenessClock, setAwarenessClock] = useState(() => Date.now());
@@ -208,6 +236,12 @@ export default function EditorPage() {
   const inflightStepBatchRef = useRef(null);
   const reportedConflictKeysRef = useRef(new Set());
   const pendingFocusRestoreRef = useRef(null);
+  const canEditDocument = role === 'owner' || role === 'editor';
+  const isReadOnly = !canEditDocument;
+  const canUseAi = canEditDocument && Boolean(doc?.ai_enabled);
+  const canOpenComments = Boolean(user);
+  const isAiOpen = activeSidebar === 'ai';
+  const isCommentsOpen = activeSidebar === 'comments';
 
   const applyDocumentState = useCallback((docData, userData = userRef.current) => {
     setDoc(docData);
@@ -262,6 +296,75 @@ export default function EditorPage() {
       });
     } catch {
       // Conflict hydration is secondary to the main editor load and should not block editing.
+    }
+  }, [id]);
+
+  const loadDocumentComments = useCallback(async () => {
+    setCommentsLoading(true);
+    try {
+      const comments = await apiJSON(`/documents/${id}/comments`);
+      setDocumentComments(sortComments(comments));
+      setCommentsError('');
+    } catch (nextError) {
+      setCommentsError(nextError.message || 'Failed to load comments.');
+    } finally {
+      setCommentsLoading(false);
+    }
+  }, [id]);
+
+  const handleCreateComment = useCallback(async ({ body, quotedText }) => {
+    setCommentCreateLoading(true);
+    setCommentsError('');
+    try {
+      const createdComment = await apiJSON(`/documents/${id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({
+          body,
+          quoted_text: quotedText,
+        }),
+      });
+      setDocumentComments((current) => upsertComment(current, createdComment));
+      return createdComment;
+    } catch (nextError) {
+      setCommentsError(nextError.message || 'Failed to post the comment.');
+      return null;
+    } finally {
+      setCommentCreateLoading(false);
+    }
+  }, [id]);
+
+  const handleResolveComment = useCallback(async (comment) => {
+    setBusyCommentId(comment.comment_id);
+    setCommentsError('');
+    try {
+      const resolvedComment = await apiJSON(
+        `/documents/${id}/comments/${comment.comment_id}/resolve`,
+        {
+          method: 'POST',
+        }
+      );
+      setDocumentComments((current) => upsertComment(current, resolvedComment));
+    } catch (nextError) {
+      setCommentsError(nextError.message || 'Failed to resolve the comment.');
+    } finally {
+      setBusyCommentId(null);
+    }
+  }, [id]);
+
+  const handleDeleteComment = useCallback(async (comment) => {
+    setBusyCommentId(comment.comment_id);
+    setCommentsError('');
+    try {
+      await apiJSON(`/documents/${id}/comments/${comment.comment_id}`, {
+        method: 'DELETE',
+      });
+      setDocumentComments((current) => current.filter(
+        (entry) => entry.comment_id !== comment.comment_id
+      ));
+    } catch (nextError) {
+      setCommentsError(nextError.message || 'Failed to delete the comment.');
+    } finally {
+      setBusyCommentId(null);
     }
   }, [id]);
 
@@ -338,6 +441,21 @@ export default function EditorPage() {
   const activeDocumentConflict = documentConflicts.find(
     (conflict) => conflict.conflict_id === activeConflictId
   ) ?? null;
+
+  useEffect(() => {
+    if (!doc) {
+      return;
+    }
+    if (role === 'commenter' && activeSidebar === 'ai') {
+      setActiveSidebar(null);
+    }
+  }, [activeSidebar, doc, role]);
+
+  useEffect(() => {
+    if (isCommentsOpen) {
+      void loadDocumentComments();
+    }
+  }, [isCommentsOpen, loadDocumentComments]);
 
   useEffect(() => {
     if (realtimeStatus !== 'connected') {
@@ -560,6 +678,11 @@ export default function EditorPage() {
         setUser(userData);
         applyDocumentState(docData, userData);
         void loadDocumentConflicts();
+        const resolvedRole = resolveRole(docData, userData);
+        if (resolvedRole === 'viewer' || resolvedRole === 'commenter') {
+          clearOfflineDraft(id);
+          return;
+        }
         const recoveredDraft = readOfflineDraft(id);
         const recoveredContent = recoveredDraft?.content;
         const recoveredLineSpacing = Number(recoveredDraft?.lineSpacing);
@@ -608,7 +731,7 @@ export default function EditorPage() {
   }, [applyDocumentState, id, loadDocumentConflicts, navigate]);
 
   const performSaveContent = useCallback(async ({ force = false, saveSource = 'manual' } = {}) => {
-    if (role === 'viewer') return true;
+    if (!canEditDocument) return true;
     if (!isDirtyRef.current && !force) return true;
 
     const contentToSave = contentRef.current;
@@ -654,7 +777,7 @@ export default function EditorPage() {
       setSaveStatus('unsaved');
       return false;
     }
-  }, [id, role]);
+  }, [canEditDocument, id]);
 
   useEffect(() => {
     savePromiseRef.current = null;
@@ -815,7 +938,7 @@ export default function EditorPage() {
 
   useEffect(() => {
     if (
-      role === 'viewer'
+      !canEditDocument
       || !doc
       || saveStatus !== 'unsaved'
       || (collabEnabled && realtimeStatus === 'connected')
@@ -828,7 +951,7 @@ export default function EditorPage() {
     }, AUTO_SAVE_DELAY);
 
     return () => window.clearTimeout(timer);
-  }, [collabEnabled, content, doc, lineSpacing, realtimeStatus, role, saveContent, saveStatus]);
+  }, [canEditDocument, collabEnabled, content, doc, lineSpacing, realtimeStatus, saveContent, saveStatus]);
 
   useEffect(() => {
     function handleUnload() {
@@ -1022,7 +1145,7 @@ export default function EditorPage() {
 
   const handleSendableSteps = useCallback((payload) => {
     if (
-      role === 'viewer'
+      !canEditDocument
       || typeof WebSocket === 'undefined'
       || socketRef.current?.readyState !== WebSocket.OPEN
     ) {
@@ -1057,12 +1180,12 @@ export default function EditorPage() {
         suffix_context: payload.suffixContext,
       })
     );
-  }, [clearPublishedSelectionAwareness, registerPendingStepBatch, role]);
+  }, [canEditDocument, clearPublishedSelectionAwareness, registerPendingStepBatch]);
 
   const flushPendingCollaborationSteps = useCallback(() => {
     if (
       inflightStepBatchRef.current
-      || role === 'viewer'
+      || !canEditDocument
       || typeof WebSocket === 'undefined'
       || socketRef.current?.readyState !== WebSocket.OPEN
     ) {
@@ -1073,7 +1196,7 @@ export default function EditorPage() {
     if (nextPayload) {
       handleSendableSteps(nextPayload);
     }
-  }, [handleSendableSteps, role]);
+  }, [canEditDocument, handleSendableSteps]);
 
   function handleLineSpacingChange(nextLineSpacing) {
     clearLastAiUndo();
@@ -1605,6 +1728,9 @@ export default function EditorPage() {
             }
             setPresence(payload.presence || []);
             setAwareness(payload.awareness || []);
+            if (isCommentsOpen) {
+              void loadDocumentComments();
+            }
             setRealtimeStatus('connected');
             return;
           }
@@ -1616,6 +1742,23 @@ export default function EditorPage() {
 
           if (payload.type === 'awareness_snapshot') {
             setAwareness(payload.collaborators || []);
+            return;
+          }
+
+          if (payload.type === 'comment_created' && payload.comment) {
+            setDocumentComments((current) => upsertComment(current, payload.comment));
+            return;
+          }
+
+          if (payload.type === 'comment_resolved' && payload.comment) {
+            setDocumentComments((current) => upsertComment(current, payload.comment));
+            return;
+          }
+
+          if (payload.type === 'comment_deleted' && payload.comment_id) {
+            setDocumentComments((current) => current.filter(
+              (comment) => comment.comment_id !== payload.comment_id
+            ));
             return;
           }
 
@@ -1905,7 +2048,7 @@ export default function EditorPage() {
         selectionPublishTimerRef.current = null;
       }
     };
-  }, [clearPendingStepBatch, doc?.document_id, flushPendingCollaborationSteps, id, loadDocumentConflicts, reportOverlapConflict, syncLiveCollaborationSaveState, syncRealtimeDocument, user?.id, user?.user_id]);
+  }, [clearPendingStepBatch, doc?.document_id, flushPendingCollaborationSteps, id, isCommentsOpen, loadDocumentComments, loadDocumentConflicts, reportOverlapConflict, syncLiveCollaborationSaveState, syncRealtimeDocument, user?.id, user?.user_id]);
 
   useEffect(() => {
     if (realtimeStatus !== 'connected' || !socketRef.current) {
@@ -1925,8 +2068,6 @@ export default function EditorPage() {
 
     return () => window.clearInterval(timer);
   }, [realtimeStatus]);
-
-  const isReadOnly = role === 'viewer';
 
   if (error) {
     return (
@@ -1957,11 +2098,15 @@ export default function EditorPage() {
         onShare={() => setShowShare(true)}
         isOwner={role === 'owner'}
         isReadOnly={isReadOnly}
-        canRestoreHistory={role !== 'viewer'}
+        canRestoreHistory={canEditDocument}
         onBack={handleBack}
         user={user}
         isAiOpen={isAiOpen}
-        onToggleAi={() => setIsAiOpen((current) => !current)}
+        onToggleAi={() => setActiveSidebar((current) => (current === 'ai' ? null : 'ai'))}
+        canShowAi={canUseAi}
+        isCommentsOpen={isCommentsOpen}
+        onToggleComments={() => setActiveSidebar((current) => (current === 'comments' ? null : 'comments'))}
+        canShowComments={canOpenComments}
         presenceSummary={
           <PresenceSummary
             users={presence}
@@ -1975,7 +2120,9 @@ export default function EditorPage() {
 
       {isReadOnly && (
         <div className="readonly-banner">
-          You have view-only access to this document.
+          {role === 'commenter'
+            ? 'You have comment-only access to this document. You can add comments, but you cannot edit document text.'
+            : 'You have view-only access to this document.'}
         </div>
       )}
 
@@ -2029,12 +2176,12 @@ export default function EditorPage() {
           ) : null}
         </div>
 
-        {isAiOpen && (
+        {(isAiOpen || isCommentsOpen) && (
           <button
             type="button"
             className="ai-sidebar-backdrop"
-            onClick={() => setIsAiOpen(false)}
-            aria-label="Dismiss AI sidebar overlay"
+            onClick={() => setActiveSidebar(null)}
+            aria-label="Dismiss open sidebar overlay"
           />
         )}
 
@@ -2054,7 +2201,23 @@ export default function EditorPage() {
           applySelectionSuggestion={applySelectionSuggestion}
           undoLastAiApply={undoLastAiApply}
           isOpen={isAiOpen}
-          onClose={() => setIsAiOpen(false)}
+          onClose={() => setActiveSidebar(null)}
+        />
+
+        <CommentsSidebar
+          isOpen={isCommentsOpen}
+          onClose={() => setActiveSidebar(null)}
+          role={role}
+          comments={documentComments}
+          loading={commentsLoading}
+          error={commentsError}
+          selection={selection}
+          currentUserId={resolveUserId(user)}
+          onCreateComment={handleCreateComment}
+          onResolveComment={handleResolveComment}
+          onDeleteComment={handleDeleteComment}
+          creating={commentCreateLoading}
+          busyCommentId={busyCommentId}
         />
       </div>
 
@@ -2069,7 +2232,7 @@ export default function EditorPage() {
         <DocumentHistoryModal
           docId={id}
           currentRevision={revision}
-          canRestore={role !== 'viewer'}
+          canRestore={canEditDocument}
           onClose={() => setShowHistory(false)}
           onRestoreVersion={handleRestoreVersion}
         />

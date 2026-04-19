@@ -29,6 +29,10 @@ export default function Navbar({
   user,
   isAiOpen,
   onToggleAi,
+  canShowAi = true,
+  isCommentsOpen = false,
+  onToggleComments,
+  canShowComments = false,
   presenceSummary = null,
 }) {
   const [editing, setEditing] = useState(false);
@@ -123,9 +127,16 @@ export default function Navbar({
       </div>
 
       <div className="navbar-right">
-        <button className="btn btn-secondary" onClick={onToggleAi}>
-          {isAiOpen ? 'Hide AI' : 'Show AI'}
-        </button>
+        {canShowAi ? (
+          <button className="btn btn-secondary" onClick={onToggleAi}>
+            {isAiOpen ? 'Hide AI' : 'Show AI'}
+          </button>
+        ) : null}
+        {canShowComments ? (
+          <button className="btn btn-secondary" onClick={onToggleComments}>
+            {isCommentsOpen ? 'Hide comments' : 'Comments'}
+          </button>
+        ) : null}
         <button className="btn btn-secondary" onClick={onOpenHistory}>
           {canRestoreHistory ? 'History' : 'Versions'}
         </button>

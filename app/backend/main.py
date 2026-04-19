@@ -12,6 +12,7 @@ from app.backend.core.errors import register_exception_handlers
 from app.backend.schemas.common import HealthResponse
 
 from app.backend.models import document as _document
+from app.backend.models import document_comment as _document_comment
 from app.backend.models import document_conflict as _document_conflict
 from app.backend.models import document_permission as _document_permission
 from app.backend.models import document_version as _document_version
