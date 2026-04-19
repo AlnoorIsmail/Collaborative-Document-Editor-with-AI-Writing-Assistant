@@ -27,6 +27,7 @@ vi.mock('../components/TiptapEditor', () => ({
       onSendableSteps,
       collaborationVersion = 0,
       collaborationResetKey = 0,
+      remoteAwareness = [],
     },
     ref
   ) {
@@ -82,6 +83,9 @@ vi.mock('../components/TiptapEditor', () => ({
       <div>
         <div data-testid="editor-content">{currentContent}</div>
         <div data-testid="editor-line-spacing">{lineSpacing}</div>
+        <div data-testid="remote-awareness">
+          {remoteAwareness.map((entry) => `${entry.label}:${entry.from}-${entry.to}`).join('|')}
+        </div>
         <button type="button" onClick={() => onChange('<p>Updated body</p>')}>
           Edit document
         </button>
@@ -121,10 +125,24 @@ vi.mock('../components/TiptapEditor', () => ({
               text: 'Selected sentence',
               from: 4,
               to: 21,
+              direction: 'forward',
             })
           }
         >
           Select text
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onSelectionUpdate?.({
+              text: '',
+              from: 8,
+              to: 8,
+              direction: 'forward',
+            })
+          }
+        >
+          Move cursor
         </button>
       </div>
     );
@@ -2610,6 +2628,63 @@ describe('EditorPage save flow', () => {
     );
   });
 
+  it('publishes local selection awareness over the realtime socket', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+        expect.objectContaining({
+          type: 'selection_update',
+          from: 4,
+          to: 21,
+          direction: 'forward',
+          collab_version: 0,
+        })
+      );
+    });
+  });
+
   it('applies remote collaborative steps without forcing a snapshot overwrite', async () => {
     globalThis.WebSocket = MockWebSocket;
 
@@ -2670,6 +2745,79 @@ describe('EditorPage save flow', () => {
       expect(screen.getByTestId('editor-content')).toHaveTextContent('Remote collaborative body');
     });
     expect(screen.queryByText('Remote changes need review.')).not.toBeInTheDocument();
+  });
+
+  it('renders remote awareness from websocket snapshots and clears it when offline', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    act(() => {
+      MockWebSocket.instances[0].emit({
+        type: 'awareness_snapshot',
+        collaborators: [
+          {
+            user_id: 2,
+            display_name: 'Editor',
+            session_id: 'sess_2',
+            selection_from: 7,
+            selection_to: 12,
+            selection_direction: 'forward',
+            collab_version: 0,
+            color_token: 'presence-2',
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-awareness')).toHaveTextContent('Editor:7-12');
+    });
+
+    act(() => {
+      MockWebSocket.instances[0].close();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-awareness')).toHaveTextContent('');
+    });
   });
 
   it('shows a conflict resolution tray when overlapping edits are preserved', async () => {

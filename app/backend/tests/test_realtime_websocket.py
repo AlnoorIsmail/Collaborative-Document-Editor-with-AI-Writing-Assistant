@@ -120,6 +120,72 @@ def test_websocket_supports_basic_message_exchange() -> None:
     assert refreshed_document.json()["line_spacing"] == 1.5
 
 
+def test_websocket_broadcasts_selection_awareness_and_clears_stale_ranges() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_document = client.post(
+        "/v1/documents",
+        json={"title": "Realtime Doc", "initial_content": "Draft"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    document_id = create_document.json()["document_id"]
+    bootstrap = client.post(
+        f"/v1/documents/{document_id}/sessions",
+        json={"last_known_revision": 0},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()
+
+    with _open_socket(
+        client,
+        document_id=document_id,
+        session_id=bootstrap["session_id"],
+        session_token=bootstrap["session_token"],
+        access_token=owner_token,
+    ) as socket:
+        joined = _receive_until(socket, "session_joined")
+        assert joined["awareness"][0]["selection_from"] is None
+        _receive_until(socket, "presence_snapshot")
+        initial_awareness = _receive_until(socket, "awareness_snapshot")
+        assert initial_awareness["collaborators"][0]["selection_from"] is None
+
+        socket.send_json(
+            {
+                "type": "selection_update",
+                "from": 2,
+                "to": 5,
+                "direction": "forward",
+                "collab_version": 0,
+            }
+        )
+
+        awareness = _receive_until(socket, "awareness_snapshot")
+        assert awareness["collaborators"][0]["selection_from"] == 2
+        assert awareness["collaborators"][0]["selection_to"] == 5
+        assert awareness["collaborators"][0]["color_token"] == "presence-1"
+
+        socket.send_json(
+            {
+                "type": "step_update",
+                "batch_id": "batch-awareness",
+                "version": 0,
+                "client_id": "client-awareness",
+                "steps": [{"mock": "replace", "text": "Drafting"}],
+                "content": "Drafting",
+                "line_spacing": 1.15,
+                "affected_range": {"start": 1, "end": 5},
+                "candidate_content_snapshot": "Drafting",
+                "exact_text_snapshot": "Draft",
+                "prefix_context": "",
+                "suffix_context": "",
+            }
+        )
+
+        _receive_until(socket, "steps_applied")
+        cleared_awareness = _receive_until(socket, "awareness_snapshot")
+        assert cleared_awareness["collaborators"][0]["selection_from"] is None
+        assert cleared_awareness["collaborators"][0]["selection_to"] is None
+
+
 def test_websocket_supports_step_sync_and_resync() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
