@@ -1429,8 +1429,8 @@ describe('EditorPage save flow', () => {
             scope_type: 'selection',
             selected_range: { start: 4, end: 21 },
             selected_text_snapshot: 'Selected sentence',
-            user_instruction: 'Translate for a Spanish-speaking teammate.',
-            parameters: { target_language: 'Spanish' },
+            user_instruction: 'Translate for a French-speaking teammate.',
+            parameters: { target_language: 'French' },
             suggestion: {
               suggestion_id: 'sug_translate',
               generated_output: 'Texto traducido',
@@ -1477,8 +1477,8 @@ describe('EditorPage save flow', () => {
             scope_type: 'selection',
             selected_range: { start: 4, end: 21 },
             selected_text_snapshot: 'Selected sentence',
-            user_instruction: 'Translate for a Spanish-speaking teammate.',
-            parameters: { target_language: 'Spanish' },
+            user_instruction: 'Translate for a French-speaking teammate.',
+            parameters: { target_language: 'French' },
             suggestion: {
               suggestion_id: 'sug_translate',
               generated_output: 'Texto traducido',
@@ -1497,9 +1497,13 @@ describe('EditorPage save flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
     await openAiSidebar();
     fireEvent.change(screen.getByLabelText('Message'), {
-      target: { value: 'Translate for a Spanish-speaking teammate.' },
+      target: { value: 'Translate for a French-speaking teammate.' },
     });
-    await clickAiShortcut('Translate');
+    fireEvent.click(screen.getByRole('button', { name: /shortcuts/i }));
+    fireEvent.change(screen.getByLabelText('Translate to'), {
+      target: { value: 'French' },
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Translate' }));
 
     await screen.findByText('Texto traducido');
 
@@ -1516,10 +1520,10 @@ describe('EditorPage save flow', () => {
           },
           selected_text_snapshot: 'Selected sentence',
           surrounding_context: 'Document title: Draft\n\nDocument context: Initial body',
-          user_instruction: 'Translate for a Spanish-speaking teammate.',
+          user_instruction: 'Translate for a French-speaking teammate.',
           base_revision: 0,
           parameters: {
-            target_language: 'Spanish',
+            target_language: 'French',
           },
         }),
       })
