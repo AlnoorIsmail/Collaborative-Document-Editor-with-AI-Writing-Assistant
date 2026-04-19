@@ -69,7 +69,7 @@ describe('RegisterPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Name is required.')).toBeInTheDocument();
+      expect(screen.getByText('Username is required.')).toBeInTheDocument();
       expect(screen.getByText('Password is required.')).toBeInTheDocument();
     });
     expect(nameInput).toHaveAttribute('aria-invalid', 'true');
