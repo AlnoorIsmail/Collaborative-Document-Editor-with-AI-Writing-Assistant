@@ -1084,6 +1084,156 @@ describe('EditorPage save flow', () => {
     expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
   });
 
+  it('partially accepts a document suggestion by mixing original and AI parts', async () => {
+    const documentResponses = [
+      buildDocument({
+        current_content: '<p>Original opening. Original closing.</p>',
+        revision: 1,
+        latest_version_id: 10,
+      }),
+      buildDocument({
+        current_content: '<p>AI opening. Original closing.</p>',
+        revision: 2,
+        latest_version_id: 11,
+      }),
+    ];
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(
+          documentResponses.shift() ?? buildDocument({
+            current_content: '<p>AI opening. Original closing.</p>',
+            revision: 2,
+            latest_version_id: 11,
+          })
+        );
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      if (path === '/documents/1/ai/interactions') {
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_partial',
+            source_revision: 1,
+          }),
+        ]);
+      }
+
+      if (path === '/ai/interactions/ai_partial') {
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_partial',
+            source_revision: 1,
+            base_revision: 1,
+            user_instruction: 'Make it clearer',
+            suggestion: {
+              suggestion_id: 'sug_partial',
+              generated_output: 'AI opening. AI closing.',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
+      }
+
+      if (path === '/ai/suggestions/sug_partial/apply-edited') {
+        return Promise.resolve({
+          interaction_id: 'ai_partial',
+          outcome: 'accepted',
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_partial',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 1,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_partial',
+            delta: 'AI opening. AI closing.',
+            output: 'AI opening. AI closing.',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_partial',
+            source_revision: 1,
+            base_revision: 1,
+            user_instruction: 'Make it clearer',
+            suggestion: {
+              suggestion_id: 'sug_partial',
+              generated_output: 'AI opening. AI closing.',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await openAiSidebar();
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'Make it clearer' },
+    });
+    await clickAiShortcut('Rewrite');
+
+    await screen.findByText('AI opening. AI closing.');
+    fireEvent.click(screen.getByRole('button', { name: 'Partial accept' }));
+
+    await screen.findByText('Partial acceptance preview');
+    fireEvent.click(screen.getByRole('button', { name: /keep original for part 2/i }));
+
+    expect(screen.getByText('AI opening. Original closing.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply partial' }));
+
+    await waitFor(() => {
+      expect(api.apiJSON).toHaveBeenCalledWith(
+        '/ai/suggestions/sug_partial/apply-edited',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            edited_output: 'AI opening. Original closing.',
+            apply_to_range: {
+              start: 0,
+              end: '<p>Original opening. Original closing.</p>'.length,
+            },
+          }),
+        })
+      );
+    });
+
+    expect(screen.getByText('Partially accepted suggestion applied to the document.')).toBeInTheDocument();
+  });
+
   it('runs rewrite AI on selected text and applies it back into the editor', async () => {
     const documentResponses = [
       buildDocument(),
