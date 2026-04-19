@@ -298,6 +298,46 @@ function buildSendableStepPayload(editor, lineSpacing, batchMetadata) {
   };
 }
 
+function findTextRangeInEditor(editor, query) {
+  const normalizedQuery = query?.trim();
+  if (!editor || !normalizedQuery) {
+    return null;
+  }
+
+  let flattenedText = '';
+  const positionMap = [];
+
+  editor.state.doc.descendants((node, pos) => {
+    if (node.isTextblock && flattenedText.length > 0 && !flattenedText.endsWith(' ')) {
+      flattenedText += ' ';
+      positionMap.push(Math.max(1, pos));
+    }
+
+    if (!node.isText || !node.text) {
+      return;
+    }
+
+    const startPos = pos + 1;
+    for (let index = 0; index < node.text.length; index += 1) {
+      flattenedText += node.text[index];
+      positionMap.push(startPos + index);
+    }
+  });
+
+  const matchIndex = flattenedText.indexOf(normalizedQuery);
+  if (matchIndex === -1) {
+    return null;
+  }
+
+  const startPosition = positionMap[matchIndex];
+  const endPosition = positionMap[matchIndex + normalizedQuery.length - 1];
+  if (!Number.isFinite(startPosition) || !Number.isFinite(endPosition)) {
+    return null;
+  }
+
+  return normalizeSelectionRange(editor.state.doc, startPosition, endPosition + 1);
+}
+
 // Toolbar button component
 function ToolbarButton({ onClick, active, disabled, title, children }) {
   return (
@@ -761,7 +801,15 @@ const TiptapEditor = forwardRef(function TiptapEditor(
         return false;
       }
 
-      return editor.commands.setTextSelection(clampSelectionPosition(editor, from, to));
+      const nextSelection = clampSelectionPosition(editor, from, to);
+      return editor
+        .chain()
+        .focus()
+        .setTextSelection(nextSelection)
+        .run();
+    },
+    findTextRange(query) {
+      return findTextRangeInEditor(editor, query);
     },
     insertParagraphBreak() {
       if (!editor) {

@@ -1956,6 +1956,35 @@ html, body {
   line-height: 1.55;
   color: var(--color-text);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
+
+.comments-quoted-jump {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.comments-quoted-jump:hover .comments-quoted-block,
+.comments-quoted-jump:hover .comments-quoted-text {
+  color: #1d4ed8;
+}
+
+.comments-quoted-jump:focus-visible {
+  outline: 2px solid rgba(79, 70, 229, 0.35);
+  outline-offset: 4px;
+  border-radius: 12px;
 }
 
 .comments-textarea {
@@ -1987,6 +2016,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
   padding: 14px;
   border: 1px solid var(--color-border);
   border-radius: 18px;
@@ -2046,6 +2076,10 @@ html, body {
   color: #475569;
   font-size: 13px;
   line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .comments-thread-body {
@@ -2054,6 +2088,8 @@ html, body {
   line-height: 1.6;
   color: var(--color-text);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .comments-thread-actions {

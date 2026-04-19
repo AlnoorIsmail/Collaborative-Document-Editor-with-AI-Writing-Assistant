@@ -9,6 +9,7 @@ const originalWebSocket = globalThis.WebSocket;
 const mockEditorCaptureViewState = vi.fn(() => null);
 const mockEditorRestoreViewState = vi.fn(() => true);
 const mockEditorFocus = vi.fn();
+const mockEditorSetSelection = vi.fn(() => true);
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal();
@@ -85,6 +86,17 @@ vi.mock('../components/TiptapEditor', () => ({
       },
       focus() {
         mockEditorFocus();
+      },
+      setSelection(selection) {
+        mockEditorSetSelection(selection);
+        mockEditorFocus();
+        return true;
+      },
+      findTextRange(query) {
+        if (query === 'Selected sentence') {
+          return { from: 4, to: 21 };
+        }
+        return null;
       },
       getViewState() {
         return mockEditorCaptureViewState();
@@ -399,6 +411,7 @@ describe('EditorPage save flow', () => {
     mockEditorCaptureViewState.mockImplementation(() => null);
     mockEditorRestoreViewState.mockImplementation(() => true);
     mockEditorFocus.mockImplementation(() => {});
+    mockEditorSetSelection.mockImplementation(() => true);
     api.apiFetch.mockReset();
     api.apiFetch.mockResolvedValue(null);
     api.apiJSON.mockReset();
@@ -603,6 +616,58 @@ describe('EditorPage save flow', () => {
     );
     expect(screen.getByText('Please tighten this section.')).toBeInTheDocument();
     expect(screen.getAllByText('Selected sentence').length).toBeGreaterThan(0);
+  });
+
+  it('jumps to the quoted context when a comment quote is clicked', async () => {
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/comments') {
+        return Promise.resolve([
+          {
+            comment_id: 'cmt_1',
+            document_id: 1,
+            author_user_id: 1,
+            author: { user_id: 1, display_name: 'Owner' },
+            body: 'Please tighten this section.',
+            quoted_text: 'Selected sentence',
+            status: 'open',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            resolved_at: null,
+            resolved_by_user_id: null,
+          },
+        ]);
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByRole('button', { name: /comments/i }));
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /quoted text[\s\S]*selected sentence/i,
+      })
+    );
+
+    expect(mockEditorSetSelection).toHaveBeenCalledWith({ from: 4, to: 21 });
+    expect(mockEditorFocus).toHaveBeenCalled();
   });
 
   it('saves before navigating back to the documents list', async () => {

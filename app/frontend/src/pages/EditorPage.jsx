@@ -368,6 +368,32 @@ export default function EditorPage() {
     }
   }, [id]);
 
+  const handleJumpToCommentContext = useCallback((comment) => {
+    const quotedText = comment?.quoted_text?.trim();
+    if (!quotedText) {
+      return false;
+    }
+
+    const nextRange = editorRef.current?.findTextRange?.(quotedText);
+    if (!nextRange) {
+      setCommentsError('Quoted context was not found in the current document.');
+      return false;
+    }
+
+    setCommentsError('');
+    const nextSelection = {
+      text: quotedText,
+      from: nextRange.from,
+      to: nextRange.to,
+      direction: 'forward',
+    };
+    setSelection(nextSelection);
+    selectionRef.current = nextSelection;
+    liveSelectionRef.current = nextSelection;
+    editorRef.current?.setSelection?.(nextRange);
+    return true;
+  }, []);
+
   const syncRealtimeDocument = useCallback(
     ({
       nextContent,
@@ -2216,6 +2242,7 @@ export default function EditorPage() {
           onCreateComment={handleCreateComment}
           onResolveComment={handleResolveComment}
           onDeleteComment={handleDeleteComment}
+          onJumpToCommentContext={handleJumpToCommentContext}
           creating={commentCreateLoading}
           busyCommentId={busyCommentId}
         />

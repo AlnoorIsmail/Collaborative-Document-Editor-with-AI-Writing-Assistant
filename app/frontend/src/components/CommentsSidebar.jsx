@@ -25,6 +25,7 @@ export default function CommentsSidebar({
   onCreateComment,
   onResolveComment,
   onDeleteComment,
+  onJumpToCommentContext,
   creating = false,
   busyCommentId = null,
 }) {
@@ -92,7 +93,13 @@ export default function CommentsSidebar({
             {quotedText ? (
               <div className="comments-quoted-preview">
                 <span className="comments-quoted-label">Quoted text</span>
-                <p className="comments-quoted-text">{quotedText}</p>
+                <button
+                  type="button"
+                  className="comments-quoted-jump"
+                  onClick={() => onJumpToCommentContext?.({ quoted_text: quotedText })}
+                >
+                  <span className="comments-quoted-text">{quotedText}</span>
+                </button>
               </div>
             ) : (
               <div className="comments-sidebar-notice">
@@ -158,9 +165,16 @@ export default function CommentsSidebar({
                     </div>
 
                     {comment.quoted_text ? (
-                      <blockquote className="comments-quoted-block">
-                        {comment.quoted_text}
-                      </blockquote>
+                      <button
+                        type="button"
+                        className="comments-quoted-jump"
+                        onClick={() => onJumpToCommentContext?.(comment)}
+                      >
+                        <span className="comments-quoted-label">Quoted text</span>
+                        <span className="comments-quoted-block">
+                          {comment.quoted_text}
+                        </span>
+                      </button>
                     ) : null}
 
                     <p className="comments-thread-body">{comment.body}</p>
