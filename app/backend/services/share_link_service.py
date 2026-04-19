@@ -51,11 +51,17 @@ class ShareLinkService:
 
         expires_at = parse_utc_datetime(payload.expires_at)
         role = self.access_service.validate_role(payload.role)
+        if not payload.require_sign_in:
+            raise ApiError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="VALIDATION_ERROR",
+                message="Share links must require sign-in.",
+            )
         share_link = self.share_link_repository.create(
             document_id=access.document.id,
             token=secrets.token_urlsafe(18),
             role=role,
-            require_sign_in=payload.require_sign_in,
+            require_sign_in=True,
             expires_at=expires_at,
             created_by=current_user.id,
         )
@@ -66,7 +72,7 @@ class ShareLinkService:
         self,
         *,
         token: str,
-        current_user: User = None,
+        current_user: User,
     ) -> ShareLinkRedeemResponse:
         share_link = self.share_link_repository.get_by_token(token)
         if share_link is None:
@@ -90,33 +96,26 @@ class ShareLinkService:
                 message="Share link has expired.",
             )
 
-        if share_link.require_sign_in and current_user is None:
-            raise ApiError(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                error_code="UNAUTHORIZED",
-                message="Authentication is required to redeem this share link.",
-            )
-
-        if current_user is not None:
-            permission = self.permission_repository.get_by_document_and_user(
+        permission = self.permission_repository.get_by_document_and_user(
+            document_id=share_link.document_id,
+            user_id=current_user.id,
+        )
+        if permission is None:
+            self.permission_repository.create(
                 document_id=share_link.document_id,
                 user_id=current_user.id,
+                grantee_type="user",
+                role=share_link.role,
+                ai_allowed=self._ai_allowed_for_role(share_link.role),
             )
-            if permission is None:
-                self.permission_repository.create(
-                    document_id=share_link.document_id,
-                    user_id=current_user.id,
-                    grantee_type="user",
-                    role=share_link.role,
-                    ai_allowed=False,
-                )
-            else:
-                self.permission_repository.update(
-                    permission,
-                    role=share_link.role,
-                    grantee_type="user",
-                )
-            self.share_link_repository.db.commit()
+        else:
+            self.permission_repository.update(
+                permission,
+                role=share_link.role,
+                grantee_type="user",
+                ai_allowed=self._ai_allowed_for_role(share_link.role),
+            )
+        self.share_link_repository.db.commit()
 
         return ShareLinkRedeemResponse(
             document_id=prefixed_id("doc", share_link.document_id),
@@ -157,3 +156,6 @@ class ShareLinkService:
             expires_at=utc_z(share_link.expires_at),
             revoked=share_link.revoked,
         )
+
+    def _ai_allowed_for_role(self, role: str) -> bool:
+        return role == "editor"

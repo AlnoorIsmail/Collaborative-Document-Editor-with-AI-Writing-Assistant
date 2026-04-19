@@ -5,7 +5,7 @@ class ShareLinkCreateRequest(BaseModel):
     document_id: str | int = Field(..., description="Document identifier for the shared document.")
     role: str = Field(..., description="Role granted when the link is redeemed.")
     require_sign_in: bool = Field(
-        ..., description="Whether the redeemer must already be authenticated."
+        ..., description="Whether the redeemer must already be authenticated. Assignment 2 baseline behavior requires this to be true."
     )
     expires_at: str = Field(..., description="UTC timestamp when the link should expire.")
 
@@ -18,7 +18,7 @@ class ShareLinkCreateResponse(BaseModel):
     token: str = Field(..., description="Opaque share-link token.")
     role: str = Field(..., description="Role granted when the link is redeemed.")
     require_sign_in: bool = Field(
-        ..., description="Whether sign-in is required before redemption."
+        ..., description="Whether sign-in is required before redemption. This is always true for baseline-compliant share links."
     )
     expires_at: str = Field(..., description="UTC timestamp when the link expires.")
     revoked: bool = Field(..., description="Whether the share link has been revoked.")

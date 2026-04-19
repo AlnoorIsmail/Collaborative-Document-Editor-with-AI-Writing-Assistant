@@ -45,6 +45,8 @@ This project implements a React + FastAPI collaborative document editor for Assi
 - Server-side permission enforcement
 - Share by email with role assignment
 - Share links with expiration and revocation support
+- Share-link redemption requires an authenticated user
+- Shared editors receive AI access by default
 
 ### Realtime collaboration
 
@@ -70,6 +72,7 @@ This project implements a React + FastAPI collaborative document editor for Assi
 - Prompt rendering through a dedicated prompt builder
 - Provider abstraction behind a single integration seam
 - Per-document AI history UI and backend interaction audit log
+- Caller-specific `can_use_ai` surfaced in document responses so the frontend can honor backend access truth
 
 ## Quick Start
 
@@ -175,6 +178,20 @@ The auth model is:
 6. If refresh fails, the frontend clears auth state and sends the user back to login.
 
 This keeps the editing experience stable during token expiration without showing raw backend auth errors in normal use.
+
+## Sharing Rules
+
+- Invitation acceptance and share-link redemption derive AI access from the granted role.
+- Owners can always use AI when `ai_enabled` is on for the document.
+- Shared editors can use AI by default.
+- Viewers cannot run AI actions.
+- Share links always require sign-in before redemption.
+
+## Document API Notes
+
+- Document create, detail, list-summary, and metadata responses include `ai_enabled` and caller-specific `can_use_ai`.
+- `can_use_ai` is derived from the current caller's effective access, not just the document's role labels in the UI.
+- This lets the frontend distinguish between document-level AI disablement and collaborator-level AI denial.
 
 ## Realtime Collaboration Architecture
 

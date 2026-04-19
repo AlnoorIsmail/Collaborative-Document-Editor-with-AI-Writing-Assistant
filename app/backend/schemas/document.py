@@ -98,6 +98,9 @@ class DocumentSummaryResponse(BaseModel):
     owner_user_id: int = Field(..., description="Numeric owner user identifier.")
     role: str = Field(..., description="Current caller role for this document.")
     ai_enabled: bool = Field(..., description="Whether AI suggestions are enabled.")
+    can_use_ai: bool = Field(
+        ..., description="Whether the current caller can invoke AI for this document."
+    )
     line_spacing: float = Field(
         ..., description="Unitless line spacing used when rendering the document editor."
     )
@@ -120,6 +123,9 @@ class DocumentCreateResponse(BaseModel):
     owner_user_id: int = Field(..., description="Numeric owner user identifier.")
     role: str = Field(..., description="Current caller role for this document.")
     ai_enabled: bool = Field(..., description="Whether AI suggestions are enabled.")
+    can_use_ai: bool = Field(
+        ..., description="Whether the current caller can invoke AI for this document."
+    )
     line_spacing: float = Field(
         ..., description="Unitless line spacing used when rendering the document editor."
     )
@@ -142,6 +148,9 @@ class DocumentDetailResponse(BaseModel):
     owner_user_id: int = Field(..., description="Numeric owner user identifier.")
     role: str = Field(..., description="Current caller role for this document.")
     ai_enabled: bool = Field(..., description="Whether AI suggestions are enabled.")
+    can_use_ai: bool = Field(
+        ..., description="Whether the current caller can invoke AI for this document."
+    )
     line_spacing: float = Field(
         ..., description="Unitless line spacing used when rendering the document editor."
     )
@@ -159,6 +168,9 @@ class DocumentMetadataResponse(BaseModel):
     document_id: int = Field(..., description="Numeric document identifier.")
     title: str = Field(..., description="Current document title.")
     ai_enabled: bool = Field(..., description="Whether AI suggestions are enabled.")
+    can_use_ai: bool = Field(
+        ..., description="Whether the current caller can invoke AI for this document."
+    )
     line_spacing: float = Field(
         ..., description="Unitless line spacing used when rendering the document editor."
     )

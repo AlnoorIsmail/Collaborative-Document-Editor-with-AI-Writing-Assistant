@@ -120,6 +120,9 @@ describe('ShareModal', () => {
     render(<ShareModal docId="1" onClose={() => {}} />);
 
     await screen.findByText('Share link');
+    expect(
+      screen.getByText('Shared links always require sign-in before access is granted.')
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Create link' }));
 
     await waitFor(() => {
@@ -130,6 +133,14 @@ describe('ShareModal', () => {
         })
       );
     });
+
+    const [, requestOptions] = api.apiJSON.mock.calls.find(([path]) => path === '/share-links');
+    expect(JSON.parse(requestOptions.body)).toMatchObject({
+      document_id: '1',
+      role: 'viewer',
+      require_sign_in: true,
+    });
+    expect(typeof JSON.parse(requestOptions.body).expires_at).toBe('string');
 
     expect(screen.getByText(/\/share\/new-token/i)).toBeInTheDocument();
   });

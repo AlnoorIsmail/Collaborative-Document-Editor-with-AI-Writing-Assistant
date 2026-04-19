@@ -59,16 +59,20 @@ function truncateText(text, limit = 180) {
   return `${normalized.slice(0, limit).trim()}...`;
 }
 
-function getUnavailableMessage({ aiEnabled, role }) {
+function getUnavailableMessage({ aiEnabled, canUseAi, role }) {
   if (!aiEnabled) {
     return 'AI is disabled for this document.';
+  }
+
+  if (canUseAi) {
+    return '';
   }
 
   if (role === 'viewer' || role === 'commenter') {
     return 'Your role can view this document, but it cannot run AI actions.';
   }
 
-  return 'AI is not available for your current role.';
+  return 'AI is not available for your current access level.';
 }
 
 function parseSseBlock(block) {
@@ -386,6 +390,7 @@ export default function AISidebar({
   currentRevision,
   role,
   aiEnabled,
+  canUseAi,
   selection,
   hasUnsavedChanges,
   ensureSavedDocument,
@@ -435,7 +440,7 @@ export default function AISidebar({
   const actionsDropdownRef = useRef(null);
   const resizeStateRef = useRef(null);
 
-  const canUseAI = aiEnabled && (role === 'owner' || role === 'editor');
+  const canUseAI = Boolean(canUseAi);
   const canViewHistory = Boolean(documentId);
   const isBusy = isRunning || isApplying || isUndoing || isCancelling || isClearing;
   const isComposerDisabled = !canUseAI || isApplying || isUndoing;
@@ -733,7 +738,7 @@ export default function AISidebar({
 
   async function prepareRequest({ requireUndoBaseline = false } = {}) {
     if (!canUseAI) {
-      throw new Error(getUnavailableMessage({ aiEnabled, role }));
+      throw new Error(getUnavailableMessage({ aiEnabled, canUseAi, role }));
     }
 
     const { scopeType, selectedRange, selectedText, selectionSnapshot } = getScopePayload();
@@ -1862,7 +1867,7 @@ export default function AISidebar({
           <div className="ai-chat-panel">
             {!canUseAI && (
               <div className="ai-sidebar-notice ai-sidebar-notice-warning">
-                {getUnavailableMessage({ aiEnabled, role })}
+                {getUnavailableMessage({ aiEnabled, canUseAi, role })}
               </div>
             )}
 

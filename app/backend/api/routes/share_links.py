@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 
 from app.backend.api.deps import (
     get_current_authenticated_user,
-    get_optional_authenticated_user,
 )
 from app.backend.core.database import get_db
 from app.backend.models.user import User
@@ -35,7 +34,8 @@ def get_share_link_service(db: Session = Depends(get_db)) -> ShareLinkService:
     summary="Create a share link",
     description=(
         "Create a bearer-style share link that can grant the requested role until "
-        "it expires or is revoked."
+        "it expires or is revoked. Baseline-compliant share links always require "
+        "the redeemer to be signed in."
     ),
 )
 def create_share_link(
@@ -53,13 +53,13 @@ def create_share_link(
     response_model=ShareLinkRedeemResponse,
     summary="Redeem a share link",
     description=(
-        "Validate a share-link token and grant access when the token is still "
-        "active and satisfies its sign-in rules."
+        "Validate a share-link token for the authenticated user and grant access "
+        "when the token is still active."
     ),
 )
 def redeem_share_link(
     token: str,
-    current_user: User = Depends(get_optional_authenticated_user),
+    current_user: User = Depends(get_current_authenticated_user),
     share_link_service: ShareLinkService = Depends(get_share_link_service),
 ) -> ShareLinkRedeemResponse:
     return share_link_service.redeem_share_link(token=token, current_user=current_user)
