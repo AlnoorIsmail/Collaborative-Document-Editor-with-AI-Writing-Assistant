@@ -293,6 +293,30 @@ function createRemoteAwarenessExtension() {
   });
 }
 
+function buildSendableStepPayload(editor, lineSpacing, batchMetadata) {
+  const pending = sendableSteps(editor.state);
+  if (!pending || pending.steps.length === 0) {
+    return null;
+  }
+
+  return {
+    batchId: batchMetadata?.batchId ?? makeBatchId(),
+    version: pending.version,
+    clientId: String(pending.clientID),
+    steps: pending.steps.map((step) => step.toJSON()),
+    content: editor.getHTML(),
+    lineSpacing,
+    affectedRange: batchMetadata?.affectedRange ?? {
+      start: editor.state.selection.from,
+      end: editor.state.selection.to,
+    },
+    candidateContentSnapshot: batchMetadata?.candidateContentSnapshot ?? '',
+    exactTextSnapshot: batchMetadata?.exactTextSnapshot ?? '',
+    prefixContext: batchMetadata?.prefixContext ?? '',
+    suffixContext: batchMetadata?.suffixContext ?? '',
+  };
+}
+
 // Toolbar button component
 function ToolbarButton({ onClick, active, disabled, title, children }) {
   return (
@@ -492,6 +516,7 @@ const TiptapEditor = forwardRef(function TiptapEditor(
   const selectionHandlerRef = useRef(onSelectionUpdate);
   const conflictHighlightsRef = useRef(conflictHighlights);
   const remoteAwarenessRef = useRef(remoteAwareness);
+  const lastEmittedContentRef = useRef(content || '');
   const highlightSignatureRef = useRef('');
   const awarenessSignatureRef = useRef('');
 
@@ -538,7 +563,9 @@ const TiptapEditor = forwardRef(function TiptapEditor(
       const pending = collaborationEnabled ? sendableSteps(editor.state) : null;
       const batchMetadata = !isRemote ? buildStepBatchMetadata(transaction) : null;
       if (transaction.docChanged || isRemote) {
-        changeHandlerRef.current?.(editor.getHTML(), {
+        const nextHtml = editor.getHTML();
+        lastEmittedContentRef.current = nextHtml;
+        changeHandlerRef.current?.(nextHtml, {
           isRemote,
           hasPendingCollaborationSteps: Boolean(pending?.steps?.length),
           collaborationVersion: collaborationEnabled ? getVersion(editor.state) : collaborationVersion,
@@ -552,22 +579,10 @@ const TiptapEditor = forwardRef(function TiptapEditor(
           const signature = `${pending.version}:${pending.steps.length}:${editor.getHTML().length}`;
           if (signature !== lastSentSignatureRef.current) {
             lastSentSignatureRef.current = signature;
-            sendableStepsHandlerRef.current?.({
-              batchId: batchMetadata?.batchId ?? makeBatchId(),
-              version: pending.version,
-              clientId: String(pending.clientID),
-              steps: pending.steps.map((step) => step.toJSON()),
-              content: editor.getHTML(),
-              lineSpacing: lineSpacingRef.current,
-              affectedRange: batchMetadata?.affectedRange ?? {
-                start: editor.state.selection.from,
-                end: editor.state.selection.to,
-              },
-              candidateContentSnapshot: batchMetadata?.candidateContentSnapshot ?? '',
-              exactTextSnapshot: batchMetadata?.exactTextSnapshot ?? '',
-              prefixContext: batchMetadata?.prefixContext ?? '',
-              suffixContext: batchMetadata?.suffixContext ?? '',
-            });
+            const payload = buildSendableStepPayload(editor, lineSpacingRef.current, batchMetadata);
+            if (payload) {
+              sendableStepsHandlerRef.current?.(payload);
+            }
           }
         }
       }
@@ -707,9 +722,29 @@ const TiptapEditor = forwardRef(function TiptapEditor(
       }
 
       const parsedSteps = steps.map((step) => Step.fromJSON(editor.schema, step));
+      const previousSelection = {
+        from: editor.state.selection.from,
+        to: editor.state.selection.to,
+      };
+      const hadFocus = Boolean(editor.isFocused || editor.view.hasFocus());
       applyingRemoteRef.current = true;
       const transaction = receiveTransaction(editor.state, parsedSteps, clientIds);
+      const selectionWasCollapsed = previousSelection.from === previousSelection.to;
+      const nextSelection = hadFocus
+        ? normalizeSelectionRange(
+          transaction.doc,
+          transaction.mapping.map(previousSelection.from, -1),
+          transaction.mapping.map(previousSelection.to, 1)
+        )
+        : null;
       editor.view.dispatch(transaction);
+      if (nextSelection) {
+        editor.commands.setTextSelection(
+          selectionWasCollapsed
+            ? { from: nextSelection.from, to: nextSelection.from }
+            : nextSelection
+        );
+      }
       return {
         applied: true,
         html: editor.getHTML(),
@@ -721,6 +756,19 @@ const TiptapEditor = forwardRef(function TiptapEditor(
         return collaborationVersion;
       }
       return getVersion(editor.state);
+    },
+    getPendingStepBatch() {
+      if (!editor || !collaborationEnabled) {
+        return null;
+      }
+      return buildSendableStepPayload(editor, lineSpacingRef.current, null);
+    },
+    hasPendingCollaborationSteps() {
+      if (!editor || !collaborationEnabled) {
+        return false;
+      }
+      const pending = sendableSteps(editor.state);
+      return Boolean(pending?.steps?.length);
     },
     setConflictHighlights(nextHighlights) {
       if (!editor) {
@@ -750,9 +798,15 @@ const TiptapEditor = forwardRef(function TiptapEditor(
 
     const currentContent = editor.getHTML();
     if (content === currentContent) {
+      lastEmittedContentRef.current = content;
       return;
     }
 
+    if (content === lastEmittedContentRef.current) {
+      return;
+    }
+
+    lastEmittedContentRef.current = content || '';
     editor.commands.setContent(content || '', false);
   }, [content, editor]);
 

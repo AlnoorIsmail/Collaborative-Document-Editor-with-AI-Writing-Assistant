@@ -579,6 +579,7 @@ html, body {
   color: #3730a3;
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .presence-pill-inline {
@@ -1800,7 +1801,115 @@ html, body {
   display: none;
 }
 
+@media (max-width: 1480px) {
+  .navbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    height: auto;
+    min-height: 96px;
+    padding: 10px 14px;
+    row-gap: 10px;
+    column-gap: 12px;
+  }
+
+  .navbar-left {
+    grid-column: 1;
+    grid-row: 1;
+    align-items: flex-start;
+  }
+
+  .navbar-title-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "title"
+      "presence";
+    align-items: start;
+    row-gap: 8px;
+  }
+
+  .navbar-title,
+  .navbar-title-input {
+    grid-area: title;
+  }
+
+  .navbar-center {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    align-self: start;
+  }
+
+  .navbar-presence-summary {
+    grid-area: presence;
+    max-width: 100%;
+    overflow: visible;
+  }
+
+  .presence-pill-group-inline {
+    width: auto;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .navbar-right {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding-bottom: 2px;
+  }
+
+  .navbar-right::-webkit-scrollbar,
+  .editor-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .navbar-right .btn {
+    flex-shrink: 0;
+  }
+
+  .navbar .btn-secondary {
+    padding: 5px 12px;
+  }
+
+  .navbar-user {
+    display: none;
+  }
+
+  .navbar-title,
+  .navbar-title-input {
+    max-width: min(52vw, 420px);
+  }
+
+  .presence-pill-inline-message {
+    max-width: 220px;
+  }
+}
+
 @media (max-width: 1080px) {
+  :root {
+    --navbar-height: 96px;
+  }
+
+  .editor-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .toolbar-group,
+  .toolbar-line-spacing,
+  .toolbar-divider {
+    flex-shrink: 0;
+  }
+
   .docs-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1851,6 +1960,36 @@ html, body {
 }
 
 @media (max-width: 900px) {
+  :root {
+    --navbar-height: 122px;
+  }
+
+  .navbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+
+  .navbar-left {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .navbar-center {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .navbar-right {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .navbar-title,
+  .navbar-title-input {
+    max-width: min(52vw, 280px);
+  }
+
   .docs-header {
     padding: 0 18px;
   }
@@ -1861,6 +2000,28 @@ html, body {
 }
 
 @media (max-width: 720px) {
+  :root {
+    --navbar-height: 128px;
+  }
+
+  .navbar {
+    padding: 10px 12px;
+  }
+
+  .navbar-title-row {
+    gap: 8px;
+  }
+
+  .navbar-title,
+  .navbar-title-input {
+    max-width: min(56vw, 220px);
+  }
+
+  .navbar .btn-secondary,
+  .navbar .btn-ghost {
+    padding-inline: 10px;
+  }
+
   .docs-grid {
     grid-template-columns: 1fr;
   }

@@ -199,7 +199,9 @@ export default function EditorPage() {
   const selectionPublishTimerRef = useRef(null);
   const queuedSelectionPayloadRef = useRef(null);
   const lastSentSelectionSignatureRef = useRef('');
+  const hasPublishedSelectionAwarenessRef = useRef(false);
   const pendingStepBatchesRef = useRef([]);
+  const inflightStepBatchRef = useRef(null);
   const reportedConflictKeysRef = useRef(new Set());
   const pendingFocusRestoreRef = useRef(null);
 
@@ -465,6 +467,7 @@ export default function EditorPage() {
       selectionPublishTimerRef.current = null;
     }
     pendingStepBatchesRef.current = [];
+    inflightStepBatchRef.current = null;
     reportedConflictKeysRef.current = new Set();
   }, [clearLastAiUndo, id]);
 
@@ -626,6 +629,26 @@ export default function EditorPage() {
     }
   }, [performSaveContent]);
 
+  const syncLiveCollaborationSaveState = useCallback(() => {
+    const hasPendingLocalSteps = Boolean(inflightStepBatchRef.current)
+      || Boolean(editorRef.current?.hasPendingCollaborationSteps?.());
+
+    isDirtyRef.current = hasPendingLocalSteps;
+    setSaveStatus(hasPendingLocalSteps ? 'unsaved' : 'saved');
+
+    if (hasPendingLocalSteps) {
+      writeOfflineDraft(id, {
+        content: contentRef.current,
+        lineSpacing: lineSpacingRef.current,
+        revision: revisionRef.current,
+        updatedAt: Date.now(),
+      });
+      return;
+    }
+
+    clearOfflineDraft(id);
+  }, [id]);
+
   const broadcastFullSnapshotUpdate = useCallback((saveSource = 'manual') => {
     if (
       typeof WebSocket === 'undefined'
@@ -694,7 +717,12 @@ export default function EditorPage() {
   }, [id, saveContent]);
 
   useEffect(() => {
-    if (role === 'viewer' || !doc || saveStatus !== 'unsaved') {
+    if (
+      role === 'viewer'
+      || !doc
+      || saveStatus !== 'unsaved'
+      || (collabEnabled && realtimeStatus === 'connected')
+    ) {
       return undefined;
     }
 
@@ -703,11 +731,11 @@ export default function EditorPage() {
     }, AUTO_SAVE_DELAY);
 
     return () => window.clearTimeout(timer);
-  }, [content, doc, lineSpacing, role, saveContent, saveStatus]);
+  }, [collabEnabled, content, doc, lineSpacing, realtimeStatus, role, saveContent, saveStatus]);
 
   useEffect(() => {
     function handleUnload() {
-      if (isDirtyRef.current) {
+      if (isDirtyRef.current && !(collabEnabled && realtimeStatus === 'connected')) {
         const token = localStorage.getItem('access_token');
         if (!token) {
           return;
@@ -731,7 +759,7 @@ export default function EditorPage() {
     }
     window.addEventListener('beforeunload', handleUnload);
     return () => window.removeEventListener('beforeunload', handleUnload);
-  }, [id]);
+  }, [collabEnabled, id, realtimeStatus]);
 
   function handleContentChange(newContent, meta = {}) {
     const isRemote = Boolean(meta.isRemote);
@@ -782,6 +810,10 @@ export default function EditorPage() {
       to: 0,
       direction: 'forward',
     };
+
+    if (nextSelection && Number.isFinite(Number(nextSelection.from)) && Number.isFinite(Number(nextSelection.to))) {
+      hasPublishedSelectionAwarenessRef.current = true;
+    }
 
     if (nextSelection?.text?.trim()) {
       setSelection(nextSelection);
@@ -856,6 +888,45 @@ export default function EditorPage() {
     }, SELECTION_AWARENESS_DELAY);
   }
 
+  useEffect(() => {
+    if (!hasPublishedSelectionAwarenessRef.current) {
+      return;
+    }
+
+    const currentSelection = liveSelectionRef.current;
+    const from = Number(currentSelection?.from);
+    const to = Number(currentSelection?.to);
+    if (
+      !Number.isFinite(from)
+      || !Number.isFinite(to)
+      || typeof WebSocket === 'undefined'
+      || socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    if (selectionPublishTimerRef.current) {
+      window.clearTimeout(selectionPublishTimerRef.current);
+      selectionPublishTimerRef.current = null;
+    }
+
+    queuedSelectionPayloadRef.current = null;
+    const nextPayload = {
+      type: 'selection_update',
+      from,
+      to,
+      direction: currentSelection?.direction === 'backward' ? 'backward' : 'forward',
+      collab_version: collabVersionRef.current ?? 0,
+    };
+    const payloadSignature = `${nextPayload.from}:${nextPayload.to}:${nextPayload.direction}:${nextPayload.collab_version}`;
+    if (payloadSignature === lastSentSelectionSignatureRef.current) {
+      return;
+    }
+
+    lastSentSelectionSignatureRef.current = payloadSignature;
+    socketRef.current.send(JSON.stringify(nextPayload));
+  }, [collabVersion, realtimeStatus]);
+
   const handleSendableSteps = useCallback((payload) => {
     if (
       role === 'viewer'
@@ -865,7 +936,15 @@ export default function EditorPage() {
       return;
     }
 
+    if (inflightStepBatchRef.current) {
+      return;
+    }
+
     registerPendingStepBatch(payload);
+    inflightStepBatchRef.current = {
+      batchId: payload.batchId,
+      version: payload.version,
+    };
 
     socketRef.current.send(
       JSON.stringify({
@@ -884,6 +963,22 @@ export default function EditorPage() {
       })
     );
   }, [registerPendingStepBatch, role]);
+
+  const flushPendingCollaborationSteps = useCallback(() => {
+    if (
+      inflightStepBatchRef.current
+      || role === 'viewer'
+      || typeof WebSocket === 'undefined'
+      || socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    const nextPayload = editorRef.current?.getPendingStepBatch?.();
+    if (nextPayload) {
+      handleSendableSteps(nextPayload);
+    }
+  }, [handleSendableSteps, role]);
 
   function handleLineSpacingChange(nextLineSpacing) {
     clearLastAiUndo();
@@ -1318,10 +1413,11 @@ export default function EditorPage() {
         return;
       }
 
-      setPresence([]);
-      setAwareness([]);
-      lastSentSelectionSignatureRef.current = '';
-      setRealtimeStatus(reconnecting ? 'reconnecting' : 'connecting');
+        setPresence([]);
+        setAwareness([]);
+        lastSentSelectionSignatureRef.current = '';
+        inflightStepBatchRef.current = null;
+        setRealtimeStatus(reconnecting ? 'reconnecting' : 'connecting');
       if (!reconnecting) {
         setRealtimeMessage('');
       }
@@ -1430,6 +1526,7 @@ export default function EditorPage() {
             const nextCollabVersion = Number(payload.collab_version) || 0;
             if (payload.collab_reset) {
               setAwareness([]);
+              inflightStepBatchRef.current = null;
             }
 
             if (isOwnUpdate || !isDirtyRef.current) {
@@ -1482,6 +1579,9 @@ export default function EditorPage() {
               setCollabVersion(payload.collab_version);
               collabVersionRef.current = payload.collab_version;
             }
+            if (payload.actor_user_id === userRef.current?.user_id) {
+              syncLiveCollaborationSaveState();
+            }
             if (payload.actor_user_id !== userRef.current?.user_id && payload.actor_display_name) {
               setRealtimeMessage(`${payload.actor_display_name} updated document formatting.`);
             }
@@ -1500,6 +1600,9 @@ export default function EditorPage() {
 
             if (isOwnStepBatch && remoteBatch?.batch_id) {
               clearPendingStepBatch(remoteBatch.batch_id);
+              if (inflightStepBatchRef.current?.batchId === remoteBatch.batch_id) {
+                inflightStepBatchRef.current = null;
+              }
             }
 
             if (!isOwnStepBatch && remoteBatch?.affected_range) {
@@ -1531,6 +1634,11 @@ export default function EditorPage() {
               collabVersionRef.current = nextCollabVersion;
             }
 
+            if (isOwnStepBatch) {
+              flushPendingCollaborationSteps();
+              syncLiveCollaborationSaveState();
+            }
+
             if (
               payload.actor_user_id !== userRef.current?.user_id
               && !isDirtyRef.current
@@ -1544,6 +1652,7 @@ export default function EditorPage() {
           if (payload.type === 'steps_resync') {
             const nextCollabVersion = Number(payload.collab_version) || 0;
             setAwareness([]);
+            inflightStepBatchRef.current = null;
             if (payload.full_reset) {
               pendingStepBatchesRef.current = [];
             }
@@ -1575,6 +1684,8 @@ export default function EditorPage() {
                 collabVersionRef.current = nextCollabVersion;
               }
             }
+            flushPendingCollaborationSteps();
+            syncLiveCollaborationSaveState();
             void loadDocumentConflicts();
             setRealtimeMessage('Realtime re-synced with the latest collaboration state.');
             return;
@@ -1626,6 +1737,7 @@ export default function EditorPage() {
           setPresence([]);
           setAwareness([]);
           lastSentSelectionSignatureRef.current = '';
+          inflightStepBatchRef.current = null;
 
           setRealtimeStatus('reconnecting');
           setRealtimeMessage(
@@ -1642,16 +1754,18 @@ export default function EditorPage() {
         };
 
         nextSocket.onerror = () => {
-          if (!cancelled) {
-            setPresence([]);
-            setAwareness([]);
-            setRealtimeMessage('Realtime hit a network error.');
-          }
-        };
+        if (!cancelled) {
+          setPresence([]);
+          setAwareness([]);
+          inflightStepBatchRef.current = null;
+          setRealtimeMessage('Realtime hit a network error.');
+        }
+      };
       } catch (nextError) {
         if (!cancelled) {
           setPresence([]);
           setAwareness([]);
+          inflightStepBatchRef.current = null;
           setCollabEnabled(false);
           if (collabVersionRef.current === 0) {
             setCollabVersion(0);
@@ -1679,12 +1793,13 @@ export default function EditorPage() {
       }
       setPresence([]);
       setAwareness([]);
+      inflightStepBatchRef.current = null;
       if (selectionPublishTimerRef.current) {
         window.clearTimeout(selectionPublishTimerRef.current);
         selectionPublishTimerRef.current = null;
       }
     };
-  }, [clearPendingStepBatch, doc?.document_id, id, loadDocumentConflicts, reportOverlapConflict, syncRealtimeDocument, user?.id, user?.user_id]);
+  }, [clearPendingStepBatch, doc?.document_id, flushPendingCollaborationSteps, id, loadDocumentConflicts, reportOverlapConflict, syncLiveCollaborationSaveState, syncRealtimeDocument, user?.id, user?.user_id]);
 
   useEffect(() => {
     if (realtimeStatus !== 'connected' || !socketRef.current) {
