@@ -10,6 +10,7 @@ vi.mock('../api', async (importOriginal) => {
   return {
     ...actual,
     apiFetch: vi.fn(),
+    apiJSON: vi.fn(),
   };
 });
 
@@ -37,6 +38,7 @@ describe('RegisterPage', () => {
     vi.clearAllMocks();
     localStorage.clear();
     document.title = 'frontend';
+    api.apiJSON.mockResolvedValue({ available: true, normalized_username: 'alice' });
   });
 
   it('renders name, email, and password fields', () => {
@@ -77,7 +79,7 @@ describe('RegisterPage', () => {
     expect(api.apiFetch).not.toHaveBeenCalled();
   });
 
-  it('submits with display_name field, not name', async () => {
+  it('submits with display_name and username fields, not name', async () => {
     api.apiFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ access_token: 'tok', refresh_token: 'ref' }),
@@ -93,8 +95,24 @@ describe('RegisterPage', () => {
       const body = JSON.parse(options.body);
       expect(path).toBe('/auth/register');
       expect(body).toHaveProperty('display_name', 'Alice');
+      expect(body).toHaveProperty('username', 'Alice');
       expect(body).not.toHaveProperty('name');
     });
+  });
+
+  it('shows duplicate-username feedback after typing settles', async () => {
+    api.apiJSON.mockResolvedValue({
+      available: false,
+      normalized_username: 'alice',
+    });
+    renderRegisterPage();
+
+    fireEvent.change(screen.getByLabelText(/^username$/i), { target: { value: 'Alice' } });
+
+    await waitFor(() =>
+      expect(api.apiJSON).toHaveBeenCalledWith('/auth/username-availability?username=Alice')
+    );
+    expect(screen.getByText('This username is already taken.')).toBeInTheDocument();
   });
 
   it('maps duplicate-email responses to the email field', async () => {
@@ -113,6 +131,24 @@ describe('RegisterPage', () => {
       expect(screen.getByText('A user with this email already exists.')).toBeInTheDocument()
     );
     expect(emailInput).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('maps duplicate-username responses to the username field', async () => {
+    api.apiFetch.mockResolvedValue({
+      ok: false,
+      json: async () => ({ message: 'A user with this username already exists.' }),
+    });
+    renderRegisterPage();
+    const nameInput = screen.getByLabelText(/^username$/i);
+    fireEvent.change(nameInput, { target: { value: 'Alice' } });
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'alice@example.com' } });
+    fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText('This username is already taken.')).toBeInTheDocument()
+    );
+    expect(nameInput).toHaveAttribute('aria-invalid', 'true');
   });
 
   it('opens sign in on the first click even when validation appears on blur', async () => {

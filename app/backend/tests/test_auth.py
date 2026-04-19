@@ -61,6 +61,7 @@ def test_register_success() -> None:
         json={
             "email": "alice@example.com",
             "display_name": "Alice",
+            "username": "Alice",
             "password": "strong-password",
         },
     )
@@ -79,6 +80,7 @@ def test_duplicate_register_rejected() -> None:
     payload = {
         "email": "alice@example.com",
         "display_name": "Alice",
+        "username": "Alice",
         "password": "strong-password",
     }
 
@@ -94,11 +96,116 @@ def test_duplicate_register_rejected() -> None:
     }
 
 
+def test_duplicate_username_register_rejected() -> None:
+    client = create_test_client()
+
+    first_response = client.post(
+        "/v1/auth/register",
+        json={
+            "email": "alice@example.com",
+            "display_name": "Alice",
+            "username": "Alice",
+            "password": "strong-password",
+        },
+    )
+    second_response = client.post(
+        "/v1/auth/register",
+        json={
+            "email": "alice2@example.com",
+            "display_name": "Alice Two",
+            "username": "alice",
+            "password": "strong-password",
+        },
+    )
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 409
+    assert second_response.json() == {
+        "error_code": "CONFLICT",
+        "message": "A user with this username already exists.",
+        "retryable": False,
+    }
+
+
+def test_normalized_duplicate_username_register_rejected() -> None:
+    client = create_test_client()
+
+    first_response = client.post(
+        "/v1/auth/register",
+        json={
+            "email": "alice@example.com",
+            "display_name": "Alice",
+            "username": "al-noor",
+            "password": "strong-password",
+        },
+    )
+    second_response = client.post(
+        "/v1/auth/register",
+        json={
+            "email": "alice2@example.com",
+            "display_name": "Alice Two",
+            "username": "al_noor",
+            "password": "strong-password",
+        },
+    )
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 409
+    assert second_response.json() == {
+        "error_code": "CONFLICT",
+        "message": "A user with this username already exists.",
+        "retryable": False,
+    }
+
+
+def test_username_availability_reports_taken_after_normalization() -> None:
+    client = create_test_client()
+
+    register_response = client.post(
+        "/v1/auth/register",
+        json={
+            "email": "alice@example.com",
+            "display_name": "Alice",
+            "username": "Alice",
+            "password": "strong-password",
+        },
+    )
+    availability_response = client.get(
+        "/v1/auth/username-availability",
+        params={"username": "alice"},
+    )
+
+    assert register_response.status_code == 201
+    assert availability_response.status_code == 200
+    assert availability_response.json() == {
+        "username": "alice",
+        "normalized_username": "alice",
+        "available": False,
+    }
+
+
+def test_username_availability_reports_available_for_fresh_username() -> None:
+    client = create_test_client()
+
+    response = client.get(
+        "/v1/auth/username-availability",
+        params={"username": "new_user"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "username": "new_user",
+        "normalized_username": "new_user",
+        "available": True,
+    }
+
+
 def test_login_success() -> None:
     client = create_test_client()
     register_payload = {
         "email": "alice@example.com",
         "display_name": "Alice",
+        "username": "Alice",
         "password": "strong-password",
     }
 
@@ -146,6 +253,7 @@ def test_login_rejects_wrong_password() -> None:
         json={
             "email": "alice@example.com",
             "display_name": "Alice",
+            "username": "Alice",
             "password": "strong-password",
         },
     )
@@ -170,6 +278,7 @@ def test_refresh_rotates_session() -> None:
         json={
             "email": "alice@example.com",
             "display_name": "Alice",
+            "username": "Alice",
             "password": "strong-password",
         },
     )
@@ -215,6 +324,7 @@ def test_me_returns_current_user_with_valid_auth() -> None:
         json={
             "email": "alice@example.com",
             "display_name": "Alice",
+            "username": "Alice",
             "password": "strong-password",
         },
     )

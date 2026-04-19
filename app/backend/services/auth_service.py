@@ -24,6 +24,7 @@ from app.backend.schemas.auth import (
     RefreshResponse,
     RegisterResponse,
     TokenPairResponse,
+    UsernameAvailabilityResponse,
 )
 
 
@@ -52,7 +53,7 @@ class AuthService:
                 message="A user with this email already exists.",
             )
 
-        resolved_username = self._resolve_unique_username(
+        resolved_username = self._resolve_username(
             requested_username=username,
             display_name=display_name,
             email=normalized_email,
@@ -172,6 +173,14 @@ class AuthService:
             account_status="active",
         )
 
+    def check_username_availability(self, *, username: str) -> UsernameAvailabilityResponse:
+        normalized_username = normalize_username_seed(username)
+        return UsernameAvailabilityResponse(
+            username=username.strip(),
+            normalized_username=normalized_username,
+            available=self.user_repository.get_by_username(normalized_username) is None,
+        )
+
     def _issue_token_pair(self, user_id: int) -> TokenPairResponse:
         refresh_token_id = generate_refresh_token_id()
         refresh_expires_at = utc_now() + timedelta(
@@ -196,7 +205,7 @@ class AuthService:
             refresh_token_expires_in=settings.refresh_token_expire_days * 24 * 60 * 60,
         )
 
-    def _resolve_unique_username(
+    def _resolve_username(
         self,
         *,
         requested_username: str | None,
@@ -204,15 +213,12 @@ class AuthService:
         email: str,
     ) -> str:
         seed = requested_username or display_name or email.split("@", 1)[0]
-        base_username = normalize_username_seed(seed)
-        candidate = base_username
-        suffix = 1
+        normalized_username = normalize_username_seed(seed)
+        if self.user_repository.get_by_username(normalized_username):
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                error_code="CONFLICT",
+                message="A user with this username already exists.",
+            )
 
-        while self.user_repository.get_by_username(candidate) is not None:
-            candidate = f"{base_username}_{suffix}"
-            if len(candidate) > 32:
-                trimmed_base = base_username[: max(1, 32 - len(str(suffix)) - 1)].rstrip("_")
-                candidate = f"{trimmed_base}_{suffix}"
-            suffix += 1
-
-        return candidate
+        return normalized_username

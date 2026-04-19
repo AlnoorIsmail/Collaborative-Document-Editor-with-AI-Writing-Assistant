@@ -72,6 +72,16 @@ class RegisterResponse(BaseModel):
     created_at: str = Field(..., description="ISO-8601 UTC account creation timestamp.")
 
 
+class UsernameAvailabilityResponse(BaseModel):
+    username: str = Field(..., description="Original username input.")
+    normalized_username: str = Field(
+        ..., description="Normalized username used for uniqueness checks."
+    )
+    available: bool = Field(
+        ..., description="Whether the normalized username can be registered."
+    )
+
+
 class TokenPairResponse(BaseModel):
     access_token: str = Field(..., description="Short-lived JWT bearer token.")
     refresh_token: str = Field(

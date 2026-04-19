@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { apiFetch, getErrorMessage } from '../api';
+import { apiFetch, apiJSON, getErrorMessage } from '../api';
 import {
   getRegisterFieldErrors,
   normalizeEmail,
@@ -26,6 +26,9 @@ const INITIAL_ERRORS = {
   password: '',
 };
 
+const USERNAME_TAKEN_MESSAGE = 'This username is already taken.';
+const USERNAME_CHECK_DELAY_MS = 350;
+
 export default function RegisterPage() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -34,6 +37,8 @@ export default function RegisterPage() {
   const [fieldErrors, setFieldErrors] = useState(INITIAL_ERRORS);
   const [bannerError, setBannerError] = useState('');
   const [loading, setLoading] = useState(false);
+  const usernameCheckRequestIdRef = useRef(0);
+  const usernameCheckTimerRef = useRef(null);
   const navigate = useNavigate();
   const location = useLocation();
   usePageTitle(buildPageTitle('Create account'));
@@ -122,6 +127,7 @@ export default function RegisterPage() {
         method: 'POST',
         body: JSON.stringify({
           display_name: name.trim(),
+          username: name.trim(),
           email: normalizedEmail,
           password,
         }),
@@ -134,8 +140,8 @@ export default function RegisterPage() {
           return;
         }
 
-        if (res.status === 409) {
-          setFieldError('name', 'This username is already taken.');
+        if (message === 'A user with this username already exists.') {
+          setFieldError('name', USERNAME_TAKEN_MESSAGE);
           return;
         }
 
@@ -164,6 +170,55 @@ export default function RegisterPage() {
   const nameErrorId = 'register-name-error';
   const emailErrorId = 'register-email-error';
   const passwordErrorId = 'register-password-error';
+
+  useEffect(() => {
+    const trimmedName = name.trim();
+    const validationError = validateUsernameField(trimmedName, { required: true });
+
+    usernameCheckRequestIdRef.current += 1;
+    const requestId = usernameCheckRequestIdRef.current;
+
+    if (usernameCheckTimerRef.current) {
+      window.clearTimeout(usernameCheckTimerRef.current);
+      usernameCheckTimerRef.current = null;
+    }
+
+    if (!trimmedName || validationError) {
+      if (fieldErrors.name === USERNAME_TAKEN_MESSAGE) {
+        setFieldError('name', touched.name ? validationError : '');
+      }
+      return undefined;
+    }
+
+    usernameCheckTimerRef.current = window.setTimeout(async () => {
+      try {
+        const availability = await apiJSON(
+          `/auth/username-availability?username=${encodeURIComponent(trimmedName)}`
+        );
+
+        if (usernameCheckRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        setFieldError('name', availability.available ? '' : USERNAME_TAKEN_MESSAGE);
+      } catch {
+        if (usernameCheckRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        if (fieldErrors.name === USERNAME_TAKEN_MESSAGE) {
+          setFieldError('name', '');
+        }
+      }
+    }, USERNAME_CHECK_DELAY_MS);
+
+    return () => {
+      if (usernameCheckTimerRef.current) {
+        window.clearTimeout(usernameCheckTimerRef.current);
+        usernameCheckTimerRef.current = null;
+      }
+    };
+  }, [fieldErrors.name, name, touched.name]);
 
   return (
     <div className="auth-page">

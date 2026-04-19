@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.backend.api.deps import get_auth_service, get_current_authenticated_user
 from app.backend.models.user import User
@@ -12,6 +12,7 @@ from app.backend.schemas.auth import (
     RefreshTokenRequest,
     RegisterRequest,
     RegisterResponse,
+    UsernameAvailabilityResponse,
 )
 from app.backend.services.auth_service import AuthService
 
@@ -35,6 +36,19 @@ def register(
         username=payload.username,
         password=payload.password,
     )
+
+
+@router.get(
+    "/username-availability",
+    response_model=UsernameAvailabilityResponse,
+    summary="Check whether a username is available",
+    description="Normalize a candidate username and report whether it is already taken.",
+)
+def check_username_availability(
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    username: str = Query(..., min_length=1, max_length=64),
+) -> UsernameAvailabilityResponse:
+    return auth_service.check_username_availability(username=username)
 
 
 @router.post(
