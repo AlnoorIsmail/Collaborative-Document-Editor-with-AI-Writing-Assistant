@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import React, { forwardRef, useImperativeHandle, useState } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,6 +6,9 @@ import EditorPage from '../pages/EditorPage';
 import * as api from '../api';
 
 const originalWebSocket = globalThis.WebSocket;
+const mockEditorCaptureViewState = vi.fn(() => null);
+const mockEditorRestoreViewState = vi.fn(() => true);
+const mockEditorFocus = vi.fn();
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal();
@@ -68,7 +71,15 @@ vi.mock('../components/TiptapEditor', () => ({
       getCollaborationVersion() {
         return currentVersion;
       },
-      focus() {},
+      focus() {
+        mockEditorFocus();
+      },
+      getViewState() {
+        return mockEditorCaptureViewState();
+      },
+      restoreViewState(snapshot) {
+        return mockEditorRestoreViewState(snapshot);
+      },
     }), [currentContent, currentVersion, onChange]);
 
     React.useEffect(() => {
@@ -341,6 +352,9 @@ class MockWebSocket {
 describe('EditorPage save flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEditorCaptureViewState.mockImplementation(() => null);
+    mockEditorRestoreViewState.mockImplementation(() => true);
+    mockEditorFocus.mockImplementation(() => {});
     api.apiFetch.mockReset();
     api.apiFetch.mockResolvedValue(null);
     api.apiJSON.mockReset();
@@ -2536,7 +2550,7 @@ describe('EditorPage save flow', () => {
       });
     });
     await waitFor(() => {
-      expect(screen.getByText(/^Live:\s*You$/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Live:\s*You$/i })).toBeInTheDocument();
     });
 
     const socket = MockWebSocket.instances[0];
@@ -2571,8 +2585,14 @@ describe('EditorPage save flow', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/editor typing…/i)).toBeInTheDocument();
+      expect(screen.queryByText(/editor typing…/i)).not.toBeInTheDocument();
     });
+
+    fireEvent.click(screen.getByRole('button', { name: /live:\s*2 online/i }));
+    const liveList = screen.getByRole('list', { name: /live collaborators/i });
+    expect(within(liveList).getByText('Owner')).toHaveStyle({ color: '#db2777' });
+    expect(within(liveList).getByText('Editor')).toHaveStyle({ color: '#0f766e' });
+    expect(within(liveList).getByText('typing…')).toBeInTheDocument();
 
     act(() => {
       socket.emit({
@@ -2771,6 +2791,76 @@ describe('EditorPage save flow', () => {
       expect(screen.getByTestId('editor-content')).toHaveTextContent('Remote collaborative body');
     });
     expect(screen.queryByText('Remote changes need review.')).not.toBeInTheDocument();
+  });
+
+  it('restores editor focus after a realtime resync rebuild', async () => {
+    globalThis.WebSocket = MockWebSocket;
+    mockEditorCaptureViewState.mockReturnValue({
+      hasFocus: true,
+      selection: { from: 6, to: 6 },
+    });
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    act(() => {
+      MockWebSocket.instances[0].emit({
+        type: 'steps_resync',
+        document_id: 1,
+        collab_version: 2,
+        full_reset: true,
+        content: '<p>Resynced body</p>',
+        line_spacing: 1.15,
+        revision: 2,
+        latest_version_id: 11,
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Realtime re-synced with the latest collaboration state.')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(mockEditorRestoreViewState).toHaveBeenCalledWith({
+        hasFocus: true,
+        selection: { from: 6, to: 6 },
+      });
+    });
   });
 
   it('renders remote awareness from websocket snapshots and clears it when offline', async () => {
@@ -3160,7 +3250,7 @@ describe('EditorPage save flow', () => {
       });
     });
     await waitFor(() => {
-      expect(screen.getByText(/^Live:\s*You$/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Live:\s*You$/i })).toBeInTheDocument();
     });
 
     expect(screen.queryByText('Realtime connected')).not.toBeInTheDocument();

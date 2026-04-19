@@ -15,20 +15,11 @@ import {
   readOfflineDraft,
   writeOfflineDraft,
 } from '../realtime';
+import { resolvePresenceColor } from '../presenceColors';
 import { buildDocumentPageTitle, usePageTitle } from '../pageTitle';
 
 const AUTO_SAVE_DELAY = 1_500;
 const SELECTION_AWARENESS_DELAY = 120;
-const AWARENESS_COLORS = {
-  'presence-0': '#4f46e5',
-  'presence-1': '#db2777',
-  'presence-2': '#0f766e',
-  'presence-3': '#ea580c',
-  'presence-4': '#2563eb',
-  'presence-5': '#7c3aed',
-  'presence-6': '#b45309',
-  'presence-7': '#059669',
-};
 
 function resolveRole(docData, userData) {
   if (!userData) {
@@ -67,17 +58,6 @@ function rangesOverlap(leftRange, rightRange) {
 function makeConflictKey(documentId, localBatchId, remoteBatchId) {
   const orderedBatchIds = [localBatchId, remoteBatchId].sort();
   return `conflict:${documentId}:${orderedBatchIds.join(':')}`;
-}
-
-function resolveAwarenessColor(colorToken, userId) {
-  if (colorToken && AWARENESS_COLORS[colorToken]) {
-    return AWARENESS_COLORS[colorToken];
-  }
-
-  const fallbackKeys = Object.keys(AWARENESS_COLORS);
-  return fallbackKeys.length
-    ? AWARENESS_COLORS[fallbackKeys[Math.abs(Number(userId) || 0) % fallbackKeys.length]]
-    : '#4f46e5';
 }
 
 function upsertConflict(conflicts, nextConflict) {
@@ -221,6 +201,7 @@ export default function EditorPage() {
   const lastSentSelectionSignatureRef = useRef('');
   const pendingStepBatchesRef = useRef([]);
   const reportedConflictKeysRef = useRef(new Set());
+  const pendingFocusRestoreRef = useRef(null);
 
   const applyDocumentState = useCallback((docData, userData = userRef.current) => {
     setDoc(docData);
@@ -288,6 +269,9 @@ export default function EditorPage() {
       nextCollabVersion,
       resetCollaboration = false,
     }) => {
+      pendingFocusRestoreRef.current = resetCollaboration
+        ? editorRef.current?.getViewState?.() ?? null
+        : null;
       const resolvedLineSpacing = nextLineSpacing ?? lineSpacingRef.current ?? 1.15;
       setContent(nextContent);
       contentRef.current = nextContent;
@@ -325,6 +309,26 @@ export default function EditorPage() {
     [id]
   );
 
+  useEffect(() => {
+    const pendingFocus = pendingFocusRestoreRef.current;
+    if (!pendingFocus?.hasFocus) {
+      return undefined;
+    }
+
+    const restoreFocus = () => {
+      editorRef.current?.restoreViewState?.(pendingFocus);
+      pendingFocusRestoreRef.current = null;
+    };
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      const frame = window.requestAnimationFrame(restoreFocus);
+      return () => window.cancelAnimationFrame(frame);
+    }
+
+    const timer = window.setTimeout(restoreFocus, 0);
+    return () => window.clearTimeout(timer);
+  }, [collabResetKey]);
+
   const activeDocumentConflict = documentConflicts.find(
     (conflict) => conflict.conflict_id === activeConflictId
   ) ?? null;
@@ -348,7 +352,7 @@ export default function EditorPage() {
         from: entry.selection_from,
         to: entry.selection_to,
         label: entry.display_name,
-        color: resolveAwarenessColor(entry.color_token, entry.user_id),
+        color: resolvePresenceColor(entry.color_token, entry.user_id),
       }));
   }, [awareness, collabVersion, realtimeStatus, user]);
   const conflictHighlights = useMemo(

@@ -113,6 +113,22 @@ function buildStepBatchMetadata(transaction) {
   };
 }
 
+function clampSelectionPosition(editor, from, to = from) {
+  const docSize = editor?.state?.doc?.content?.size ?? 0;
+  const maxPosition = Math.max(1, docSize);
+  const numericFrom = Number(from);
+  const numericTo = Number(to);
+  const safeFrom = Math.max(
+    1,
+    Math.min(Number.isFinite(numericFrom) ? numericFrom : 1, maxPosition)
+  );
+  const safeTo = Math.max(
+    safeFrom,
+    Math.min(Number.isFinite(numericTo) ? numericTo : safeFrom, maxPosition)
+  );
+  return { from: safeFrom, to: safeTo };
+}
+
 function createConflictHighlightPlugin() {
   return new Plugin({
     key: CONFLICT_HIGHLIGHTS_KEY,
@@ -580,12 +596,40 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     focus() {
       editor?.commands.focus();
     },
+    getViewState() {
+      if (!editor) {
+        return {
+          hasFocus: false,
+          selection: { from: 1, to: 1 },
+        };
+      }
+
+      const { from, to } = editor.state.selection;
+      return {
+        hasFocus: Boolean(editor.isFocused || editor.view.hasFocus()),
+        selection: { from, to },
+      };
+    },
+    restoreViewState(snapshot) {
+      if (!editor || !snapshot?.hasFocus) {
+        return false;
+      }
+
+      const nextSelection = clampSelectionPosition(
+        editor,
+        snapshot.selection?.from,
+        snapshot.selection?.to
+      );
+      editor.commands.focus();
+      editor.commands.setTextSelection(nextSelection);
+      return true;
+    },
     setSelection({ from, to = from }) {
       if (!editor) {
         return false;
       }
 
-      return editor.commands.setTextSelection({ from, to });
+      return editor.commands.setTextSelection(clampSelectionPosition(editor, from, to));
     },
     insertParagraphBreak() {
       if (!editor) {

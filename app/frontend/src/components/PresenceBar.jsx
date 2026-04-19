@@ -1,11 +1,17 @@
-function formatNames(users, currentUserId) {
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { resolvePresenceColor } from '../presenceColors';
+
+function formatLiveSummary(users, currentUserId) {
   if (!users.length) {
-    return 'Only you are here right now.';
+    return 'Live: You';
   }
 
-  return users
-    .map((user) => (user.user_id === currentUserId ? 'You' : user.display_name))
-    .join(', ');
+  if (users.length === 1) {
+    const onlyUser = users[0];
+    return `Live: ${onlyUser.user_id === currentUserId ? 'You' : onlyUser.display_name}`;
+  }
+
+  return `Live: ${users.length} online`;
 }
 
 export default function PresenceBar({
@@ -17,21 +23,77 @@ export default function PresenceBar({
   onAcceptRemote,
   onKeepLocal,
 }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef(null);
   const showLivePresence = realtimeStatus === 'connected';
   const connectedAndSolo =
     realtimeStatus === 'connected' && users.length <= 1 && !realtimeMessage;
-  const typingUsers = users.filter(
-    (user) => user.typing && user.user_id !== currentUserId
+  const liveUsers = useMemo(
+    () => users.map((user) => ({
+      ...user,
+      color: resolvePresenceColor(user.color_token, user.user_id),
+      label: user.display_name || 'Collaborator',
+      isCurrentUser: user.user_id === currentUserId,
+    })),
+    [currentUserId, users]
   );
+
+  useEffect(() => {
+    if (!showLivePresence) {
+      setIsOpen(false);
+    }
+  }, [showLivePresence]);
+
+  useEffect(() => {
+    function handlePointerDown(event) {
+      if (!dropdownRef.current?.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, []);
 
   return (
     <>
       <div className="presence-bar">
         <div className="presence-pill-group">
           {showLivePresence ? (
-            <span className="presence-pill presence-pill-primary">
-              Live: {formatNames(users, currentUserId)}
-            </span>
+            <div className="presence-live-dropdown" ref={dropdownRef}>
+              <button
+                type="button"
+                className="presence-pill presence-pill-primary presence-live-trigger"
+                aria-expanded={isOpen}
+                aria-haspopup="list"
+                onClick={() => setIsOpen((current) => !current)}
+              >
+                <span>{formatLiveSummary(users, currentUserId)}</span>
+                <span aria-hidden="true" className="presence-live-chevron">▾</span>
+              </button>
+              {isOpen ? (
+                <div className="presence-live-menu" role="list" aria-label="Live collaborators">
+                  {liveUsers.map((user) => (
+                    <div key={user.session_id} className="presence-live-item" role="listitem">
+                      <span
+                        className="presence-live-swatch"
+                        style={{ backgroundColor: user.color }}
+                        aria-hidden="true"
+                      />
+                      <span className="presence-live-name" style={{ color: user.color }}>
+                        {user.label}
+                      </span>
+                      {user.isCurrentUser ? (
+                        <span className="presence-live-self">You</span>
+                      ) : null}
+                      {user.typing ? (
+                        <span className="presence-live-meta">typing…</span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ) : null}
           {!connectedAndSolo ? (
             <span className={`presence-pill presence-pill-status presence-pill-status-${realtimeStatus}`}>
@@ -44,11 +106,6 @@ export default function PresenceBar({
                     : realtimeStatus === 'unsupported'
                       ? 'Realtime unsupported'
                       : 'Realtime offline'}
-            </span>
-          ) : null}
-          {typingUsers.length ? (
-            <span className="presence-pill">
-              {typingUsers.map((user) => user.display_name).join(', ')} typing…
             </span>
           ) : null}
           {realtimeMessage ? (

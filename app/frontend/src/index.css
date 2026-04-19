@@ -566,6 +566,70 @@ html, body {
   color: #075985;
 }
 
+.presence-live-dropdown {
+  position: relative;
+}
+
+.presence-live-trigger {
+  border: none;
+  cursor: pointer;
+  gap: 8px;
+}
+
+.presence-live-chevron {
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+
+.presence-live-trigger[aria-expanded="true"] .presence-live-chevron {
+  transform: rotate(180deg);
+}
+
+.presence-live-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 220px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+}
+
+.presence-live-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.presence-live-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.presence-live-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.presence-live-self,
+.presence-live-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.presence-live-meta {
+  margin-left: auto;
+}
+
 .presence-pill-status-connecting {
   background: #fff7ed;
   color: #9a3412;
@@ -625,6 +689,15 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+@media (max-width: 720px) {
+  .presence-live-menu {
+    position: static;
+    margin-top: 8px;
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 .conflict-resolution-header {
