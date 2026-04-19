@@ -231,6 +231,8 @@ export default function EditorPage() {
   const liveSelectionRef = useRef({ text: '', from: 0, to: 0, direction: 'forward' });
   const lastAiUndoRef = useRef(null);
   const isDirtyRef = useRef(false);
+  const lastSaveErrorRef = useRef(null);
+  const hasUnversionedRealtimeSnapshotRef = useRef(false);
   const savePromiseRef = useRef(null);
   const socketRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -269,6 +271,8 @@ export default function EditorPage() {
     setSelection(null);
     selectionRef.current = null;
     isDirtyRef.current = false;
+    lastSaveErrorRef.current = null;
+    hasUnversionedRealtimeSnapshotRef.current = false;
     setSaveStatus('saved');
     setError('');
     setRole(resolveRole(docData, userData));
@@ -428,6 +432,8 @@ export default function EditorPage() {
         setCollabResetKey((current) => current + 1);
       }
       isDirtyRef.current = false;
+      lastSaveErrorRef.current = null;
+      hasUnversionedRealtimeSnapshotRef.current = false;
       setSaveStatus('saved');
       setDoc((current) => {
         if (!current) {
@@ -783,6 +789,8 @@ export default function EditorPage() {
 
       setRevision(saved.revision);
       revisionRef.current = saved.revision;
+      lastSaveErrorRef.current = null;
+      hasUnversionedRealtimeSnapshotRef.current = false;
       setDoc((current) =>
         {
           const nextDoc =
@@ -805,7 +813,8 @@ export default function EditorPage() {
       isDirtyRef.current = hasNewUnsavedChanges;
       setSaveStatus(hasNewUnsavedChanges ? 'unsaved' : 'saved');
       return !hasNewUnsavedChanges;
-    } catch {
+    } catch (error) {
+      lastSaveErrorRef.current = error;
       setSaveStatus('unsaved');
       return false;
     }
@@ -834,6 +843,40 @@ export default function EditorPage() {
       }
     }
   }, [performSaveContent]);
+
+  const syncPersistedRevision = useCallback(async () => {
+    const liveContent = contentRef.current;
+    const liveLineSpacing = lineSpacingRef.current;
+    const saved = await saveContent({ force: true, saveSource: 'manual' });
+
+    if (saved) {
+      return true;
+    }
+
+    const saveError = lastSaveErrorRef.current;
+    if (saveError?.status !== 409) {
+      return false;
+    }
+
+    try {
+      const refreshed = await refreshDocument();
+      const refreshedContent = refreshed.current_content || refreshed.content || '';
+      const refreshedLineSpacing = Number(refreshed.line_spacing) || liveLineSpacing;
+      const sameSnapshot = refreshedContent === liveContent && refreshedLineSpacing === liveLineSpacing;
+      if (sameSnapshot) {
+        lastSaveErrorRef.current = null;
+      }
+      return sameSnapshot;
+    } catch {
+      return false;
+    }
+  }, [refreshDocument, saveContent]);
+
+  const ensurePersistedRevision = useCallback(async () => (
+    hasUnversionedRealtimeSnapshotRef.current
+      ? await syncPersistedRevision()
+      : await saveContent()
+  ), [saveContent, syncPersistedRevision]);
 
   const syncLiveCollaborationSaveState = useCallback(() => {
     const hasPendingLocalSteps = Boolean(inflightStepBatchRef.current)
@@ -921,7 +964,7 @@ export default function EditorPage() {
   }, []);
 
   const ensureSavedDocument = useCallback(async ({ requireUndoBaseline = false } = {}) => {
-    const saved = await saveContent();
+    const saved = await ensurePersistedRevision();
 
     if (!saved) {
       throw new Error('Save the latest document changes before using AI.');
@@ -941,6 +984,8 @@ export default function EditorPage() {
       setRevision(baselineSave.revision);
       revisionRef.current = baselineSave.revision;
       isDirtyRef.current = false;
+      lastSaveErrorRef.current = null;
+      hasUnversionedRealtimeSnapshotRef.current = false;
       setSaveStatus('saved');
       setDoc((current) => {
         const nextDoc =
@@ -966,7 +1011,7 @@ export default function EditorPage() {
       revision: revisionRef.current,
       latestVersionId: docRef.current?.latest_version_id ?? null,
     };
-  }, [id, saveContent]);
+  }, [ensurePersistedRevision, id]);
 
   useEffect(() => {
     if (
@@ -1304,7 +1349,7 @@ export default function EditorPage() {
   }
 
   const handleRestoreVersion = useCallback(async (version) => {
-    const saved = await saveContent({ force: true, saveSource: 'manual' });
+    const saved = await ensurePersistedRevision();
     if (!saved) {
       throw new Error('Save the latest document changes before restoring a version.');
     }
@@ -1315,7 +1360,7 @@ export default function EditorPage() {
     });
     await refreshDocument();
     broadcastFullSnapshotUpdate('manual');
-  }, [broadcastFullSnapshotUpdate, clearLastAiUndo, id, refreshDocument, saveContent]);
+  }, [broadcastFullSnapshotUpdate, clearLastAiUndo, ensurePersistedRevision, id, refreshDocument]);
 
   const getAiUndoSnapshot = useCallback(() => {
     const currentDoc = docRef.current;
@@ -1854,6 +1899,7 @@ export default function EditorPage() {
               setCollabVersion(payload.collab_version);
               collabVersionRef.current = payload.collab_version;
             }
+            hasUnversionedRealtimeSnapshotRef.current = true;
             if (payload.actor_user_id === userRef.current?.user_id) {
               syncLiveCollaborationSaveState();
             }
@@ -1909,6 +1955,8 @@ export default function EditorPage() {
               setCollabVersion(nextCollabVersion);
               collabVersionRef.current = nextCollabVersion;
             }
+
+            hasUnversionedRealtimeSnapshotRef.current = true;
 
             if (isOwnStepBatch) {
               flushPendingCollaborationSteps();

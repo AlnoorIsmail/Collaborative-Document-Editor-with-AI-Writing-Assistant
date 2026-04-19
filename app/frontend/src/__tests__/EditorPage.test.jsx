@@ -1263,6 +1263,221 @@ describe('EditorPage save flow', () => {
     expect(screen.getByRole('button', { name: 'Undo AI' })).toBeInTheDocument();
   });
 
+  it('refreshes the latest realtime revision before running AI when a live snapshot save reports a stale revision', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    const documentResponses = [
+      buildDocument({
+        revision: 1,
+        latest_version_id: 10,
+      }),
+      buildDocument({
+        current_content: '<p>Local collaborative body</p>',
+        revision: 2,
+        latest_version_id: 11,
+      }),
+    ];
+    const staleSaveError = Object.assign(
+      new Error('The document revision is stale. Refresh and retry.'),
+      { status: 409 }
+    );
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(documentResponses.shift() ?? buildDocument({
+          current_content: '<p>Local collaborative body</p>',
+          revision: 2,
+          latest_version_id: 11,
+        }));
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 1,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      if (path === '/documents/1/ai/interactions') {
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_realtime',
+            scope_type: 'selection',
+            source_revision: 2,
+          }),
+        ]);
+      }
+
+      if (path === '/ai/interactions/ai_realtime') {
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_realtime',
+            scope_type: 'selection',
+            source_revision: 2,
+            base_revision: 2,
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'Tighten this section',
+            suggestion: {
+              suggestion_id: 'sug_realtime',
+              generated_output: 'Sharper text',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          })
+        );
+      }
+
+      if (path === '/documents/1/content') {
+        return Promise.reject(staleSaveError);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_realtime',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 2,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_realtime',
+            delta: 'Sharper text',
+            output: 'Sharper text',
+          },
+        },
+        {
+          type: 'complete',
+          data: buildInteractionDetail({
+            interaction_id: 'ai_realtime',
+            scope_type: 'selection',
+            source_revision: 2,
+            base_revision: 2,
+            selected_range: { start: 4, end: 21 },
+            selected_text_snapshot: 'Selected sentence',
+            user_instruction: 'Tighten this section',
+            suggestion: {
+              suggestion_id: 'sug_realtime',
+              generated_output: 'Sharper text',
+              model_name: 'local-rewrite-fallback',
+              stale: false,
+              usage: null,
+            },
+          }),
+        },
+      ])
+    );
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
+
+    await act(async () => {
+      MockWebSocket.instances[0].emit({
+        type: 'steps_applied',
+        actor_user_id: 1,
+        actor_display_name: 'Owner',
+        collab_version: 1,
+        steps: [{ mockHtml: '<p>Local collaborative body</p>' }],
+        client_ids: ['client-1'],
+        content: '<p>Local collaborative body</p>',
+        line_spacing: 1.15,
+        batch: {
+          batch_id: 'batch-1',
+          version: 0,
+          client_id: 'client-1',
+          affected_range: { start: 4, end: 21 },
+          candidate_content_snapshot: 'Local collaborative body',
+          exact_text_snapshot: 'Initial body',
+          prefix_context: 'Before',
+          suffix_context: 'After',
+          actor_user_id: 1,
+          actor_display_name: 'Owner',
+        },
+      });
+    });
+
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
+    await openAiSidebar();
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: 'Tighten this section' },
+    });
+    await clickAiShortcut('Rewrite');
+
+    await screen.findByText('Sharper text');
+
+    expect(api.apiJSON).toHaveBeenCalledWith(
+      '/documents/1/content',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          content: '<p>Local collaborative body</p>',
+          base_revision: 1,
+          line_spacing: 1.15,
+          save_source: 'manual',
+        }),
+      })
+    );
+    expect(api.apiFetch).toHaveBeenCalledWith(
+      '/documents/1/ai/interactions/stream',
+      expect.objectContaining({
+        body: JSON.stringify({
+          feature_type: 'rewrite',
+          scope_type: 'selection',
+          selected_range: {
+            start: 4,
+            end: 21,
+          },
+          selected_text_snapshot: 'Selected sentence',
+          surrounding_context: 'Document title: Draft\n\nDocument context: Local collaborative body',
+          user_instruction: 'Tighten this section',
+          base_revision: 2,
+          parameters: {
+            tone: 'neutral',
+          },
+        }),
+      })
+    );
+  });
+
   it('runs Ask AI as a review-only response for selected text', async () => {
     api.apiJSON.mockImplementation((path, options) => {
       if (path === '/documents/1' && !options) {
@@ -1429,8 +1644,8 @@ describe('EditorPage save flow', () => {
             scope_type: 'selection',
             selected_range: { start: 4, end: 21 },
             selected_text_snapshot: 'Selected sentence',
-            user_instruction: 'Translate for a Spanish-speaking teammate.',
-            parameters: { target_language: 'Spanish' },
+            user_instruction: 'Translate for a French-speaking teammate.',
+            parameters: { target_language: 'French' },
             suggestion: {
               suggestion_id: 'sug_translate',
               generated_output: 'Texto traducido',
@@ -1477,8 +1692,8 @@ describe('EditorPage save flow', () => {
             scope_type: 'selection',
             selected_range: { start: 4, end: 21 },
             selected_text_snapshot: 'Selected sentence',
-            user_instruction: 'Translate for a Spanish-speaking teammate.',
-            parameters: { target_language: 'Spanish' },
+            user_instruction: 'Translate for a French-speaking teammate.',
+            parameters: { target_language: 'French' },
             suggestion: {
               suggestion_id: 'sug_translate',
               generated_output: 'Texto traducido',
@@ -1497,9 +1712,13 @@ describe('EditorPage save flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
     await openAiSidebar();
     fireEvent.change(screen.getByLabelText('Message'), {
-      target: { value: 'Translate for a Spanish-speaking teammate.' },
+      target: { value: 'Translate for a French-speaking teammate.' },
     });
-    await clickAiShortcut('Translate');
+    fireEvent.click(screen.getByRole('button', { name: /shortcuts/i }));
+    fireEvent.change(screen.getByLabelText('Translate to'), {
+      target: { value: 'French' },
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Translate' }));
 
     await screen.findByText('Texto traducido');
 
@@ -1516,10 +1735,10 @@ describe('EditorPage save flow', () => {
           },
           selected_text_snapshot: 'Selected sentence',
           surrounding_context: 'Document title: Draft\n\nDocument context: Initial body',
-          user_instruction: 'Translate for a Spanish-speaking teammate.',
+          user_instruction: 'Translate for a French-speaking teammate.',
           base_revision: 0,
           parameters: {
-            target_language: 'Spanish',
+            target_language: 'French',
           },
         }),
       })
@@ -2875,6 +3094,167 @@ describe('EditorPage save flow', () => {
     });
     expect(screen.getByTestId('editor-line-spacing')).toHaveTextContent('2');
 
+    expect(api.apiJSON).toHaveBeenCalledWith(
+      '/documents/1/versions/4/restore',
+      expect.objectContaining({
+        method: 'POST',
+      })
+    );
+  });
+
+  it('refreshes the latest realtime revision before restoring a version', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    globalThis.WebSocket = MockWebSocket;
+
+    const documentResponses = [
+      buildDocument({
+        revision: 2,
+        latest_version_id: 11,
+      }),
+      buildDocument({
+        current_content: '<p>Local collaborative body</p>',
+        revision: 3,
+        latest_version_id: 12,
+      }),
+      buildDocument({
+        current_content: '<p>Restored body</p>',
+        line_spacing: 2,
+        revision: 4,
+        latest_version_id: 13,
+      }),
+    ];
+    const staleSaveError = Object.assign(
+      new Error('The document revision is stale. Refresh and retry.'),
+      { status: 409 }
+    );
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(documentResponses.shift() ?? buildDocument({
+          current_content: '<p>Restored body</p>',
+          line_spacing: 2,
+          revision: 4,
+          latest_version_id: 13,
+        }));
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 2,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      if (path === '/documents/1/versions' && !options) {
+        return Promise.resolve([
+          {
+            version_id: 5,
+            version_number: 2,
+            created_by: 1,
+            created_at: '2026-01-01T00:10:00Z',
+            is_restore_version: false,
+            save_source: 'manual',
+          },
+          {
+            version_id: 4,
+            version_number: 1,
+            created_by: 1,
+            created_at: '2026-01-01T00:00:00Z',
+            is_restore_version: false,
+            save_source: 'manual',
+          },
+        ]);
+      }
+
+      if (path === '/documents/1/content') {
+        return Promise.reject(staleSaveError);
+      }
+
+      if (path === '/documents/1/versions/4/restore') {
+        return Promise.resolve({
+          document_id: 1,
+          restored_from_version_id: 4,
+          new_version_id: 13,
+          message: 'Version restored as a new version entry.',
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
+
+    await act(async () => {
+      MockWebSocket.instances[0].emit({
+        type: 'steps_applied',
+        actor_user_id: 1,
+        actor_display_name: 'Owner',
+        collab_version: 1,
+        steps: [{ mockHtml: '<p>Local collaborative body</p>' }],
+        client_ids: ['client-1'],
+        content: '<p>Local collaborative body</p>',
+        line_spacing: 1.15,
+        batch: {
+          batch_id: 'batch-1',
+          version: 0,
+          client_id: 'client-1',
+          affected_range: { start: 4, end: 21 },
+          candidate_content_snapshot: 'Local collaborative body',
+          exact_text_snapshot: 'Initial body',
+          prefix_context: 'Before',
+          suffix_context: 'After',
+          actor_user_id: 1,
+          actor_display_name: 'Owner',
+        },
+      });
+    });
+
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    await screen.findByText('Version history');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Restore' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('editor-content')).toHaveTextContent('Restored body');
+    });
+    expect(screen.getByTestId('editor-line-spacing')).toHaveTextContent('2');
+
+    expect(api.apiJSON).toHaveBeenCalledWith(
+      '/documents/1/content',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          content: '<p>Local collaborative body</p>',
+          base_revision: 2,
+          line_spacing: 1.15,
+          save_source: 'manual',
+        }),
+      })
+    );
     expect(api.apiJSON).toHaveBeenCalledWith(
       '/documents/1/versions/4/restore',
       expect.objectContaining({

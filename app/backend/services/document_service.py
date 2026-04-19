@@ -475,6 +475,8 @@ class DocumentService:
             and access.document.latest_version is not None
             and access.document.content == content
             and access.document.line_spacing == line_spacing
+            and access.document.latest_version.content_snapshot == content
+            and access.document.latest_version.line_spacing_snapshot == line_spacing
             and access.document.latest_version.save_source == save_source
         )
 

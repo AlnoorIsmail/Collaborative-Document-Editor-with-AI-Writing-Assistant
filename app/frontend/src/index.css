@@ -1531,6 +1531,8 @@ html, body {
   font-size: 13px;
   line-height: 1.55;
   color: var(--color-text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ai-result-card {
@@ -1578,6 +1580,8 @@ html, body {
   white-space: pre-wrap;
   max-height: 320px;
   overflow-y: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .ai-result-actions {
@@ -1815,6 +1819,10 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.ai-toolbar-field {
+  gap: 6px;
 }
 
 .ai-chat-context-top,

@@ -13,7 +13,7 @@ const QUICK_ACTIONS = [
 const DEFAULT_FEATURE_PARAMETERS = {
   summarize: { length: 'medium', format: 'paragraph' },
   rewrite: { tone: 'neutral' },
-  translate: { target_language: 'Spanish' },
+  translate: {},
   grammar_fix: { style: 'preserve' },
   expand: { detail_level: 'medium' },
   restructure: { structure: 'clear_flow' },
@@ -227,15 +227,20 @@ function buildSelectionSnapshot(entry) {
   };
 }
 
-function buildQuickActionInstruction(featureType, scopeType, message) {
+function buildQuickActionInstruction(featureType, scopeType, message, options = {}) {
   const target = scopeType === 'selection' ? 'selected text' : 'document';
   const trimmed = message.trim();
+  const targetLanguage = options.targetLanguage?.trim();
 
   if (featureType === 'summarize') {
     return trimmed || `Summarize the ${target}.`;
   }
   if (featureType === 'translate') {
-    return trimmed || `Translate the ${target}.`;
+    return trimmed || (
+      targetLanguage
+        ? `Translate the ${target} to ${targetLanguage}.`
+        : `Translate the ${target}.`
+    );
   }
   if (featureType === 'grammar_fix') {
     return trimmed || `Fix grammar in the ${target}.`;
@@ -250,7 +255,12 @@ function buildQuickActionInstruction(featureType, scopeType, message) {
   return trimmed || `Rewrite the ${target}.`;
 }
 
-function buildQuickActionParameters(featureType) {
+function buildQuickActionParameters(featureType, options = {}) {
+  const targetLanguage = options.targetLanguage?.trim();
+  if (featureType === 'translate') {
+    return targetLanguage ? { target_language: targetLanguage } : {};
+  }
+
   return {
     ...(DEFAULT_FEATURE_PARAMETERS[featureType] ?? {}),
   };
@@ -285,6 +295,7 @@ export default function AISidebar({
   const [activeTab, setActiveTab] = useState('chat');
   const [composerMessage, setComposerMessage] = useState('');
   const [attachedSelection, setAttachedSelection] = useState(null);
+  const [translateTargetLanguage, setTranslateTargetLanguage] = useState('');
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(AI_SIDEBAR_DEFAULT_WIDTH);
   const [isDesktopViewport, setIsDesktopViewport] = useState(
@@ -492,6 +503,7 @@ export default function AISidebar({
     setActiveTab('chat');
     setComposerMessage('');
     setAttachedSelection(null);
+    setTranslateTargetLanguage('');
     setIsActionsOpen(false);
     setThreadEntries([]);
     setThreadLoading(false);
@@ -910,6 +922,13 @@ export default function AISidebar({
     setErrorMessage('');
     setStatusMessage('');
     cancelRequestedRef.current = false;
+
+    const targetLanguage = translateTargetLanguage.trim();
+    if (featureType === 'translate' && !targetLanguage) {
+      setErrorMessage('Choose a target language before running Translate.');
+      return;
+    }
+
     setIsRunning(true);
 
     try {
@@ -919,7 +938,8 @@ export default function AISidebar({
       const instruction = buildQuickActionInstruction(
         featureType,
         preparedRequest.scopeType,
-        composerMessage
+        composerMessage,
+        { targetLanguage }
       );
       const localUserEntry = {
         entry_id: makeLocalId('user'),
@@ -952,7 +972,7 @@ export default function AISidebar({
           surrounding_context: preparedRequest.surroundingContext,
           user_instruction: composerMessage.trim() || undefined,
           base_revision: preparedRequest.prepared.revision,
-          parameters: buildQuickActionParameters(featureType),
+          parameters: buildQuickActionParameters(featureType, { targetLanguage }),
         },
         localUserEntry,
         assistantSeed: {
@@ -1544,6 +1564,19 @@ export default function AISidebar({
 
                   {isActionsOpen ? (
                     <div className="ai-toolbar-menu" role="menu" aria-label="AI quick actions">
+                      <label className="field-label ai-toolbar-field" htmlFor="ai-translate-target-language">
+                        Translate to
+                        <input
+                          id="ai-translate-target-language"
+                          className="field-input"
+                          type="text"
+                          value={translateTargetLanguage}
+                          onChange={(event) => setTranslateTargetLanguage(event.target.value)}
+                          placeholder="e.g. French, Arabic, Japanese"
+                          disabled={!canUseAI || isBusy}
+                        />
+                      </label>
+
                       {QUICK_ACTIONS.map((action) => (
                         <button
                           key={action.value}
