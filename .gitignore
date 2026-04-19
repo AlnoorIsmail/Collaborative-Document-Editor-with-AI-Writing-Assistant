@@ -8,3 +8,4 @@ dist/
 collab_editor.db
 node_modules/
 /.venv
+app/frontend/.vite/
