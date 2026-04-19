@@ -163,7 +163,12 @@ export default function RegisterPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <h1 className="auth-title">Create account</h1>
+        <div className="auth-logo">
+          <span className="auth-logo-icon">✦</span>
+          <span className="auth-logo-text">Collab Docs</span>
+        </div>
+
+  <h1 className="auth-title">Register</h1>
         <form onSubmit={handleSubmit} className="auth-form" noValidate>
           {bannerError && <div className="error-banner">{bannerError}</div>}
           <label className="field-label">
