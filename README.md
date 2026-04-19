@@ -37,13 +37,14 @@ This project implements a React + FastAPI collaborative document editor for Assi
 - Headings, bold, italic, lists, code blocks, blockquotes, undo/redo
 - Autosave with status indication
 - Version history with restore
-- Export flows
+- Export flows for HTML, plain text, Markdown, and JSON
 
 ### Access control and sharing
 
-- Owner, editor, and viewer roles
+- Owner, editor, viewer, and commenter roles
 - Server-side permission enforcement
 - Share by email with role assignment
+- Share by username with role assignment
 - Share links with expiration and revocation support
 - Share-link redemption requires an authenticated user
 - Shared editors receive AI access by default
@@ -63,6 +64,9 @@ This project implements a React + FastAPI collaborative document editor for Assi
 
 - Rewrite
 - Summarize
+- Translate
+- Fix grammar
+- Expand
 - Custom prompt / Ask AI
 - Whole-document and selected-text scopes
 - Streamed token-style output in the sidebar
@@ -73,6 +77,13 @@ This project implements a React + FastAPI collaborative document editor for Assi
 - Provider abstraction behind a single integration seam
 - Per-document AI history UI and backend interaction audit log
 - Caller-specific `can_use_ai` surfaced in document responses so the frontend can honor backend access truth
+
+## Prerequisites
+
+- `python3`
+- Python virtual environment support (`python3 -m venv`)
+- `node`
+- `npm`
 
 ## Quick Start
 
