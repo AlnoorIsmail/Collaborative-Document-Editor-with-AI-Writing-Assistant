@@ -34,9 +34,29 @@ export function validatePasswordField(password, { required = false, minLength = 
   return '';
 }
 
+const USERNAME_PATTERN = /^[a-zA-Z0-9_]+$/;
+
 export function validateNameField(name, { required = false } = {}) {
   if (!name.trim()) {
     return required ? 'Name is required.' : '';
+  }
+
+  return '';
+}
+
+export function validateUsernameField(username, { required = false } = {}) {
+  const trimmed = username.trim();
+
+  if (!trimmed) {
+    return required ? 'Username is required.' : '';
+  }
+
+  if (trimmed.length < 3) {
+    return 'Username must be at least 3 characters.';
+  }
+
+  if (!USERNAME_PATTERN.test(trimmed)) {
+    return 'Username can only contain letters, numbers, and underscores.';
   }
 
   return '';
@@ -51,7 +71,7 @@ export function getLoginFieldErrors({ email, password }) {
 
 export function getRegisterFieldErrors({ name, email, password }) {
   return {
-    name: validateNameField(name, { required: true }),
+    name: validateUsernameField(name, { required: true }),
     email: validateEmailField(email, { required: true }),
     password: validatePasswordField(password, { required: true, minLength: 8 }),
   };

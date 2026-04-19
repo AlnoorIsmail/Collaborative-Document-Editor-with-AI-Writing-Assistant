@@ -5,8 +5,8 @@ import {
   getRegisterFieldErrors,
   normalizeEmail,
   validateEmailField,
-  validateNameField,
   validatePasswordField,
+  validateUsernameField,
 } from '../authValidation';
 import {
   clearPendingShareLinkToken,
@@ -51,7 +51,7 @@ export default function RegisterPage() {
     setBannerError('');
     setFieldError(
       'name',
-      touched.name ? validateNameField(nextName, { required: true }) : ''
+      touched.name ? validateUsernameField(nextName, { required: true }) : ''
     );
   }
 
@@ -83,7 +83,7 @@ export default function RegisterPage() {
 
   function handleNameBlur() {
     markTouched('name');
-    setFieldError('name', validateNameField(name, { required: true }));
+    setFieldError('name', validateUsernameField(name, { required: true }));
   }
 
   function handleEmailBlur() {
@@ -134,6 +134,11 @@ export default function RegisterPage() {
           return;
         }
 
+        if (res.status === 409) {
+          setFieldError('name', 'This username is already taken.');
+          return;
+        }
+
         throw new Error(message);
       }
       const data = await res.json();
@@ -167,7 +172,7 @@ export default function RegisterPage() {
         <form onSubmit={handleSubmit} className="auth-form" noValidate>
           {bannerError && <div className="error-banner">{bannerError}</div>}
           <label className="field-label">
-            Name
+            Username
             <input
               className={`field-input ${fieldErrors.name ? 'field-input-error' : ''}`}
               type="text"
@@ -176,7 +181,7 @@ export default function RegisterPage() {
               onBlur={handleNameBlur}
               required
               autoFocus
-              autoComplete="name"
+              autoComplete="username"
               aria-invalid={fieldErrors.name ? 'true' : 'false'}
               aria-describedby={nameErrorId}
             />
