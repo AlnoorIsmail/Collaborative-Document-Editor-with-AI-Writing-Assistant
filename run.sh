@@ -2,26 +2,43 @@
 
 set -euo pipefail
 
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+venv_python="${root_dir}/.venv/bin/python"
+frontend_dir="${root_dir}/app/frontend"
+
+ensure_venv() {
+  if [[ ! -x "${venv_python}" ]]; then
+    echo "Project virtualenv is missing. Run 'bash run.sh install' first."
+    exit 1
+  fi
+}
+
 command="${1:-dev}"
 
 case "$command" in
   install)
-    python -m pip install -r requirements.txt
+    if [[ ! -x "${venv_python}" ]]; then
+      python3 -m venv "${root_dir}/.venv"
+    fi
+
+    "${venv_python}" -m pip install -r "${root_dir}/requirements.txt"
     (
-      cd app/frontend
+      cd "${frontend_dir}"
       npm ci
     )
     ;;
   backend)
-    uvicorn app.backend.main:app --reload
+    ensure_venv
+    "${venv_python}" -m uvicorn app.backend.main:app --reload --host 127.0.0.1 --port 8000
     ;;
   frontend)
     (
-      cd app/frontend
-      npm run dev
+      cd "${frontend_dir}"
+      npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
     )
     ;;
   dev)
+    ensure_venv
     backend_pid=""
     frontend_pid=""
 
@@ -36,19 +53,20 @@ case "$command" in
 
     trap cleanup EXIT INT TERM
 
-    uvicorn app.backend.main:app --reload &
+    "${venv_python}" -m uvicorn app.backend.main:app --reload --host 127.0.0.1 --port 8000 &
     backend_pid=$!
 
     (
-      cd app/frontend
-      npm run dev
+      cd "${frontend_dir}"
+      npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
     ) &
     frontend_pid=$!
 
     wait "${backend_pid}" "${frontend_pid}"
     ;;
   tests)
-    pytest app/backend/tests -q
+    ensure_venv
+    "${venv_python}" -m pytest app/backend/tests -q
     ;;
   *)
     echo "Usage: ./run.sh [install|dev|backend|frontend|tests]"
