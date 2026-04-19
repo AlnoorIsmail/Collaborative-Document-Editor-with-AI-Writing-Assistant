@@ -274,6 +274,111 @@ function getSelectedTextSnapshot(scopeType, selectedText) {
   return selectedText;
 }
 
+function detectPartialAcceptanceStrategy(...texts) {
+  const normalizedTexts = texts
+    .map((text) => (text || '').trim())
+    .filter(Boolean);
+
+  if (normalizedTexts.some((text) => /\n\s*\n/.test(text))) {
+    return 'paragraphs';
+  }
+
+  if (normalizedTexts.some((text) => /\n/.test(text))) {
+    return 'lines';
+  }
+
+  if (normalizedTexts.some((text) => /(?<=[.!?؟])\s+/.test(text))) {
+    return 'sentences';
+  }
+
+  return 'single';
+}
+
+function splitPartialAcceptanceParts(text, strategy) {
+  const normalized = (text || '').trim();
+  if (!normalized) {
+    return [];
+  }
+
+  if (strategy === 'paragraphs') {
+    return normalized.split(/\n\s*\n+/).map((part) => part.trim()).filter(Boolean);
+  }
+
+  if (strategy === 'lines') {
+    return normalized.split(/\n+/).map((part) => part.trim()).filter(Boolean);
+  }
+
+  if (strategy === 'sentences') {
+    return normalized.split(/(?<=[.!?؟])\s+/).map((part) => part.trim()).filter(Boolean);
+  }
+
+  return [normalized];
+}
+
+function createPartialAcceptanceDraft(entry, documentText) {
+  if (!entry?.content?.trim() || entry.review_only) {
+    return null;
+  }
+
+  const originalText = entry.scope_type === 'selection'
+    ? (entry.selected_text_snapshot || '')
+    : (documentText || '');
+  const suggestionText = entry.content;
+  const strategy = detectPartialAcceptanceStrategy(originalText, suggestionText);
+  const originalParts = splitPartialAcceptanceParts(originalText, strategy);
+  const suggestionParts = splitPartialAcceptanceParts(suggestionText, strategy);
+  const partCount = Math.max(originalParts.length, suggestionParts.length);
+
+  if (partCount <= 1) {
+    return null;
+  }
+
+  return {
+    strategy,
+    parts: Array.from({ length: partCount }, (_, index) => ({
+      id: `${entry.entry_id}-part-${index + 1}`,
+      originalText: originalParts[index] ?? '',
+      suggestionText: suggestionParts[index] ?? '',
+      useSuggestion: Boolean(suggestionParts[index]),
+    })),
+  };
+}
+
+function composePartialAcceptanceOutput(draft) {
+  if (!draft?.parts?.length) {
+    return '';
+  }
+
+  const joiner = draft.strategy === 'paragraphs'
+    ? '\n\n'
+    : draft.strategy === 'lines'
+      ? '\n'
+      : ' ';
+
+  return draft.parts
+    .map((part) => (
+      part.useSuggestion
+        ? part.suggestionText
+        : part.originalText
+    ))
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(joiner)
+    .trim();
+}
+
+function partialAcceptancePartLabel(strategy, index) {
+  if (strategy === 'paragraphs') {
+    return `Paragraph ${index + 1}`;
+  }
+
+  if (strategy === 'lines') {
+    return `Line ${index + 1}`;
+  }
+
+  return `Part ${index + 1}`;
+}
+
 export default function AISidebar({
   documentId,
   documentTitle,
@@ -314,6 +419,8 @@ export default function AISidebar({
   const [isUndoing, setIsUndoing] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState('');
   const [editedContent, setEditedContent] = useState('');
+  const [partialEntryId, setPartialEntryId] = useState('');
+  const [partialAcceptanceDraft, setPartialAcceptanceDraft] = useState(null);
   const [historyItems, setHistoryItems] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -333,6 +440,10 @@ export default function AISidebar({
   const isBusy = isRunning || isApplying || isUndoing || isCancelling || isClearing;
   const isComposerDisabled = !canUseAI || isApplying || isUndoing;
   const documentText = useMemo(() => htmlToPlainText(content), [content]);
+  const partialAcceptancePreview = useMemo(
+    () => composePartialAcceptanceOutput(partialAcceptanceDraft),
+    [partialAcceptanceDraft]
+  );
   const contextScopeType = attachedSelection?.text?.trim() ? 'selection' : 'document';
   const hasClearableChat = threadEntries.length > 0 || historyItems.length > 0;
   const sidebarInlineStyle = isOpen && isDesktopViewport
@@ -348,6 +459,11 @@ export default function AISidebar({
       Math.max(AI_SIDEBAR_MIN_WIDTH, viewportWidth - 320)
     );
     return Math.min(Math.max(nextWidth, AI_SIDEBAR_MIN_WIDTH), maxAllowed);
+  }, []);
+
+  const clearPartialAcceptance = useCallback(() => {
+    setPartialEntryId('');
+    setPartialAcceptanceDraft(null);
   }, []);
 
   const loadThread = useCallback(
@@ -510,16 +626,17 @@ export default function AISidebar({
       setThreadError('');
       setStatusMessage('');
       setErrorMessage('');
-      setIsClearing(false);
+    setIsClearing(false);
       setEditingEntryId('');
     setEditedContent('');
+    clearPartialAcceptance();
     setHistoryItems([]);
     setHistoryLoading(false);
     setHistoryError('');
     setSelectedHistoryId('');
     setSelectedHistoryDetail(null);
     setHistoryDetailLoading(false);
-  }, [documentId]);
+  }, [clearPartialAcceptance, documentId]);
 
   useEffect(() => {
     if (selection?.text?.trim()) {
@@ -1068,6 +1185,7 @@ export default function AISidebar({
       setSelectedHistoryDetail(null);
       setEditingEntryId('');
       setEditedContent('');
+      clearPartialAcceptance();
       setStatusMessage('AI chat cleared.');
     } catch (error) {
       if (isMountedRef.current) {
@@ -1138,6 +1256,100 @@ export default function AISidebar({
     return Boolean(entry.suggestion?.stale) || hasUnsavedChanges || currentRevision !== entry.source_revision;
   }
 
+  function handleStartPartialAcceptance(entry) {
+    const draft = createPartialAcceptanceDraft(entry, documentText);
+    if (!draft) {
+      setErrorMessage('This suggestion does not have enough distinct parts for partial acceptance.');
+      return;
+    }
+
+    setErrorMessage('');
+    setStatusMessage('');
+    setEditingEntryId('');
+    setEditedContent('');
+    setPartialEntryId(entry.entry_id);
+    setPartialAcceptanceDraft(draft);
+  }
+
+  function handlePartialAcceptanceChoice(partId, useSuggestion) {
+    setPartialAcceptanceDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        parts: current.parts.map((part) => (
+          part.id === partId
+            ? { ...part, useSuggestion }
+            : part
+        )),
+      };
+    });
+  }
+
+  async function handleApplyPartialAcceptance(entry) {
+    const nextOutput = partialAcceptancePreview.trim();
+    if (!nextOutput) {
+      setErrorMessage('Choose at least one part to apply.');
+      return;
+    }
+
+    if (isEntryStale(entry)) {
+      setErrorMessage(
+        hasUnsavedChanges
+          ? 'You have local edits newer than this suggestion. Save them and run AI again.'
+          : 'This suggestion is stale because the document changed. Run AI again.'
+      );
+      return;
+    }
+
+    setIsApplying(true);
+    setErrorMessage('');
+
+    try {
+      if (entry.scope_type === 'selection') {
+        await applySelectionSuggestion({
+          replacement: nextOutput,
+          selection: buildSelectionSnapshot(entry),
+        });
+      } else {
+        await applyEditedDocumentSuggestion({
+          suggestionId: entry.suggestion.suggestion_id,
+          editedOutput: nextOutput,
+          applyRange: {
+            start: 0,
+            end: content.length,
+          },
+        });
+      }
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setStatusMessage(
+        entry.scope_type === 'selection'
+          ? 'Partially accepted suggestion applied to the selected text.'
+          : 'Partially accepted suggestion applied to the document.'
+      );
+      setEditingEntryId('');
+      setEditedContent('');
+      clearPartialAcceptance();
+      void loadThread({ silent: true });
+      void loadHistory({ selectedInteractionId: entry.interaction_id, silent: true });
+    } catch (error) {
+      if (!isMountedRef.current) {
+        return;
+      }
+      setErrorMessage(error.message || 'Failed to apply the partially accepted suggestion.');
+    } finally {
+      if (isMountedRef.current) {
+        setIsApplying(false);
+      }
+    }
+  }
+
   async function handleApply(entry) {
     if (!entry?.suggestion?.suggestion_id || entry.review_only) {
       return;
@@ -1182,6 +1394,7 @@ export default function AISidebar({
       );
       setEditingEntryId('');
       setEditedContent('');
+      clearPartialAcceptance();
       void loadThread({ silent: true });
       void loadHistory({ selectedInteractionId: entry.interaction_id, silent: true });
     } catch (error) {
@@ -1243,6 +1456,7 @@ export default function AISidebar({
       );
       setEditingEntryId('');
       setEditedContent('');
+      clearPartialAcceptance();
       void loadThread({ silent: true });
       void loadHistory({ selectedInteractionId: entry.interaction_id, silent: true });
     } catch (error) {
@@ -1277,6 +1491,7 @@ export default function AISidebar({
       setStatusMessage('Suggestion discarded.');
       setEditingEntryId('');
       setEditedContent('');
+      clearPartialAcceptance();
       void loadThread({ silent: true });
       void loadHistory({ selectedInteractionId: entry.interaction_id, silent: true });
     } catch (error) {
@@ -1303,6 +1518,7 @@ export default function AISidebar({
       }
 
       setStatusMessage('AI change undone.');
+      clearPartialAcceptance();
       void loadThread({ silent: true });
       void loadHistory({ silent: true });
     } catch (error) {
@@ -1319,6 +1535,11 @@ export default function AISidebar({
 
   function renderSuggestionCard(entry) {
     const isEditing = editingEntryId === entry.entry_id;
+    const isPartiallyAccepting = partialEntryId === entry.entry_id && Boolean(partialAcceptanceDraft);
+    const partialDraft = isPartiallyAccepting
+      ? partialAcceptanceDraft
+      : createPartialAcceptanceDraft(entry, documentText);
+    const canPartiallyAccept = Boolean(partialDraft);
     const entryStale = isEntryStale(entry);
     const hasPartialOutput = entry.status === 'failed' && Boolean(entry.content?.trim());
     return (
@@ -1346,6 +1567,66 @@ export default function AISidebar({
               disabled={isBusy}
             />
           </label>
+        ) : isPartiallyAccepting ? (
+          <div className="ai-partial-accept-shell">
+            <div className="ai-sidebar-notice">
+              Choose which parts should keep the original text and which should use the AI version.
+            </div>
+
+            <div className="ai-partial-accept-list">
+              {partialAcceptanceDraft.parts.map((part, index) => (
+                <section key={part.id} className="ai-partial-accept-card">
+                  <div className="ai-partial-accept-top">
+                    <span className="ai-selection-label">
+                      {partialAcceptancePartLabel(partialAcceptanceDraft.strategy, index)}
+                    </span>
+                    <div className="ai-partial-accept-toggle">
+                      <button
+                        type="button"
+                        className={`btn ${part.useSuggestion ? 'btn-secondary' : 'btn-primary'}`}
+                        onClick={() => handlePartialAcceptanceChoice(part.id, false)}
+                        disabled={isBusy}
+                        aria-label={`Keep original for ${partialAcceptancePartLabel(partialAcceptanceDraft.strategy, index).toLowerCase()}`}
+                      >
+                        Keep original
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn ${part.useSuggestion ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => handlePartialAcceptanceChoice(part.id, true)}
+                        disabled={isBusy}
+                        aria-label={`Use AI for ${partialAcceptancePartLabel(partialAcceptanceDraft.strategy, index).toLowerCase()}`}
+                      >
+                        Use AI
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="ai-partial-accept-grid">
+                    <div className={`ai-partial-choice ${!part.useSuggestion ? 'ai-partial-choice-selected' : ''}`}>
+                      <span className="ai-selection-label">Original</span>
+                      <p className="ai-partial-choice-text">
+                        {part.originalText || 'No original text for this part.'}
+                      </p>
+                    </div>
+                    <div className={`ai-partial-choice ${part.useSuggestion ? 'ai-partial-choice-selected' : ''}`}>
+                      <span className="ai-selection-label">AI</span>
+                      <p className="ai-partial-choice-text">
+                        {part.suggestionText || 'The AI left this part blank.'}
+                      </p>
+                    </div>
+                  </div>
+                </section>
+              ))}
+            </div>
+
+            <div className="ai-selection-preview ai-selection-preview-result">
+              <span className="ai-selection-label">Partial acceptance preview</span>
+              <p className="ai-selection-text">
+                {partialAcceptancePreview || 'Select at least one part to apply.'}
+              </p>
+            </div>
+          </div>
         ) : (
           <div className="ai-result-output">{entry.content}</div>
         )}
@@ -1385,6 +1666,37 @@ export default function AISidebar({
                 Cancel edit
               </button>
             </>
+          ) : isPartiallyAccepting ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void handleApplyPartialAcceptance(entry)}
+                disabled={isBusy || entryStale || !partialAcceptancePreview.trim()}
+              >
+                Apply partial
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setEditingEntryId(entry.entry_id);
+                  setEditedContent(partialAcceptancePreview);
+                  clearPartialAcceptance();
+                }}
+                disabled={isBusy || !partialAcceptancePreview.trim()}
+              >
+                Edit partial
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => clearPartialAcceptance()}
+                disabled={isBusy}
+              >
+                Cancel partial
+              </button>
+            </>
           ) : (
             <>
               <button
@@ -1399,6 +1711,7 @@ export default function AISidebar({
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => {
+                  clearPartialAcceptance();
                   setEditingEntryId(entry.entry_id);
                   setEditedContent(entry.content);
                 }}
@@ -1406,6 +1719,16 @@ export default function AISidebar({
               >
                 Edit
               </button>
+              {canPartiallyAccept ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => handleStartPartialAcceptance(entry)}
+                  disabled={isBusy || entryStale}
+                >
+                  Partial accept
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="btn btn-ghost"
