@@ -161,6 +161,9 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
         "session_token",
         "document_id",
         "revision",
+        "collab_version",
+        "content_snapshot",
+        "line_spacing_snapshot",
         "realtime_url",
         "resync_required",
         "missed_revision_count",
@@ -170,6 +173,9 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
     assert session_body["session_token"]
     assert session_body["document_id"] == document_id
     assert session_body["revision"] == 0
+    assert session_body["collab_version"] == 0
+    assert session_body["content_snapshot"] == initial_content
+    assert session_body["line_spacing_snapshot"] == 1.15
     assert (
         session_body["realtime_url"]
         == f"/v1/documents/{document_id}/sessions/sess_1/ws"

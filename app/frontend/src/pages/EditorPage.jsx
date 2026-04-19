@@ -17,7 +17,6 @@ import {
 import { buildDocumentPageTitle, usePageTitle } from '../pageTitle';
 
 const AUTO_SAVE_DELAY = 1_500;
-const REALTIME_SEND_DELAY = 450;
 
 function resolveRole(docData, userData) {
   if (!userData) {
@@ -60,6 +59,9 @@ export default function EditorPage() {
   const [realtimeStatus, setRealtimeStatus] = useState('connecting');
   const [realtimeMessage, setRealtimeMessage] = useState('');
   const [conflictState, setConflictState] = useState(null);
+  const [collabVersion, setCollabVersion] = useState(null);
+  const [collabEnabled, setCollabEnabled] = useState(false);
+  const [collabResetKey, setCollabResetKey] = useState(0);
   const [error, setError] = useState('');
   usePageTitle(buildDocumentPageTitle(title || doc?.title));
 
@@ -69,6 +71,7 @@ export default function EditorPage() {
   const titleRef = useRef('');
   const revisionRef = useRef(0);
   const lineSpacingRef = useRef(1.15);
+  const collabVersionRef = useRef(0);
   const userRef = useRef(null);
   const selectionRef = useRef(null);
   const lastAiUndoRef = useRef(null);
@@ -125,6 +128,8 @@ export default function EditorPage() {
       nextRevision,
       nextLatestVersionId,
       updatedAt,
+      nextCollabVersion,
+      resetCollaboration = false,
     }) => {
       const resolvedLineSpacing = nextLineSpacing ?? lineSpacingRef.current ?? 1.15;
       setContent(nextContent);
@@ -133,6 +138,13 @@ export default function EditorPage() {
       lineSpacingRef.current = resolvedLineSpacing;
       setRevision(nextRevision);
       revisionRef.current = nextRevision;
+      if (typeof nextCollabVersion === 'number') {
+        setCollabVersion(nextCollabVersion);
+        collabVersionRef.current = nextCollabVersion;
+      }
+      if (resetCollaboration) {
+        setCollabResetKey((current) => current + 1);
+      }
       isDirtyRef.current = false;
       setSaveStatus('saved');
       setDoc((current) => {
@@ -158,6 +170,10 @@ export default function EditorPage() {
 
   useEffect(() => {
     clearLastAiUndo();
+    setCollabVersion(null);
+    collabVersionRef.current = 0;
+    setCollabEnabled(false);
+    setCollabResetKey((current) => current + 1);
   }, [clearLastAiUndo, id]);
 
   useEffect(() => {
@@ -289,6 +305,25 @@ export default function EditorPage() {
     }
   }, [performSaveContent]);
 
+  const broadcastFullSnapshotUpdate = useCallback((saveSource = 'manual') => {
+    if (
+      typeof WebSocket === 'undefined'
+      || socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    socketRef.current.send(
+      JSON.stringify({
+        type: 'snapshot_update',
+        content: contentRef.current,
+        line_spacing: lineSpacingRef.current,
+        revision: revisionRef.current,
+        save_source: saveSource,
+      })
+    );
+  }, []);
+
   const ensureSavedDocument = useCallback(async ({ requireUndoBaseline = false } = {}) => {
     const saved = await saveContent();
 
@@ -338,7 +373,7 @@ export default function EditorPage() {
   }, [id, saveContent]);
 
   useEffect(() => {
-    if (role === 'viewer' || !doc || saveStatus !== 'unsaved' || realtimeStatus === 'connected') {
+    if (role === 'viewer' || !doc || saveStatus !== 'unsaved') {
       return undefined;
     }
 
@@ -377,27 +412,45 @@ export default function EditorPage() {
     return () => window.removeEventListener('beforeunload', handleUnload);
   }, [id]);
 
-  function handleContentChange(newContent) {
-    clearLastAiUndo();
+  function handleContentChange(newContent, meta = {}) {
+    const isRemote = Boolean(meta.isRemote);
+    const hadUnsavedChanges = isDirtyRef.current;
+    if (!isRemote) {
+      clearLastAiUndo();
+    }
     setContent(newContent);
     contentRef.current = newContent;
-    setSelection(null);
-    selectionRef.current = null;
-    isDirtyRef.current = true;
-    setSaveStatus('unsaved');
-    setRealtimeMessage('');
-    writeOfflineDraft(id, {
-      content: newContent,
-      lineSpacing: lineSpacingRef.current,
-      revision: revisionRef.current,
-      updatedAt: Date.now(),
-    });
+    if (!isRemote) {
+      setSelection(null);
+      selectionRef.current = null;
+    }
+    isDirtyRef.current = isRemote
+      ? hadUnsavedChanges || Boolean(meta.hasPendingCollaborationSteps)
+      : true;
+    setSaveStatus(isDirtyRef.current ? 'unsaved' : 'saved');
+    setRealtimeMessage(isRemote ? realtimeMessage : '');
+    if (isDirtyRef.current) {
+      writeOfflineDraft(id, {
+        content: newContent,
+        lineSpacing: lineSpacingRef.current,
+        revision: revisionRef.current,
+        updatedAt: Date.now(),
+      });
+    } else {
+      clearOfflineDraft(id);
+    }
 
     if (
+      !isRemote
+      && 
       typeof WebSocket !== 'undefined'
       && socketRef.current?.readyState === WebSocket.OPEN
     ) {
       socketRef.current.send(JSON.stringify({ type: 'typing', active: true }));
+    }
+
+    if (typeof meta.collaborationVersion === 'number') {
+      collabVersionRef.current = meta.collaborationVersion;
     }
   }
 
@@ -409,6 +462,27 @@ export default function EditorPage() {
     setSelection(nextSelection);
     selectionRef.current = nextSelection;
   }
+
+  const handleSendableSteps = useCallback((payload) => {
+    if (
+      role === 'viewer'
+      || typeof WebSocket === 'undefined'
+      || socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+
+    socketRef.current.send(
+      JSON.stringify({
+        type: 'step_update',
+        version: payload.version,
+        client_id: payload.clientId,
+        steps: payload.steps,
+        content: payload.content,
+        line_spacing: payload.lineSpacing,
+      })
+    );
+  }, [role]);
 
   function handleLineSpacingChange(nextLineSpacing) {
     clearLastAiUndo();
@@ -436,6 +510,18 @@ export default function EditorPage() {
       revision: revisionRef.current,
       updatedAt: Date.now(),
     });
+
+    if (
+      typeof WebSocket !== 'undefined'
+      && socketRef.current?.readyState === WebSocket.OPEN
+    ) {
+      socketRef.current.send(
+        JSON.stringify({
+          type: 'line_spacing_update',
+          line_spacing: normalizedLineSpacing,
+        })
+      );
+    }
   }
 
   async function handleTitleChange(newTitle) {
@@ -482,7 +568,8 @@ export default function EditorPage() {
       method: 'POST',
     });
     await refreshDocument();
-  }, [clearLastAiUndo, id, refreshDocument, saveContent]);
+    broadcastFullSnapshotUpdate('manual');
+  }, [broadcastFullSnapshotUpdate, clearLastAiUndo, id, refreshDocument, saveContent]);
 
   const getAiUndoSnapshot = useCallback(() => {
     const currentDoc = docRef.current;
@@ -510,8 +597,9 @@ export default function EditorPage() {
     });
 
     await refreshDocument();
+    broadcastFullSnapshotUpdate('manual');
     rememberLastAiUndo(undoSnapshot);
-  }, [clearLastAiUndo, getAiUndoSnapshot, refreshDocument, rememberLastAiUndo]);
+  }, [broadcastFullSnapshotUpdate, clearLastAiUndo, getAiUndoSnapshot, refreshDocument, rememberLastAiUndo]);
 
   const applyEditedDocumentSuggestion = useCallback(async ({ suggestionId, editedOutput, applyRange }) => {
     clearLastAiUndo();
@@ -526,8 +614,9 @@ export default function EditorPage() {
     });
 
     await refreshDocument();
+    broadcastFullSnapshotUpdate('manual');
     rememberLastAiUndo(undoSnapshot);
-  }, [clearLastAiUndo, getAiUndoSnapshot, refreshDocument, rememberLastAiUndo]);
+  }, [broadcastFullSnapshotUpdate, clearLastAiUndo, getAiUndoSnapshot, refreshDocument, rememberLastAiUndo]);
 
   const applySelectionSuggestion = useCallback(async ({ replacement, selection: selectionOverride }) => {
     clearLastAiUndo();
@@ -578,12 +667,13 @@ export default function EditorPage() {
         method: 'POST',
       });
       await refreshDocument();
+      broadcastFullSnapshotUpdate('manual');
       clearLastAiUndo();
     } catch (error) {
       clearLastAiUndo();
       throw error;
     }
-  }, [clearLastAiUndo, id, refreshDocument]);
+  }, [broadcastFullSnapshotUpdate, clearLastAiUndo, id, refreshDocument]);
 
   async function handleBack() {
     const saved = await saveContent({ force: true, saveSource: 'manual' });
@@ -602,6 +692,8 @@ export default function EditorPage() {
       nextLineSpacing: conflictState.line_spacing,
       nextRevision: conflictState.revision,
       nextLatestVersionId: conflictState.latest_version_id,
+      nextCollabVersion: conflictState.collab_version,
+      resetCollaboration: true,
     });
     setConflictState(null);
     setRealtimeMessage('Loaded the latest remote version.');
@@ -651,9 +743,15 @@ export default function EditorPage() {
 
     async function connectRealtime({ reconnecting = false } = {}) {
       if (!localStorage.getItem('access_token')) {
+        setCollabEnabled(false);
+        setCollabVersion(0);
+        collabVersionRef.current = 0;
         return;
       }
       if (typeof WebSocket === 'undefined') {
+        setCollabEnabled(false);
+        setCollabVersion(0);
+        collabVersionRef.current = 0;
         setRealtimeStatus('unsupported');
         setRealtimeMessage('This browser does not support realtime collaboration.');
         return;
@@ -677,8 +775,28 @@ export default function EditorPage() {
           return;
         }
 
+        const bootstrapCollabVersion = Number(bootstrap.collab_version) || 0;
+        const bootstrapLineSpacing = Number(bootstrap.line_spacing_snapshot) || lineSpacingRef.current;
+        setCollabEnabled(true);
+        setCollabVersion(bootstrapCollabVersion);
+        collabVersionRef.current = bootstrapCollabVersion;
+
+        if (!isDirtyRef.current) {
+          syncRealtimeDocument({
+            nextContent: bootstrap.content_snapshot ?? contentRef.current,
+            nextLineSpacing: bootstrapLineSpacing,
+            nextRevision: revisionRef.current,
+            nextLatestVersionId: docRef.current?.latest_version_id ?? null,
+            nextCollabVersion: bootstrapCollabVersion,
+            resetCollaboration: reconnecting,
+          });
+        }
+
         const accessToken = localStorage.getItem('access_token');
         if (!accessToken) {
+          setCollabEnabled(false);
+          setCollabVersion(0);
+          collabVersionRef.current = 0;
           setRealtimeStatus('offline');
           setRealtimeMessage('Your session expired. Refresh the page to sign in again.');
           return;
@@ -712,13 +830,19 @@ export default function EditorPage() {
         nextSocket.onmessage = (event) => {
           const payload = JSON.parse(event.data);
           if (payload.type === 'session_joined') {
+            const nextCollabVersion = Number(payload.collab_version) || 0;
+            setCollabEnabled(true);
             if (!isDirtyRef.current) {
               syncRealtimeDocument({
                 nextContent: payload.content,
                 nextLineSpacing: payload.line_spacing,
                 nextRevision: payload.revision,
                 nextLatestVersionId: payload.latest_version_id,
+                nextCollabVersion,
               });
+            } else {
+              setCollabVersion(nextCollabVersion);
+              collabVersionRef.current = nextCollabVersion;
             }
             setPresence(payload.presence || []);
             setRealtimeStatus('connected');
@@ -733,6 +857,7 @@ export default function EditorPage() {
           if (payload.type === 'content_updated') {
             const actorUserId = payload.actor_user_id;
             const isOwnUpdate = actorUserId && actorUserId === userRef.current?.user_id;
+            const nextCollabVersion = Number(payload.collab_version) || 0;
 
             if (isOwnUpdate || !isDirtyRef.current) {
               syncRealtimeDocument({
@@ -741,6 +866,8 @@ export default function EditorPage() {
                 nextRevision: payload.revision,
                 nextLatestVersionId: payload.latest_version_id,
                 updatedAt: payload.saved_at,
+                nextCollabVersion,
+                resetCollaboration: Boolean(payload.collab_reset),
               });
               setConflictState(null);
               if (!isOwnUpdate && payload.actor_display_name) {
@@ -756,8 +883,101 @@ export default function EditorPage() {
               line_spacing: payload.line_spacing,
               revision: payload.revision,
               latest_version_id: payload.latest_version_id,
+              collab_version: nextCollabVersion,
               message: `${payload.actor_display_name || 'Another collaborator'} updated this document while you were still editing.`,
             });
+            return;
+          }
+
+          if (payload.type === 'line_spacing_updated') {
+            const nextLineSpacing = Number(payload.line_spacing) || lineSpacingRef.current;
+            setLineSpacing(nextLineSpacing);
+            lineSpacingRef.current = nextLineSpacing;
+            setDoc((current) => {
+              if (!current) {
+                return current;
+              }
+
+              const nextDoc = {
+                ...current,
+                line_spacing: nextLineSpacing,
+              };
+              docRef.current = nextDoc;
+              return nextDoc;
+            });
+            if (typeof payload.collab_version === 'number') {
+              setCollabVersion(payload.collab_version);
+              collabVersionRef.current = payload.collab_version;
+            }
+            if (payload.actor_user_id !== userRef.current?.user_id && payload.actor_display_name) {
+              setRealtimeMessage(`${payload.actor_display_name} updated document formatting.`);
+            }
+            return;
+          }
+
+          if (payload.type === 'steps_applied') {
+            const editor = editorRef.current;
+            const nextCollabVersion = Number(payload.collab_version) || collabVersionRef.current;
+            const applied = editor?.applyRemoteSteps?.({
+              steps: payload.steps || [],
+              clientIds: payload.client_ids || [],
+            });
+
+            if (!applied?.applied && !isDirtyRef.current) {
+              syncRealtimeDocument({
+                nextContent: payload.content,
+                nextLineSpacing: payload.line_spacing,
+                nextRevision: revisionRef.current,
+                nextLatestVersionId: docRef.current?.latest_version_id ?? null,
+                nextCollabVersion,
+                resetCollaboration: true,
+              });
+            } else {
+              setCollabVersion(nextCollabVersion);
+              collabVersionRef.current = nextCollabVersion;
+            }
+
+            if (
+              payload.actor_user_id !== userRef.current?.user_id
+              && !isDirtyRef.current
+              && payload.actor_display_name
+            ) {
+              setRealtimeMessage(`${payload.actor_display_name} updated the document.`);
+            }
+            return;
+          }
+
+          if (payload.type === 'steps_resync') {
+            const nextCollabVersion = Number(payload.collab_version) || 0;
+            if (payload.full_reset) {
+              syncRealtimeDocument({
+                nextContent: payload.content,
+                nextLineSpacing: payload.line_spacing,
+                nextRevision: payload.revision ?? revisionRef.current,
+                nextLatestVersionId: payload.latest_version_id ?? docRef.current?.latest_version_id,
+                nextCollabVersion,
+                resetCollaboration: true,
+              });
+            } else {
+              const applied = editorRef.current?.applyRemoteSteps?.({
+                steps: payload.steps || [],
+                clientIds: payload.client_ids || [],
+              });
+              if (!applied?.applied) {
+                syncRealtimeDocument({
+                  nextContent: payload.content,
+                  nextLineSpacing: payload.line_spacing,
+                  nextRevision: payload.revision ?? revisionRef.current,
+                  nextLatestVersionId: payload.latest_version_id ?? docRef.current?.latest_version_id,
+                  nextCollabVersion,
+                  resetCollaboration: true,
+                });
+              } else {
+                setCollabVersion(nextCollabVersion);
+                collabVersionRef.current = nextCollabVersion;
+              }
+            }
+            setRealtimeMessage('Realtime re-synced with the latest collaboration state.');
             return;
           }
 
@@ -767,6 +987,7 @@ export default function EditorPage() {
               line_spacing: payload.line_spacing,
               revision: payload.revision,
               latest_version_id: payload.latest_version_id,
+              collab_version: payload.collab_version ?? collabVersionRef.current,
               message: payload.message,
             });
             return;
@@ -813,6 +1034,10 @@ export default function EditorPage() {
       } catch (nextError) {
         if (!cancelled) {
           setPresence([]);
+          setCollabEnabled(false);
+          if (collabVersionRef.current === 0) {
+            setCollabVersion(0);
+          }
           setRealtimeStatus('offline');
           setRealtimeMessage(nextError.message || 'Realtime collaboration is unavailable right now.');
         }
@@ -836,35 +1061,7 @@ export default function EditorPage() {
       }
       setPresence([]);
     };
-  }, [doc, id, syncRealtimeDocument, user]);
-
-  useEffect(() => {
-    if (
-      role === 'viewer'
-      || !doc
-      || saveStatus !== 'unsaved'
-      || realtimeStatus !== 'connected'
-      || conflictState
-    ) {
-      return undefined;
-    }
-
-    const timer = window.setTimeout(() => {
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(
-          JSON.stringify({
-            type: 'content_update',
-            content: contentRef.current,
-            line_spacing: lineSpacingRef.current,
-            base_revision: revisionRef.current,
-            save_source: 'autosave',
-          })
-        );
-      }
-    }, REALTIME_SEND_DELAY);
-
-    return () => window.clearTimeout(timer);
-  }, [conflictState, content, doc, lineSpacing, realtimeStatus, role, saveStatus]);
+  }, [doc?.document_id, id, syncRealtimeDocument, user?.id, user?.user_id]);
 
   useEffect(() => {
     if (realtimeStatus !== 'connected' || !socketRef.current) {
@@ -898,6 +1095,10 @@ export default function EditorPage() {
 
   if (!doc) {
     return <div className="editor-loading">Loading document…</div>;
+  }
+
+  if (collabVersion === null) {
+    return <div className="editor-loading">Preparing collaboration…</div>;
   }
 
   return (
@@ -943,9 +1144,13 @@ export default function EditorPage() {
             ref={editorRef}
             content={content}
             onChange={handleContentChange}
+            onSendableSteps={handleSendableSteps}
             onSelectionUpdate={handleSelectionUpdate}
             lineSpacing={lineSpacing}
             onLineSpacingChange={handleLineSpacingChange}
+            collaborationEnabled={collabEnabled}
+            collaborationVersion={collabVersion}
+            collaborationResetKey={collabResetKey}
             readOnly={isReadOnly}
             placeholder="Start writing…"
           />

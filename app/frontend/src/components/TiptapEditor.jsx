@@ -1,8 +1,15 @@
-import { forwardRef, useEffect, useImperativeHandle } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { Extension } from '@tiptap/core';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
+import {
+  collab as prosemirrorCollab,
+  getVersion,
+  receiveTransaction,
+  sendableSteps,
+} from '@tiptap/pm/collab';
+import { Step } from '@tiptap/pm/transform';
 
 const LINE_SPACING_OPTIONS = [
   { value: 1, label: 'Single' },
@@ -26,6 +33,15 @@ function clampLineSpacing(value) {
     return 1.15;
   }
   return Math.min(3, Math.max(1, numeric));
+}
+
+function createCollaborationExtension({ enabled, version }) {
+  return Extension.create({
+    name: 'collaborationBridge',
+    addProseMirrorPlugins() {
+      return enabled ? [prosemirrorCollab({ version })] : [];
+    },
+  });
 }
 
 // Toolbar button component
@@ -184,6 +200,10 @@ function Toolbar({ editor, lineSpacing, onLineSpacingChange }) {
  *   onSelectionUpdate - ({ text, from, to }) => void, called when selection changes
  *   lineSpacing  - unitless line spacing value persisted with the document
  *   onLineSpacingChange - (nextLineSpacing) => void
+ *   collaborationEnabled - enable ProseMirror step-based collaboration
+ *   collaborationVersion - initial collaboration version for the current collaboration snapshot
+ *   collaborationResetKey - forces a collab editor re-initialization after a full snapshot reset
+ *   onSendableSteps - called with locally pending ProseMirror steps that should be sent
  *
  * Ref methods:
  *   getSelectionData() - returns the current selected text and range
@@ -191,6 +211,8 @@ function Toolbar({ editor, lineSpacing, onLineSpacingChange }) {
  *   setSelection({ from, to }) - sets the current editor selection
  *   insertParagraphBreak() - inserts a new paragraph at the current selection
  *   insertHardBreak() - inserts a soft line break at the current selection
+ *   applyRemoteSteps({ steps, clientIds }) - applies remote ProseMirror steps
+ *   getCollaborationVersion() - returns the current collaboration version
  */
 const TiptapEditor = forwardRef(function TiptapEditor(
   {
@@ -201,29 +223,88 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     onSelectionUpdate,
     lineSpacing = 1.15,
     onLineSpacingChange,
+    collaborationEnabled = false,
+    collaborationVersion = 0,
+    collaborationResetKey = 0,
+    onSendableSteps,
   },
   ref
 ) {
   const normalizedLineSpacing = clampLineSpacing(lineSpacing);
+  const applyingRemoteRef = useRef(false);
+  const lastSentSignatureRef = useRef('');
+  const lineSpacingRef = useRef(normalizedLineSpacing);
+  const changeHandlerRef = useRef(onChange);
+  const sendableStepsHandlerRef = useRef(onSendableSteps);
+  const selectionHandlerRef = useRef(onSelectionUpdate);
+
+  useEffect(() => {
+    lineSpacingRef.current = normalizedLineSpacing;
+  }, [normalizedLineSpacing]);
+
+  useEffect(() => {
+    changeHandlerRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    sendableStepsHandlerRef.current = onSendableSteps;
+  }, [onSendableSteps]);
+
+  useEffect(() => {
+    selectionHandlerRef.current = onSelectionUpdate;
+  }, [onSelectionUpdate]);
+
   const editor = useEditor({
     extensions: [
+      createCollaborationExtension({
+        enabled: collaborationEnabled,
+        version: collaborationVersion,
+      }),
       StarterKit,
       Placeholder.configure({ placeholder }),
       EditorKeymap,
     ],
     content,
     editable: !readOnly,
-    onUpdate({ editor }) {
-      onChange?.(editor.getHTML());
-    },
-    onSelectionUpdate({ editor }) {
-      if (onSelectionUpdate) {
-        const { from, to } = editor.state.selection;
-        const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ');
-        onSelectionUpdate({ text, from, to });
+    onTransaction({ editor }) {
+      const isRemote = applyingRemoteRef.current;
+      const pending = collaborationEnabled ? sendableSteps(editor.state) : null;
+      changeHandlerRef.current?.(editor.getHTML(), {
+        isRemote,
+        hasPendingCollaborationSteps: Boolean(pending?.steps?.length),
+        collaborationVersion: collaborationEnabled ? getVersion(editor.state) : collaborationVersion,
+      });
+
+      if (collaborationEnabled) {
+        if (!pending || pending.steps.length === 0) {
+          lastSentSignatureRef.current = '';
+        } else {
+          const signature = `${pending.version}:${pending.steps.length}:${editor.getHTML().length}`;
+          if (signature !== lastSentSignatureRef.current) {
+            lastSentSignatureRef.current = signature;
+            sendableStepsHandlerRef.current?.({
+              version: pending.version,
+              clientId: String(pending.clientID),
+              steps: pending.steps.map((step) => step.toJSON()),
+              content: editor.getHTML(),
+              lineSpacing: lineSpacingRef.current,
+            });
+          }
+        }
+      }
+
+      if (isRemote) {
+        applyingRemoteRef.current = false;
       }
     },
-  });
+    onSelectionUpdate({ editor }) {
+      if (selectionHandlerRef.current) {
+        const { from, to } = editor.state.selection;
+        const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ');
+        selectionHandlerRef.current({ text, from, to });
+      }
+    },
+  }, [collaborationEnabled, collaborationResetKey]);
 
   // Expose imperative API via ref
   useImperativeHandle(ref, () => ({
@@ -278,7 +359,36 @@ const TiptapEditor = forwardRef(function TiptapEditor(
 
       return editor.chain().focus().setHardBreak().run();
     },
-  }), [editor]);
+    applyRemoteSteps({ steps, clientIds }) {
+      if (!editor || !collaborationEnabled) {
+        return {
+          applied: false,
+          html: editor?.getHTML() ?? '',
+          version: collaborationEnabled ? 0 : collaborationVersion,
+        };
+      }
+
+      const parsedSteps = steps.map((step) => Step.fromJSON(editor.schema, step));
+      applyingRemoteRef.current = true;
+      const transaction = receiveTransaction(editor.state, parsedSteps, clientIds);
+      editor.view.dispatch(transaction);
+      return {
+        applied: true,
+        html: editor.getHTML(),
+        version: getVersion(editor.state),
+      };
+    },
+    getCollaborationVersion() {
+      if (!editor || !collaborationEnabled) {
+        return collaborationVersion;
+      }
+      return getVersion(editor.state);
+    },
+  }), [editor, collaborationEnabled, collaborationVersion]);
+
+  useEffect(() => {
+    lastSentSignatureRef.current = '';
+  }, [collaborationEnabled, collaborationResetKey]);
 
   useEffect(() => {
     if (!editor) return;

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from threading import Lock
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect, status
@@ -28,19 +28,74 @@ class _ConnectedCollaborator:
     typing: bool = False
 
 
+@dataclass
+class _CollabStepBatch:
+    start_version: int
+    steps: list[dict[str, Any]]
+    client_ids: list[str]
+    actor_user_id: int
+    actor_display_name: str
+    created_at: datetime
+
+
+@dataclass
+class _DocumentCollabState:
+    version: int
+    content: str
+    line_spacing: float
+    updated_at: datetime
+    step_batches: list[_CollabStepBatch] = field(default_factory=list)
+
+
 class RealtimeHub:
     def __init__(self) -> None:
         self._connections_by_document: dict[int, dict[str, _ConnectedCollaborator]] = {}
-        self._lock = asyncio.Lock()
+        self._collab_state_by_document: dict[int, _DocumentCollabState] = {}
+        self._lock = Lock()
+
+    def ensure_document_state_sync(
+        self,
+        *,
+        document_id: int,
+        content: str,
+        line_spacing: float,
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        with self._lock:
+            state = self._collab_state_by_document.get(document_id)
+            if state is None or updated_at > state.updated_at:
+                state = _DocumentCollabState(
+                    version=0,
+                    content=content,
+                    line_spacing=line_spacing,
+                    updated_at=updated_at,
+                )
+                self._collab_state_by_document[document_id] = state
+            return self._snapshot(state)
+
+    async def ensure_document_state(
+        self,
+        *,
+        document_id: int,
+        content: str,
+        line_spacing: float,
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        return self.ensure_document_state_sync(
+            document_id=document_id,
+            content=content,
+            line_spacing=line_spacing,
+            updated_at=updated_at,
+        )
 
     async def connect(self, collaborator: _ConnectedCollaborator) -> None:
-        async with self._lock:
+        with self._lock:
             self._connections_by_document.setdefault(collaborator.document_id, {})[
                 collaborator.session_id
             ] = collaborator
 
     async def disconnect(self, document_id: int, session_id: str) -> None:
-        async with self._lock:
+        with self._lock:
             document_connections = self._connections_by_document.get(document_id)
             if not document_connections:
                 return
@@ -56,7 +111,7 @@ class RealtimeHub:
         last_known_revision: int | None = None,
         typing: bool | None = None,
     ) -> list[dict[str, Any]]:
-        async with self._lock:
+        with self._lock:
             collaborator = self._connections_by_document.get(document_id, {}).get(session_id)
             if collaborator is None:
                 return []
@@ -68,8 +123,160 @@ class RealtimeHub:
             return self._presence_snapshot(document_id)
 
     async def get_presence_snapshot(self, document_id: int) -> list[dict[str, Any]]:
-        async with self._lock:
+        with self._lock:
             return self._presence_snapshot(document_id)
+
+    async def get_collab_snapshot(self, document_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            state = self._collab_state_by_document.get(document_id)
+            return None if state is None else self._snapshot(state)
+
+    async def get_steps_since(
+        self,
+        *,
+        document_id: int,
+        version: int,
+    ) -> dict[str, Any]:
+        with self._lock:
+            state = self._collab_state_by_document.get(document_id)
+            if state is None:
+                return {
+                    "full_reset": True,
+                    "version": 0,
+                    "content": "",
+                    "line_spacing": 1.15,
+                    "steps": [],
+                    "client_ids": [],
+                }
+
+            if version == state.version:
+                return {
+                    **self._snapshot(state),
+                    "full_reset": False,
+                    "steps": [],
+                    "client_ids": [],
+                }
+
+            earliest_version = (
+                state.step_batches[0].start_version
+                if state.step_batches
+                else state.version
+            )
+            if version > state.version or version < earliest_version:
+                return {
+                    **self._snapshot(state),
+                    "full_reset": True,
+                    "steps": [],
+                    "client_ids": [],
+                }
+
+            missing_steps: list[dict[str, Any]] = []
+            missing_client_ids: list[str] = []
+            for batch in state.step_batches:
+                batch_end = batch.start_version + len(batch.steps)
+                if batch_end <= version:
+                    continue
+                slice_start = max(version - batch.start_version, 0)
+                missing_steps.extend(batch.steps[slice_start:])
+                missing_client_ids.extend(batch.client_ids[slice_start:])
+
+            return {
+                **self._snapshot(state),
+                "full_reset": False,
+                "steps": missing_steps,
+                "client_ids": missing_client_ids,
+            }
+
+    async def apply_steps(
+        self,
+        *,
+        document_id: int,
+        version: int,
+        steps: list[dict[str, Any]],
+        client_id: str,
+        content: str,
+        line_spacing: float,
+        actor_user_id: int,
+        actor_display_name: str,
+    ) -> dict[str, Any]:
+        with self._lock:
+            state = self._collab_state_by_document.get(document_id)
+            if state is None:
+                state = _DocumentCollabState(
+                    version=0,
+                    content=content,
+                    line_spacing=line_spacing,
+                    updated_at=utc_now(),
+                )
+                self._collab_state_by_document[document_id] = state
+
+            if version != state.version:
+                return {
+                    "accepted": False,
+                    **self._snapshot(state),
+                    **self._missing_steps_payload(state, version),
+                }
+
+            normalized_client_ids = [client_id for _ in steps]
+            batch = _CollabStepBatch(
+                start_version=state.version,
+                steps=steps,
+                client_ids=normalized_client_ids,
+                actor_user_id=actor_user_id,
+                actor_display_name=actor_display_name,
+                created_at=utc_now(),
+            )
+            state.step_batches.append(batch)
+            state.version += len(steps)
+            state.content = content
+            state.line_spacing = line_spacing
+            state.updated_at = utc_now()
+
+            return {
+                "accepted": True,
+                **self._snapshot(state),
+                "steps": steps,
+                "client_ids": normalized_client_ids,
+            }
+
+    async def update_line_spacing(
+        self,
+        *,
+        document_id: int,
+        line_spacing: float,
+    ) -> dict[str, Any]:
+        with self._lock:
+            state = self._collab_state_by_document.get(document_id)
+            if state is None:
+                state = _DocumentCollabState(
+                    version=0,
+                    content="",
+                    line_spacing=line_spacing,
+                    updated_at=utc_now(),
+                )
+                self._collab_state_by_document[document_id] = state
+            else:
+                state.line_spacing = line_spacing
+                state.updated_at = utc_now()
+            return self._snapshot(state)
+
+    async def reset_snapshot(
+        self,
+        *,
+        document_id: int,
+        content: str,
+        line_spacing: float,
+        updated_at: datetime,
+    ) -> dict[str, Any]:
+        with self._lock:
+            state = _DocumentCollabState(
+                version=0,
+                content=content,
+                line_spacing=line_spacing,
+                updated_at=updated_at,
+            )
+            self._collab_state_by_document[document_id] = state
+            return self._snapshot(state)
 
     async def send_json(
         self,
@@ -78,14 +285,14 @@ class RealtimeHub:
         session_id: str,
         payload: dict[str, Any],
     ) -> None:
-        async with self._lock:
+        with self._lock:
             collaborator = self._connections_by_document.get(document_id, {}).get(session_id)
             websocket = collaborator.websocket if collaborator else None
         if websocket is not None:
             await websocket.send_json(payload)
 
     async def broadcast_json(self, *, document_id: int, payload: dict[str, Any]) -> None:
-        async with self._lock:
+        with self._lock:
             sockets = [
                 collaborator.websocket
                 for collaborator in self._connections_by_document.get(document_id, {}).values()
@@ -110,6 +317,47 @@ class RealtimeHub:
                 key=lambda candidate: (candidate.joined_at, candidate.user_id),
             )
         ]
+
+    def _snapshot(self, state: _DocumentCollabState) -> dict[str, Any]:
+        return {
+            "version": state.version,
+            "content": state.content,
+            "line_spacing": state.line_spacing,
+            "updated_at": utc_z(state.updated_at),
+        }
+
+    def _missing_steps_payload(
+        self,
+        state: _DocumentCollabState,
+        version: int,
+    ) -> dict[str, Any]:
+        earliest_version = (
+            state.step_batches[0].start_version
+            if state.step_batches
+            else state.version
+        )
+        if version > state.version or version < earliest_version:
+            return {
+                "full_reset": True,
+                "steps": [],
+                "client_ids": [],
+            }
+
+        missing_steps: list[dict[str, Any]] = []
+        missing_client_ids: list[str] = []
+        for batch in state.step_batches:
+            batch_end = batch.start_version + len(batch.steps)
+            if batch_end <= version:
+                continue
+            slice_start = max(version - batch.start_version, 0)
+            missing_steps.extend(batch.steps[slice_start:])
+            missing_client_ids.extend(batch.client_ids[slice_start:])
+
+        return {
+            "full_reset": False,
+            "steps": missing_steps,
+            "client_ids": missing_client_ids,
+        }
 
 
 class CollaborationService:
@@ -148,6 +396,12 @@ class CollaborationService:
             document_id=document_id,
             current_user=current_user,
         )
+        collab_state = await self._hub.ensure_document_state(
+            document_id=access.document.id,
+            content=access.document.content,
+            line_spacing=access.document.line_spacing,
+            updated_at=access.document.updated_at,
+        )
 
         await websocket.accept()
         await self._hub.connect(
@@ -170,8 +424,9 @@ class CollaborationService:
                 "session_id": session.session_id,
                 "document_id": access.document.id,
                 "revision": access.current_revision,
-                "content": access.document.content,
-                "line_spacing": access.document.line_spacing,
+                "content": collab_state["content"],
+                "line_spacing": collab_state["line_spacing"],
+                "collab_version": collab_state["version"],
                 "presence": await self._hub.get_presence_snapshot(access.document.id),
             },
         )
@@ -230,21 +485,196 @@ class CollaborationService:
                 document_id=document_id,
                 current_user=current_user,
             )
+            requested_version = self._coerce_int(payload.get("version"), default=0)
+            missing = await self._hub.get_steps_since(
+                document_id=resolved_document_id,
+                version=requested_version,
+            )
             await self._hub.send_json(
                 document_id=resolved_document_id,
                 session_id=session_id,
                 payload={
-                    "type": "content_updated",
-                    "document_id": access.document.id,
-                    "content": access.document.content,
-                    "line_spacing": access.document.line_spacing,
+                    "type": "steps_resync",
+                    "collab_version": missing["version"],
+                    "full_reset": missing["full_reset"],
+                    "steps": missing["steps"],
+                    "client_ids": missing["client_ids"],
+                    "content": missing["content"],
+                    "line_spacing": missing["line_spacing"],
                     "revision": access.current_revision,
                     "latest_version_id": access.document.latest_version_id,
-                    "actor_user_id": None,
-                    "actor_display_name": None,
-                    "saved_at": utc_z(access.document.updated_at),
                 },
             )
+            return
+
+        if message_type == "line_spacing_update":
+            try:
+                line_spacing = float(payload.get("line_spacing"))
+            except (TypeError, ValueError):
+                await self._send_validation_error(
+                    document_id=resolved_document_id,
+                    session_id=session_id,
+                    message="Realtime line-spacing payload is invalid.",
+                )
+                return
+
+            access = self._document_service.ensure_edit_access(
+                document_id=document_id,
+                current_user=current_user,
+            )
+            collab_state = await self._hub.update_line_spacing(
+                document_id=resolved_document_id,
+                line_spacing=line_spacing,
+            )
+            persisted_access = self._document_service.persist_live_snapshot(
+                document_id=document_id,
+                current_user=current_user,
+                content=collab_state["content"],
+                line_spacing=collab_state["line_spacing"],
+            )
+            self._session_repository.mark_session_seen(
+                session_id=session_id,
+                last_known_revision=persisted_access.current_revision,
+            )
+            await self._hub.broadcast_json(
+                document_id=resolved_document_id,
+                payload={
+                    "type": "line_spacing_updated",
+                    "document_id": resolved_document_id,
+                    "line_spacing": collab_state["line_spacing"],
+                    "collab_version": collab_state["version"],
+                    "actor_user_id": current_user.id,
+                    "actor_display_name": current_user.display_name,
+                },
+            )
+            await self._broadcast_presence(resolved_document_id)
+            return
+
+        if message_type == "snapshot_update":
+            access = self._document_service.ensure_edit_access(
+                document_id=document_id,
+                current_user=current_user,
+            )
+            content_snapshot = str(payload.get("content") or access.document.content)
+            try:
+                line_spacing = float(payload.get("line_spacing") or access.document.line_spacing)
+            except (TypeError, ValueError):
+                await self._send_validation_error(
+                    document_id=resolved_document_id,
+                    session_id=session_id,
+                    message="Realtime snapshot payload is invalid.",
+                )
+                return
+
+            collab_state = await self._hub.reset_snapshot(
+                document_id=resolved_document_id,
+                content=content_snapshot,
+                line_spacing=line_spacing,
+                updated_at=utc_now(),
+            )
+            await self._hub.broadcast_json(
+                document_id=resolved_document_id,
+                payload={
+                    "type": "content_updated",
+                    "document_id": resolved_document_id,
+                    "content": collab_state["content"],
+                    "line_spacing": collab_state["line_spacing"],
+                    "revision": access.current_revision,
+                    "latest_version_id": access.document.latest_version_id,
+                    "actor_user_id": current_user.id,
+                    "actor_display_name": current_user.display_name,
+                    "saved_at": collab_state["updated_at"],
+                    "collab_version": collab_state["version"],
+                    "collab_reset": True,
+                },
+            )
+            await self._broadcast_presence(resolved_document_id)
+            return
+
+        if message_type == "step_update":
+            access = self._document_service.ensure_edit_access(
+                document_id=document_id,
+                current_user=current_user,
+            )
+            steps = payload.get("steps")
+            version = self._coerce_int(payload.get("version"), default=None)
+            if (
+                version is None
+                or not isinstance(steps, list)
+                or not steps
+                or not all(isinstance(step, dict) for step in steps)
+            ):
+                await self._send_validation_error(
+                    document_id=resolved_document_id,
+                    session_id=session_id,
+                    message="Realtime step payload is invalid.",
+                )
+                return
+
+            content_snapshot = str(payload.get("content") or access.document.content)
+            client_id = str(payload.get("client_id") or session_id)
+            line_spacing = float(payload.get("line_spacing") or access.document.line_spacing)
+
+            result = await self._hub.apply_steps(
+                document_id=resolved_document_id,
+                version=version,
+                steps=steps,
+                client_id=client_id,
+                content=content_snapshot,
+                line_spacing=line_spacing,
+                actor_user_id=current_user.id,
+                actor_display_name=current_user.display_name,
+            )
+
+            if not result["accepted"]:
+                await self._hub.send_json(
+                    document_id=resolved_document_id,
+                    session_id=session_id,
+                    payload={
+                        "type": "steps_resync",
+                        "collab_version": result["version"],
+                        "full_reset": result["full_reset"],
+                        "steps": result["steps"],
+                        "client_ids": result["client_ids"],
+                        "content": result["content"],
+                        "line_spacing": result["line_spacing"],
+                        "revision": access.current_revision,
+                        "latest_version_id": access.document.latest_version_id,
+                    },
+                )
+                return
+
+            persisted_access = self._document_service.persist_live_snapshot(
+                document_id=document_id,
+                current_user=current_user,
+                content=result["content"],
+                line_spacing=result["line_spacing"],
+            )
+            self._session_repository.mark_session_seen(
+                session_id=session_id,
+                last_known_revision=persisted_access.current_revision,
+            )
+            await self._hub.update_state(
+                document_id=resolved_document_id,
+                session_id=session_id,
+                last_known_revision=persisted_access.current_revision,
+                typing=False,
+            )
+            await self._hub.broadcast_json(
+                document_id=resolved_document_id,
+                payload={
+                    "type": "steps_applied",
+                    "document_id": resolved_document_id,
+                    "steps": result["steps"],
+                    "client_ids": result["client_ids"],
+                    "collab_version": result["version"],
+                    "content": result["content"],
+                    "line_spacing": result["line_spacing"],
+                    "actor_user_id": current_user.id,
+                    "actor_display_name": current_user.display_name,
+                },
+            )
+            await self._broadcast_presence(resolved_document_id)
             return
 
         if message_type != "content_update":
@@ -271,14 +701,10 @@ class CollaborationService:
                 current_user=current_user,
             )
         except (TypeError, ValueError):
-            await self._hub.send_json(
+            await self._send_validation_error(
                 document_id=resolved_document_id,
                 session_id=session_id,
-                payload={
-                    "type": "error",
-                    "code": "VALIDATION_ERROR",
-                    "message": "Realtime update payload is invalid.",
-                },
+                message="Realtime update payload is invalid.",
             )
             return
         except ApiError as error:
@@ -298,6 +724,12 @@ class CollaborationService:
                 document_id=document_id,
                 current_user=current_user,
             )
+            collab_state = await self._hub.ensure_document_state(
+                document_id=resolved_document_id,
+                content=access.document.content,
+                line_spacing=access.document.line_spacing,
+                updated_at=access.document.updated_at,
+            )
             await self._hub.send_json(
                 document_id=resolved_document_id,
                 session_id=session_id,
@@ -305,9 +737,10 @@ class CollaborationService:
                     "type": "conflict_detected",
                     "message": error.detail["message"],
                     "revision": access.current_revision,
-                    "content": access.document.content,
-                    "line_spacing": access.document.line_spacing,
+                    "content": collab_state["content"],
+                    "line_spacing": collab_state["line_spacing"],
                     "latest_version_id": access.document.latest_version_id,
+                    "collab_version": collab_state["version"],
                 },
             )
             return
@@ -315,6 +748,12 @@ class CollaborationService:
         access = self._document_service.ensure_read_access(
             document_id=document_id,
             current_user=current_user,
+        )
+        collab_state = await self._hub.reset_snapshot(
+            document_id=resolved_document_id,
+            content=access.document.content,
+            line_spacing=access.document.line_spacing,
+            updated_at=access.document.updated_at,
         )
         self._session_repository.mark_session_seen(
             session_id=session_id,
@@ -338,9 +777,28 @@ class CollaborationService:
                 "actor_user_id": current_user.id,
                 "actor_display_name": current_user.display_name,
                 "saved_at": utc_z(response.saved_at),
+                "collab_version": collab_state["version"],
+                "collab_reset": True,
             },
         )
         await self._broadcast_presence(resolved_document_id)
+
+    async def _send_validation_error(
+        self,
+        *,
+        document_id: int,
+        session_id: str,
+        message: str,
+    ) -> None:
+        await self._hub.send_json(
+            document_id=document_id,
+            session_id=session_id,
+            payload={
+                "type": "error",
+                "code": "VALIDATION_ERROR",
+                "message": message,
+            },
+        )
 
     async def _broadcast_presence(self, document_id: int) -> None:
         await self._hub.broadcast_json(
@@ -350,3 +808,11 @@ class CollaborationService:
                 "presence": await self._hub.get_presence_snapshot(document_id),
             },
         )
+
+    def _coerce_int(self, value: Any, *, default: int | None) -> int | None:
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default

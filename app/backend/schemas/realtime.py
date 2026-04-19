@@ -25,6 +25,9 @@ class SessionBootstrapResponse(AppSchema):
     session_token: str
     document_id: int
     revision: int = Field(ge=0)
+    collab_version: int = Field(default=0, ge=0)
+    content_snapshot: str = ""
+    line_spacing_snapshot: float = Field(default=1.15, ge=1.0, le=3.0)
     realtime_url: str
     resync_required: bool = False
     missed_revision_count: int = Field(default=0, ge=0)

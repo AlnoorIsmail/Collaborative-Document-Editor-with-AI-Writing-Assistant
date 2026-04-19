@@ -98,6 +98,9 @@ def test_session_bootstrap_returns_contract_shaped_response(
     assert body["session_token"]
     assert body["document_id"] == document["document_id"]
     assert body["revision"] == 0
+    assert body["collab_version"] == 0
+    assert body["content_snapshot"] == ""
+    assert body["line_spacing_snapshot"] == 1.15
     assert body["realtime_url"] == "/v1/documents/1/sessions/sess_1/ws"
     assert body["resync_required"] is False
     assert body["missed_revision_count"] == 0

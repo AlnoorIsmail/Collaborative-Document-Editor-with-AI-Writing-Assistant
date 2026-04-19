@@ -125,22 +125,24 @@ def get_ai_provider() -> AIProviderClient:
     return StubAIProviderClient()
 
 
+@lru_cache
+def get_realtime_hub() -> RealtimeHub:
+    return RealtimeHub()
+
+
 def get_session_service(
     repository: Annotated[SessionRepository, Depends(get_session_repository)],
     settings: Annotated[Settings, Depends(get_settings)],
+    hub: Annotated[RealtimeHub, Depends(get_realtime_hub)],
     db: Annotated[Session, Depends(get_db)],
 ) -> SessionService:
     return SessionService(
         repository=repository,
         settings=settings,
+        hub=hub,
         document_repository=DocumentRepository(db),
         permission_repository=PermissionRepository(db),
     )
-
-
-@lru_cache
-def get_realtime_hub() -> RealtimeHub:
-    return RealtimeHub()
 
 
 def get_collaboration_service(
