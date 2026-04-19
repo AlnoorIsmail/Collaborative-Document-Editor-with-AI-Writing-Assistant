@@ -430,30 +430,20 @@ def test_session_bootstrap_reports_resync_and_active_collaborators() -> None:
     assert owner_session.json()["revision"] == 1
     assert (
         owner_session.json()["realtime_url"]
-        == f"/v1/documents/{document_id}/sessions/sess_1/ws"
+        == f"/v1/documents/{document_id}/sessions/{owner_session.json()['session_id']}/ws"
     )
     assert owner_session.json()["resync_required"] is True
     assert owner_session.json()["missed_revision_count"] == 1
-    assert len(owner_session.json()["active_collaborators"]) == 1
-    assert owner_session.json()["active_collaborators"][0]["user_id"] == owner["user_id"]
-    assert owner_session.json()["active_collaborators"][0]["display_name"] == "Owner"
+    assert owner_session.json()["active_collaborators"] == []
 
     assert editor_session.status_code == 201
     assert (
         editor_session.json()["realtime_url"]
-        == f"/v1/documents/{document_id}/sessions/sess_2/ws"
+        == f"/v1/documents/{document_id}/sessions/{editor_session.json()['session_id']}/ws"
     )
+    assert editor_session.json()["active_collaborators"] == []
     assert editor_session.json()["resync_required"] is False
     assert editor_session.json()["missed_revision_count"] == 0
-    assert len(editor_session.json()["active_collaborators"]) == 2
-    assert {
-        collaborator["user_id"]
-        for collaborator in editor_session.json()["active_collaborators"]
-    } == {owner["user_id"], editor["user_id"]}
-    assert {
-        collaborator["display_name"]
-        for collaborator in editor_session.json()["active_collaborators"]
-    } == {"Owner", "Editor"}
 
 
 def test_unauthenticated_access_rejected() -> None:

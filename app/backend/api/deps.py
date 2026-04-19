@@ -25,7 +25,6 @@ from app.backend.repositories.conflict_repository import ConflictRepository
 from app.backend.repositories.document_repository import DocumentRepository
 from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.refresh_token_repository import RefreshTokenRepository
-from app.backend.repositories.sessions import InMemorySessionRepository, SessionRepository
 from app.backend.repositories.user_repository import UserRepository
 from app.backend.repositories.version_repository import VersionRepository
 from app.backend.services.ai.ai_service import AIService
@@ -103,11 +102,6 @@ def get_optional_authenticated_user(
 
 
 @lru_cache
-def get_session_repository() -> SessionRepository:
-    return InMemorySessionRepository()
-
-
-@lru_cache
 def get_ai_repository() -> AIRepository:
     return StubAIRepository()
 
@@ -133,13 +127,11 @@ def get_realtime_hub() -> RealtimeHub:
 
 
 def get_session_service(
-    repository: Annotated[SessionRepository, Depends(get_session_repository)],
     settings: Annotated[Settings, Depends(get_settings)],
     hub: Annotated[RealtimeHub, Depends(get_realtime_hub)],
     db: Annotated[Session, Depends(get_db)],
 ) -> SessionService:
     return SessionService(
-        repository=repository,
         settings=settings,
         hub=hub,
         document_repository=DocumentRepository(db),
@@ -148,12 +140,10 @@ def get_session_service(
 
 
 def get_collaboration_service(
-    session_repository: Annotated[SessionRepository, Depends(get_session_repository)],
     hub: Annotated[RealtimeHub, Depends(get_realtime_hub)],
     db: Annotated[Session, Depends(get_db)],
 ) -> CollaborationService:
     return CollaborationService(
-        session_repository=session_repository,
         hub=hub,
         document_service=DocumentService(
             DocumentRepository(db),

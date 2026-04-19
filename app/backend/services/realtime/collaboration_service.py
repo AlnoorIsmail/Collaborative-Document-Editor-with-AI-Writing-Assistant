@@ -9,8 +9,8 @@ from fastapi import WebSocket, WebSocketDisconnect, status
 
 from app.backend.core.contracts import parse_resource_id, utc_now, utc_z
 from app.backend.core.errors import ApiError
+from app.backend.core.security import decode_realtime_session_token
 from app.backend.models.user import User
-from app.backend.repositories.sessions import SessionRepository
 from app.backend.schemas.document import DocumentContentSaveRequest
 from app.backend.services.document_service import DocumentService
 
@@ -135,6 +135,10 @@ class RealtimeHub:
             return self._presence_snapshot(document_id)
 
     async def get_presence_snapshot(self, document_id: int) -> list[dict[str, Any]]:
+        with self._lock:
+            return self._presence_snapshot(document_id)
+
+    def get_presence_snapshot_sync(self, document_id: int) -> list[dict[str, Any]]:
         with self._lock:
             return self._presence_snapshot(document_id)
 
@@ -481,11 +485,9 @@ class CollaborationService:
     def __init__(
         self,
         *,
-        session_repository: SessionRepository,
         document_service: DocumentService,
         hub: RealtimeHub,
     ) -> None:
-        self._session_repository = session_repository
         self._document_service = document_service
         self._hub = hub
 
@@ -499,20 +501,32 @@ class CollaborationService:
         current_user: User,
     ) -> None:
         resolved_document_id = parse_resource_id(document_id, "doc")
-        session = self._session_repository.validate_session(
-            document_id=resolved_document_id,
-            user_id=current_user.id,
-            session_id=session_id,
-            session_token=session_token,
-        )
-        if session is None:
-            await websocket.close(code=4401, reason="Invalid realtime session.")
+        try:
+            session_claims = decode_realtime_session_token(session_token)
+            token_document_id = int(session_claims["document_id"])
+            token_user_id = int(session_claims["sub"])
+            token_session_id = str(session_claims["session_id"])
+        except (KeyError, TypeError, ValueError):
+            await websocket.close(code=4401, reason="Invalid or expired realtime session.")
             return
 
-        access = self._document_service.ensure_read_access(
-            document_id=document_id,
-            current_user=current_user,
-        )
+        if (
+            token_document_id != resolved_document_id
+            or token_user_id != current_user.id
+            or token_session_id != session_id
+        ):
+            await websocket.close(code=4401, reason="Realtime session does not match the document or user.")
+            return
+
+        try:
+            access = self._document_service.ensure_read_access(
+                document_id=document_id,
+                current_user=current_user,
+            )
+        except ApiError as error:
+            close_code = 4403 if error.status_code == status.HTTP_403_FORBIDDEN else 4401
+            await websocket.close(code=close_code, reason=error.detail["message"])
+            return
         collab_state = await self._hub.ensure_document_state(
             document_id=access.document.id,
             content=access.document.content,
@@ -525,20 +539,20 @@ class CollaborationService:
             _ConnectedCollaborator(
                 websocket=websocket,
                 document_id=access.document.id,
-                session_id=session.session_id,
+                session_id=session_id,
                 user_id=current_user.id,
                 display_name=current_user.display_name,
                 last_known_revision=access.current_revision,
-                joined_at=session.joined_at,
-                last_seen_at=session.last_seen_at,
+                joined_at=utc_now(),
+                last_seen_at=utc_now(),
             )
         )
         await self._hub.send_json(
             document_id=access.document.id,
-            session_id=session.session_id,
+            session_id=session_id,
             payload={
                 "type": "session_joined",
-                "session_id": session.session_id,
+                "session_id": session_id,
                 "document_id": access.document.id,
                 "revision": access.current_revision,
                 "content": collab_state["content"],
@@ -557,12 +571,12 @@ class CollaborationService:
                 await self._handle_message(
                     document_id=document_id,
                     resolved_document_id=access.document.id,
-                    session_id=session.session_id,
+                    session_id=session_id,
                     current_user=current_user,
                     payload=message,
                 )
         except WebSocketDisconnect:
-            await self._hub.disconnect(access.document.id, session.session_id)
+            await self._hub.disconnect(access.document.id, session_id)
             await self._broadcast_presence(access.document.id)
             await self._broadcast_awareness(access.document.id)
 
@@ -580,10 +594,6 @@ class CollaborationService:
         if message_type == "heartbeat":
             last_known_revision = payload.get("last_known_revision")
             if isinstance(last_known_revision, int):
-                self._session_repository.mark_session_seen(
-                    session_id=session_id,
-                    last_known_revision=last_known_revision,
-                )
                 await self._hub.update_state(
                     document_id=resolved_document_id,
                     session_id=session_id,
@@ -683,10 +693,6 @@ class CollaborationService:
                 current_user=current_user,
                 content=collab_state["content"],
                 line_spacing=collab_state["line_spacing"],
-            )
-            self._session_repository.mark_session_seen(
-                session_id=session_id,
-                last_known_revision=persisted_access.current_revision,
             )
             await self._hub.broadcast_json(
                 document_id=resolved_document_id,
@@ -824,10 +830,6 @@ class CollaborationService:
                 content=result["content"],
                 line_spacing=result["line_spacing"],
             )
-            self._session_repository.mark_session_seen(
-                session_id=session_id,
-                last_known_revision=persisted_access.current_revision,
-            )
             await self._hub.update_state(
                 document_id=resolved_document_id,
                 session_id=session_id,
@@ -930,10 +932,6 @@ class CollaborationService:
             content=access.document.content,
             line_spacing=access.document.line_spacing,
             updated_at=access.document.updated_at,
-        )
-        self._session_repository.mark_session_seen(
-            session_id=session_id,
-            last_known_revision=response.revision,
         )
         await self._hub.update_state(
             document_id=resolved_document_id,

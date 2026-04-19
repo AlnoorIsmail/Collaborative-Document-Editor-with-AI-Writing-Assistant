@@ -1353,7 +1353,6 @@ export default function EditorPage() {
           if (cancelled) {
             return;
           }
-          setRealtimeStatus('connected');
           setRealtimeMessage('');
           setAwareness([]);
           setPresence(
@@ -1600,17 +1599,11 @@ export default function EditorPage() {
           setAwareness([]);
           lastSentSelectionSignatureRef.current = '';
 
-          if (event.code === 4401 || event.code === 4403) {
-            setRealtimeStatus('offline');
-            setRealtimeMessage(
-              event.reason || 'Realtime authentication failed. Refresh the page to reconnect.'
-            );
-            return;
-          }
-
           setRealtimeStatus('reconnecting');
           setRealtimeMessage(
-            event.reason
+            (event.code === 4401 || event.code === 4403)
+              ? (event.reason || 'Realtime session expired. Refreshing the collaboration session…')
+              : event.reason
               ? `Realtime disconnected (${event.code}: ${event.reason}). Trying to reconnect while local saves continue.`
               : 'Realtime disconnected. Trying to reconnect while local saves continue.'
           );

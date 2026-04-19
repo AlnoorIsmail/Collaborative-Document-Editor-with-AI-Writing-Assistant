@@ -41,10 +41,12 @@ This project implements a React + FastAPI collaborative document editor for Assi
 
 - Authenticated session bootstrap
 - Authenticated WebSocket collaboration channel
+- ProseMirror step-based sync with versioned resync
 - Presence list and activity updates
+- Remote cursor and selection awareness
 - Reconnect handling
 - Offline draft recovery and reconciliation
-- Conflict banner when remote changes arrive while local unsaved edits exist
+- Overlap-aware conflict detection and resolution
 
 ### AI assistant
 
@@ -170,6 +172,7 @@ That response includes:
 - `session_id`
 - `session_token`
 - `revision`
+- `collab_version`
 - `realtime_url`
 - `resync_required`
 - `missed_revision_count`
@@ -184,9 +187,19 @@ The frontend opens:
 The backend validates:
 
 - bearer access token
-- session token from session bootstrap
+- signed realtime session token from session bootstrap
+- matching `document_id`, `user_id`, and `session_id` claims inside that realtime token
 
-No valid auth means no collaboration session.
+The websocket handshake no longer depends on an in-memory bootstrap-session lookup. The signed realtime token is stateless, short-lived, and specific to the user plus document session. No valid auth means no collaboration session.
+
+### Server-side sync setup
+
+- `POST /v1/documents/{documentId}/sessions` bootstraps the live editor session
+- the backend returns a signed realtime `session_token`
+- the frontend opens the websocket at `/v1/documents/{documentId}/sessions/{sessionId}/ws`
+- the in-memory realtime hub tracks only currently connected sockets, presence, typing, and cursor awareness
+- document content sync is handled through versioned ProseMirror step batches plus resync/full-reset fallbacks
+- `active_collaborators` in bootstrap comes from the hub's live connected presence, not stale bootstrap records
 
 ### Message protocol
 
@@ -194,27 +207,43 @@ Current server/client message types include:
 
 - `session_joined`
 - `presence_snapshot`
+- `awareness_snapshot`
 - `content_updated`
 - `conflict_detected`
 - `heartbeat`
 - `typing`
+- `selection_update`
+- `step_update`
+- `steps_applied`
+- `steps_resync`
 - `error`
 
 ### Sync strategy
 
-The app uses revision-based synchronization rather than CRDTs. That means:
+The app uses ProseMirror step-based synchronization with versioned server reconciliation rather than a full CRDT. That means:
 
-- background edits are sent with `base_revision`
-- the backend broadcasts authoritative document content and revision
-- if the document changed remotely while a local draft is unsaved, the UI does not silently overwrite the local draft
-- instead it surfaces a conflict/reconciliation choice
+- normal live edits are sent as ordered step batches with range/context metadata
+- the backend advances `collab_version` and rebroadcasts accepted step batches
+- if a client falls behind, it receives `steps_resync`
+- if the gap is too large or the state is stale, the server can force a full snapshot reset
+- overlapping edits are preserved and surfaced through the conflict-resolution workflow instead of silently overwriting confirmed content
 
 ### Offline and reconnect behavior
 
 - local unsent drafts are stored client-side
-- reconnect attempts happen automatically
+- reconnect attempts always perform a fresh session bootstrap before opening a new websocket
 - if realtime is unavailable, direct HTTP saves still continue
 - recovered drafts are restored when the editor reopens
+- remote presence and cursor awareness are cleared while offline/reconnecting and redrawn only after a fresh realtime handshake succeeds
+
+### How to verify live realtime
+
+1. open the same shared document in two isolated browser sessions and different user accounts
+2. open DevTools and confirm the websocket request upgrades with `101 Switching Protocols`
+3. confirm frames/events such as `session_joined`, `presence_snapshot`, and step traffic are visible
+4. verify active users appear in both sessions
+5. verify remote cursor/selection updates appear only while the realtime connection is connected
+6. disconnect one session and confirm the editor falls back to local saves plus reconnect behavior instead of pretending presence is still live
 
 ## AI Streaming Architecture
 
@@ -285,8 +314,10 @@ For each user:
 2. open the same shared document
 3. verify presence updates
 4. verify owner/editor/viewer permissions
-5. verify edits propagate across sessions
-6. verify overlapping edits show the conflict flow instead of silently overwriting local work
+5. verify the websocket upgrades successfully in DevTools
+6. verify edits propagate across sessions
+7. verify remote cursors and text selections are visible while both users are connected
+8. verify overlapping edits show the conflict flow instead of silently overwriting local work
 
 ### Session isolation note
 
@@ -321,4 +352,4 @@ Version history is restore/audit history, not the same feature as editor undo.
 
 ## Deviations
 
-This repository documents Assignment 1 deviations in `DEVIATIONS.md`. The most important implementation choice is that realtime collaboration uses revision-based synchronization and explicit conflict handling rather than CRDT/OT. That was a deliberate baseline-scope tradeoff, not an accidental omission.
+This repository documents Assignment 1 deviations in `DEVIATIONS.md`. The most important collaboration choice is that the editor now uses ProseMirror step-based synchronization with explicit conflict preservation and resolution rather than a full CRDT such as Yjs. That is closer to OT-style collaboration than the earlier revision-only baseline, while still remaining simpler than a full CRDT stack.

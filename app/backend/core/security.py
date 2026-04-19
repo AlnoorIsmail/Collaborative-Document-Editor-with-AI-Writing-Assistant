@@ -17,6 +17,7 @@ from app.backend.core.config import settings
 PASSWORD_HASH_ITERATIONS = 260000
 ACCESS_TOKEN_TYPE = "access"
 REFRESH_TOKEN_TYPE = "refresh"
+REALTIME_SESSION_TOKEN_TYPE = "realtime_session"
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -147,6 +148,29 @@ def create_refresh_token(
     )
 
 
+def create_realtime_session_token(
+    *,
+    user_id: int | str,
+    document_id: int | str,
+    session_id: str,
+    expires_in_minutes: int | None = None,
+) -> str:
+    ttl_minutes = (
+        settings.realtime_session_expire_minutes
+        if expires_in_minutes is None
+        else expires_in_minutes
+    )
+    return create_token(
+        subject=str(user_id),
+        token_type=REALTIME_SESSION_TOKEN_TYPE,
+        expires_in_seconds=ttl_minutes * 60,
+        extra_claims={
+            "document_id": int(document_id),
+            "session_id": session_id,
+        },
+    )
+
+
 def decode_token(token: str, *, expected_type: str | None = None) -> dict[str, Any]:
     try:
         header_b64, payload_b64, signature_b64 = token.split(".", 2)
@@ -182,6 +206,13 @@ def decode_refresh_token(token: str) -> dict[str, Any]:
     payload = decode_token(token, expected_type=REFRESH_TOKEN_TYPE)
     if "jti" not in payload:
         raise ValueError("Refresh token identifier is missing.")
+    return payload
+
+
+def decode_realtime_session_token(token: str) -> dict[str, Any]:
+    payload = decode_token(token, expected_type=REALTIME_SESSION_TOKEN_TYPE)
+    if "document_id" not in payload or "session_id" not in payload:
+        raise ValueError("Realtime session token is missing required claims.")
     return payload
 
 

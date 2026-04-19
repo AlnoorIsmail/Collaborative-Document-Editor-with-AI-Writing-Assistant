@@ -55,6 +55,43 @@ def test_websocket_rejects_invalid_session_token() -> None:
         pass
 
 
+def test_websocket_rejects_mismatched_signed_session_token() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    first_document = client.post(
+        "/v1/documents",
+        json={"title": "Doc One", "initial_content": "Draft"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()["document_id"]
+    second_document = client.post(
+        "/v1/documents",
+        json={"title": "Doc Two", "initial_content": "Draft"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()["document_id"]
+    first_bootstrap = client.post(
+        f"/v1/documents/{first_document}/sessions",
+        json={"last_known_revision": 0},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()
+    second_bootstrap = client.post(
+        f"/v1/documents/{second_document}/sessions",
+        json={"last_known_revision": 0},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()
+
+    try:
+        with _open_socket(
+            client,
+            document_id=second_document,
+            session_id=second_bootstrap["session_id"],
+            session_token=first_bootstrap["session_token"],
+            access_token=owner_token,
+        ):
+            raise AssertionError("Expected websocket authentication to fail.")
+    except Exception:
+        pass
+
+
 def test_websocket_supports_basic_message_exchange() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
@@ -184,6 +221,52 @@ def test_websocket_broadcasts_selection_awareness_and_clears_stale_ranges() -> N
         cleared_awareness = _receive_until(socket, "awareness_snapshot")
         assert cleared_awareness["collaborators"][0]["selection_from"] is None
         assert cleared_awareness["collaborators"][0]["selection_to"] is None
+
+
+def test_session_bootstrap_reports_live_connected_collaborators() -> None:
+    client = create_test_client()
+    owner, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    editor, editor_token = create_user_and_token(client, "editor@example.com", "Editor")
+    document_id = client.post(
+        "/v1/documents",
+        json={"title": "Realtime Doc", "initial_content": "Draft"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()["document_id"]
+    client.post(
+        f"/v1/documents/{document_id}/permissions",
+        json={
+            "grantee_type": "user",
+            "user_id": editor["user_id"],
+            "role": "editor",
+            "ai_allowed": True,
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    owner_bootstrap = client.post(
+        f"/v1/documents/{document_id}/sessions",
+        json={"last_known_revision": 0},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    ).json()
+
+    with _open_socket(
+        client,
+        document_id=document_id,
+        session_id=owner_bootstrap["session_id"],
+        session_token=owner_bootstrap["session_token"],
+        access_token=owner_token,
+    ) as owner_socket:
+        _receive_until(owner_socket, "session_joined")
+        _receive_until(owner_socket, "presence_snapshot")
+
+        editor_bootstrap = client.post(
+            f"/v1/documents/{document_id}/sessions",
+            json={"last_known_revision": 0},
+            headers={"Authorization": f"Bearer {editor_token}"},
+        ).json()
+
+        assert [entry["display_name"] for entry in editor_bootstrap["active_collaborators"]] == [
+            "Owner"
+        ]
 
 
 def test_websocket_supports_step_sync_and_resync() -> None:

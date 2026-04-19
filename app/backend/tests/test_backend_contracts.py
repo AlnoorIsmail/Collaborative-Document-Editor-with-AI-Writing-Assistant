@@ -169,7 +169,7 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
         "missed_revision_count",
         "active_collaborators",
     }
-    assert session_body["session_id"] == "sess_1"
+    assert session_body["session_id"].startswith("sess_")
     assert session_body["session_token"]
     assert session_body["document_id"] == document_id
     assert session_body["revision"] == 0
@@ -178,19 +178,11 @@ def test_backend_realtime_and_ai_contracts(client) -> None:
     assert session_body["line_spacing_snapshot"] == 1.15
     assert (
         session_body["realtime_url"]
-        == f"/v1/documents/{document_id}/sessions/sess_1/ws"
+        == f"/v1/documents/{document_id}/sessions/{session_body['session_id']}/ws"
     )
     assert session_body["resync_required"] is False
     assert session_body["missed_revision_count"] == 0
-    assert len(session_body["active_collaborators"]) == 1
-    assert set(session_body["active_collaborators"][0]) == {
-        "user_id",
-        "display_name",
-        "session_id",
-        "last_known_revision",
-        "joined_at",
-        "last_seen_at",
-    }
+    assert session_body["active_collaborators"] == []
 
     create_ai_response = client.post(
         f"/v1/documents/{document_id}/ai/interactions",
