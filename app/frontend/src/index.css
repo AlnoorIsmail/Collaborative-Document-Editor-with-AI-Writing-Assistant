@@ -2220,3 +2220,26 @@ html, body {
     justify-content: center;
   }
 }
+
+/* ===== Auth Logo (Login/Register Page) ===== */
+
+.auth-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.auth-logo-icon {
+  font-size: 20px;
+  color: #1a73e8;
+}
+
+.auth-logo-text {
+  font-family: 'Instrument Serif', serif;
+  font-size: 20px;
+  font-weight: 500;
+  color: #1f2937;
+  letter-spacing: -0.3px;
+}
