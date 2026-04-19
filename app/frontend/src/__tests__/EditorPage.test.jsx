@@ -98,11 +98,17 @@ vi.mock('../components/TiptapEditor', () => ({
               collaborationVersion: currentVersion,
             });
             onSendableSteps?.({
+              batchId: 'batch-1',
               version: currentVersion,
               clientId: 'client-1',
               steps: [{ mockStep: true, mockHtml: nextContent }],
               content: nextContent,
               lineSpacing,
+              affectedRange: { start: 4, end: 21 },
+              candidateContentSnapshot: 'Local collaborative body',
+              exactTextSnapshot: 'Initial body',
+              prefixContext: 'Before',
+              suffixContext: 'After',
             });
           }}
         >
@@ -1893,7 +1899,9 @@ describe('EditorPage save flow', () => {
     await screen.findByText('AI rewritten document');
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
 
-    await screen.findByRole('button', { name: 'Undo AI' });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Undo AI' })).toBeInTheDocument();
+    }, { timeout: 3000 });
     fireEvent.click(screen.getByRole('button', { name: 'Edit document' }));
 
     await waitFor(() => {
@@ -2586,14 +2594,20 @@ describe('EditorPage save flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
 
-    expect(MockWebSocket.instances[0].sentMessages).toContainEqual({
-      type: 'step_update',
-      version: 0,
-      client_id: 'client-1',
-      steps: [{ mockStep: true, mockHtml: '<p>Local collaborative body</p>' }],
-      content: '<p>Local collaborative body</p>',
-      line_spacing: 1.15,
-    });
+    expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'step_update',
+        version: 0,
+        client_id: 'client-1',
+        steps: [{ mockStep: true, mockHtml: '<p>Local collaborative body</p>' }],
+        content: '<p>Local collaborative body</p>',
+        line_spacing: 1.15,
+        affected_range: expect.objectContaining({
+          start: expect.any(Number),
+          end: expect.any(Number),
+        }),
+      })
+    );
   });
 
   it('applies remote collaborative steps without forcing a snapshot overwrite', async () => {
@@ -2656,6 +2670,184 @@ describe('EditorPage save flow', () => {
       expect(screen.getByTestId('editor-content')).toHaveTextContent('Remote collaborative body');
     });
     expect(screen.queryByText('Remote changes need review.')).not.toBeInTheDocument();
+  });
+
+  it('shows a conflict resolution tray when overlapping edits are preserved', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      if (path === '/documents/1/conflicts') {
+        return Promise.resolve([]);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    act(() => {
+      MockWebSocket.instances[0].emit({
+        type: 'conflict_created',
+        conflict: {
+          conflict_id: 77,
+          conflict_key: 'conflict:1:batch-1:batch-2',
+          status: 'open',
+          stale: false,
+          source_revision: 0,
+          source_collab_version: 0,
+          anchor_range: { start: 4, end: 21 },
+          exact_text_snapshot: 'Selected sentence',
+          prefix_context: 'Before',
+          suffix_context: 'After',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          resolved_at: null,
+          resolved_content: null,
+          candidates: [
+            {
+              candidate_id: 1,
+              user_id: 1,
+              user_display_name: 'Owner',
+              batch_id: 'batch-1',
+              client_id: 'client-1',
+              range: { start: 4, end: 21 },
+              candidate_content_snapshot: 'My local revision',
+              exact_text_snapshot: 'Selected sentence',
+              prefix_context: 'Before',
+              suffix_context: 'After',
+              created_at: '2026-01-01T00:00:00Z',
+            },
+            {
+              candidate_id: 2,
+              user_id: 2,
+              user_display_name: 'Editor',
+              batch_id: 'batch-2',
+              client_id: 'client-2',
+              range: { start: 4, end: 21 },
+              candidate_content_snapshot: 'Their remote revision',
+              exact_text_snapshot: 'Selected sentence',
+              prefix_context: 'Before',
+              suffix_context: 'After',
+              created_at: '2026-01-01T00:00:01Z',
+            },
+          ],
+        },
+      });
+    });
+
+    expect(await screen.findByText('Resolve overlapping edits')).toBeInTheDocument();
+    expect(screen.getAllByText('My local revision').length).toBeGreaterThan(0);
+    expect(screen.getByText('Their remote revision')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: "Use Editor's version" })).toBeInTheDocument();
+  });
+
+  it('shows conflict state to viewers without resolution actions', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument({
+          owner_user_id: 2,
+          collaborators: [{ user_id: 1, role: 'viewer' }],
+        }));
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Viewer',
+          email: 'viewer@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      if (path === '/documents/1/conflicts') {
+        return Promise.resolve([]);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    act(() => {
+      MockWebSocket.instances[0].emit({
+        type: 'conflict_created',
+        conflict: {
+          conflict_id: 88,
+          conflict_key: 'conflict:1:batch-3:batch-4',
+          status: 'open',
+          stale: false,
+          source_revision: 0,
+          source_collab_version: 0,
+          anchor_range: { start: 2, end: 8 },
+          exact_text_snapshot: 'body',
+          prefix_context: '',
+          suffix_context: '',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          resolved_at: null,
+          resolved_content: null,
+          candidates: [],
+        },
+      });
+    });
+
+    expect(await screen.findByText(/only owners and editors can resolve them/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save resolution' })).not.toBeInTheDocument();
   });
 
   it('uses the latest refreshed access token when opening the realtime socket', async () => {

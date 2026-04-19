@@ -65,3 +65,8 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
     )
+    conflicts: Mapped[List["DocumentConflict"]] = relationship(
+        "DocumentConflict",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )

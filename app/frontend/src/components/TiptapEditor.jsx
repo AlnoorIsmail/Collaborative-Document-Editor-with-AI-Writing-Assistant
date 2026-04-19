@@ -9,6 +9,8 @@ import {
   receiveTransaction,
   sendableSteps,
 } from '@tiptap/pm/collab';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { Step } from '@tiptap/pm/transform';
 
 const LINE_SPACING_OPTIONS = [
@@ -17,6 +19,9 @@ const LINE_SPACING_OPTIONS = [
   { value: 1.5, label: '1.5' },
   { value: 2, label: 'Double' },
 ];
+
+const CONFLICT_HIGHLIGHTS_KEY = new PluginKey('conflict-highlights');
+const ANCHOR_CONTEXT_WINDOW = 24;
 
 const EditorKeymap = Extension.create({
   name: 'editorKeymap',
@@ -35,11 +40,136 @@ function clampLineSpacing(value) {
   return Math.min(3, Math.max(1, numeric));
 }
 
+function makeBatchId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sliceDocText(doc, start, end) {
+  const safeStart = Math.max(0, Math.min(start, doc.content.size));
+  const safeEnd = Math.max(safeStart, Math.min(end, doc.content.size));
+  return doc.textBetween(safeStart, safeEnd, ' ');
+}
+
+function buildStepBatchMetadata(transaction) {
+  if (!transaction.docChanged || transaction.steps.length === 0) {
+    return null;
+  }
+
+  let oldStart = Number.POSITIVE_INFINITY;
+  let oldEnd = 0;
+  let newStart = Number.POSITIVE_INFINITY;
+  let newEnd = 0;
+
+  transaction.steps.forEach((step) => {
+    step.getMap().forEach((rangeOldStart, rangeOldEnd, rangeNewStart, rangeNewEnd) => {
+      oldStart = Math.min(oldStart, rangeOldStart);
+      oldEnd = Math.max(oldEnd, rangeOldEnd);
+      newStart = Math.min(newStart, rangeNewStart);
+      newEnd = Math.max(newEnd, rangeNewEnd);
+    });
+  });
+
+  const fallbackPosition = transaction.selection?.from ?? 0;
+  const normalizedOldStart = Number.isFinite(oldStart) ? oldStart : fallbackPosition;
+  const normalizedOldEnd = Number.isFinite(oldStart) ? Math.max(oldEnd, normalizedOldStart) : fallbackPosition;
+  const normalizedNewStart = Number.isFinite(newStart) ? newStart : fallbackPosition;
+  const normalizedNewEnd = Number.isFinite(newStart) ? Math.max(newEnd, normalizedNewStart) : fallbackPosition;
+
+  const docBefore = transaction.docs?.[0] ?? transaction.before;
+  const docAfter = transaction.doc;
+
+  const exactTextSnapshot = docBefore
+    ? sliceDocText(docBefore, normalizedOldStart, normalizedOldEnd)
+    : '';
+  const prefixContext = docBefore
+    ? sliceDocText(
+        docBefore,
+        Math.max(0, normalizedOldStart - ANCHOR_CONTEXT_WINDOW),
+        normalizedOldStart
+      )
+    : '';
+  const suffixContext = docBefore
+    ? sliceDocText(
+        docBefore,
+        normalizedOldEnd,
+        normalizedOldEnd + ANCHOR_CONTEXT_WINDOW
+      )
+    : '';
+
+  return {
+    batchId: makeBatchId(),
+    affectedRange: {
+      start: normalizedOldStart,
+      end: normalizedOldEnd,
+    },
+    candidateContentSnapshot: sliceDocText(docAfter, normalizedNewStart, normalizedNewEnd),
+    exactTextSnapshot,
+    prefixContext,
+    suffixContext,
+  };
+}
+
+function createConflictHighlightPlugin() {
+  return new Plugin({
+    key: CONFLICT_HIGHLIGHTS_KEY,
+    state: {
+      init() {
+        return DecorationSet.empty;
+      },
+      apply(transaction, decorationSet) {
+        const nextHighlights = transaction.getMeta(CONFLICT_HIGHLIGHTS_KEY);
+        if (!nextHighlights) {
+          return decorationSet.map(transaction.mapping, transaction.doc);
+        }
+
+        const decorations = [];
+        for (const highlight of nextHighlights) {
+          const start = Math.max(0, Math.min(highlight.start, transaction.doc.content.size));
+          const end = Math.max(start, Math.min(highlight.end, transaction.doc.content.size));
+          decorations.push(
+            Decoration.inline(start, Math.max(end, start + 1), {
+              class: 'editor-conflict-highlight',
+              'data-conflict-id': String(highlight.conflictId),
+            })
+          );
+          decorations.push(
+            Decoration.widget(start, () => {
+              const marker = document.createElement('span');
+              marker.className = 'editor-conflict-marker';
+              marker.dataset.conflictId = String(highlight.conflictId);
+              marker.title = 'Unresolved collaboration conflict';
+              return marker;
+            })
+          );
+        }
+        return DecorationSet.create(transaction.doc, decorations);
+      },
+    },
+    props: {
+      decorations(state) {
+        return this.getState(state);
+      },
+    },
+  });
+}
+
 function createCollaborationExtension({ enabled, version }) {
   return Extension.create({
     name: 'collaborationBridge',
     addProseMirrorPlugins() {
       return enabled ? [prosemirrorCollab({ version })] : [];
+    },
+  });
+}
+
+function createConflictHighlightExtension() {
+  return Extension.create({
+    name: 'conflictHighlightBridge',
+    addProseMirrorPlugins() {
+      return [createConflictHighlightPlugin()];
     },
   });
 }
@@ -204,6 +334,7 @@ function Toolbar({ editor, lineSpacing, onLineSpacingChange }) {
  *   collaborationVersion - initial collaboration version for the current collaboration snapshot
  *   collaborationResetKey - forces a collab editor re-initialization after a full snapshot reset
  *   onSendableSteps - called with locally pending ProseMirror steps that should be sent
+ *   conflictHighlights - unresolved conflicts with re-anchored ranges for inline markers
  *
  * Ref methods:
  *   getSelectionData() - returns the current selected text and range
@@ -227,6 +358,7 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     collaborationVersion = 0,
     collaborationResetKey = 0,
     onSendableSteps,
+    conflictHighlights = [],
   },
   ref
 ) {
@@ -237,6 +369,8 @@ const TiptapEditor = forwardRef(function TiptapEditor(
   const changeHandlerRef = useRef(onChange);
   const sendableStepsHandlerRef = useRef(onSendableSteps);
   const selectionHandlerRef = useRef(onSelectionUpdate);
+  const conflictHighlightsRef = useRef(conflictHighlights);
+  const highlightSignatureRef = useRef('');
 
   useEffect(() => {
     lineSpacingRef.current = normalizedLineSpacing;
@@ -254,26 +388,34 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     selectionHandlerRef.current = onSelectionUpdate;
   }, [onSelectionUpdate]);
 
+  useEffect(() => {
+    conflictHighlightsRef.current = conflictHighlights;
+  }, [conflictHighlights]);
+
   const editor = useEditor({
     extensions: [
       createCollaborationExtension({
         enabled: collaborationEnabled,
         version: collaborationVersion,
       }),
+      createConflictHighlightExtension(),
       StarterKit,
       Placeholder.configure({ placeholder }),
       EditorKeymap,
     ],
     content,
     editable: !readOnly,
-    onTransaction({ editor }) {
+    onTransaction({ editor, transaction }) {
       const isRemote = applyingRemoteRef.current;
       const pending = collaborationEnabled ? sendableSteps(editor.state) : null;
-      changeHandlerRef.current?.(editor.getHTML(), {
-        isRemote,
-        hasPendingCollaborationSteps: Boolean(pending?.steps?.length),
-        collaborationVersion: collaborationEnabled ? getVersion(editor.state) : collaborationVersion,
-      });
+      const batchMetadata = !isRemote ? buildStepBatchMetadata(transaction) : null;
+      if (transaction.docChanged || isRemote) {
+        changeHandlerRef.current?.(editor.getHTML(), {
+          isRemote,
+          hasPendingCollaborationSteps: Boolean(pending?.steps?.length),
+          collaborationVersion: collaborationEnabled ? getVersion(editor.state) : collaborationVersion,
+        });
+      }
 
       if (collaborationEnabled) {
         if (!pending || pending.steps.length === 0) {
@@ -283,11 +425,20 @@ const TiptapEditor = forwardRef(function TiptapEditor(
           if (signature !== lastSentSignatureRef.current) {
             lastSentSignatureRef.current = signature;
             sendableStepsHandlerRef.current?.({
+              batchId: batchMetadata?.batchId ?? makeBatchId(),
               version: pending.version,
               clientId: String(pending.clientID),
               steps: pending.steps.map((step) => step.toJSON()),
               content: editor.getHTML(),
               lineSpacing: lineSpacingRef.current,
+              affectedRange: batchMetadata?.affectedRange ?? {
+                start: editor.state.selection.from,
+                end: editor.state.selection.to,
+              },
+              candidateContentSnapshot: batchMetadata?.candidateContentSnapshot ?? '',
+              exactTextSnapshot: batchMetadata?.exactTextSnapshot ?? '',
+              prefixContext: batchMetadata?.prefixContext ?? '',
+              suffixContext: batchMetadata?.suffixContext ?? '',
             });
           }
         }
@@ -384,6 +535,18 @@ const TiptapEditor = forwardRef(function TiptapEditor(
       }
       return getVersion(editor.state);
     },
+    setConflictHighlights(nextHighlights) {
+      if (!editor) {
+        return false;
+      }
+      editor.view.dispatch(
+        editor.state.tr.setMeta(
+          CONFLICT_HIGHLIGHTS_KEY,
+          Array.isArray(nextHighlights) ? nextHighlights : []
+        )
+      );
+      return true;
+    },
   }), [editor, collaborationEnabled, collaborationVersion]);
 
   useEffect(() => {
@@ -405,6 +568,26 @@ const TiptapEditor = forwardRef(function TiptapEditor(
 
     editor.commands.setContent(content || '', false);
   }, [content, editor]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const highlights = (conflictHighlightsRef.current || [])
+      .filter((conflict) => conflict?.range)
+      .map((conflict) => ({
+        conflictId: conflict.conflictId,
+        start: conflict.range.start,
+        end: conflict.range.end,
+      }));
+    const signature = JSON.stringify(highlights);
+    if (signature === highlightSignatureRef.current) {
+      return;
+    }
+    highlightSignatureRef.current = signature;
+    editor.view.dispatch(editor.state.tr.setMeta(CONFLICT_HIGHLIGHTS_KEY, highlights));
+  }, [editor, conflictHighlights]);
 
   return (
     <div
