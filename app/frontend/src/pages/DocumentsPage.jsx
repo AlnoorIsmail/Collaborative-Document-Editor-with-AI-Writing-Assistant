@@ -145,7 +145,12 @@ export default function DocumentsPage() {
       <header className="docs-header">
         <span className="docs-brand">CollabDocs</span>
         <div className="docs-header-right">
-          {user && <span className="docs-user">{user.name || user.email}</span>}
+          {user && (
+            <div className="docs-user">
+              <span className="docs-user-name">{user.display_name || user.username}</span>
+              <span className="docs-user-email">{user.email}</span>
+            </div>
+          )}
           <button className="btn btn-ghost" onClick={logout}>Sign out</button>
         </div>
       </header>

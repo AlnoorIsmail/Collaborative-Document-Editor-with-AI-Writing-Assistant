@@ -139,7 +139,7 @@ export default function Navbar({
         )}
         {user && (
           <div className="navbar-user">
-            <span className="navbar-user-name">{user.username || user.name}</span>
+            <span className="navbar-user-name">{user.display_name || user.username || user.name}</span>
             <span className="navbar-user-email">{user.email}</span>
           </div>
         )}

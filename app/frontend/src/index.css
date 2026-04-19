@@ -211,8 +211,28 @@ html, body {
 }
 
 .docs-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.docs-user-name {
   font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docs-user-email {
+  font-size: 11px;
   color: var(--color-text-muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .docs-main {
