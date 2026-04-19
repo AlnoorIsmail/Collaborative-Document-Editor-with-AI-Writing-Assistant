@@ -194,4 +194,50 @@ describe('TiptapEditor', () => {
       expect(container.querySelector('.editor-remote-selection')).toBeTruthy();
     });
   });
+
+  it('preserves the local selection when remote collaboration steps are applied', async () => {
+    const writerRef = createRef();
+    const readerRef = createRef();
+
+    render(
+      <>
+        <TiptapEditor
+          ref={writerRef}
+          content="<p>Hello world</p>"
+          collaborationEnabled
+          collaborationVersion={0}
+        />
+        <TiptapEditor
+          ref={readerRef}
+          content="<p>Hello world</p>"
+          collaborationEnabled
+          collaborationVersion={0}
+        />
+      </>
+    );
+
+    await waitFor(() => {
+      expect(writerRef.current).toBeTruthy();
+      expect(readerRef.current).toBeTruthy();
+    });
+
+    readerRef.current.focus();
+    readerRef.current.setSelection({ from: 7, to: 7 });
+
+    expect(readerRef.current.getViewState().selection).toEqual({ from: 7, to: 7 });
+
+    writerRef.current.replaceRange({ from: 1, to: 1, text: 'X ' });
+    const pendingBatch = writerRef.current.getPendingStepBatch();
+
+    expect(pendingBatch).toBeTruthy();
+
+    readerRef.current.applyRemoteSteps({
+      steps: pendingBatch.steps,
+      clientIds: pendingBatch.steps.map(() => pendingBatch.clientId),
+    });
+
+    await waitFor(() => {
+      expect(readerRef.current.getViewState().selection).toEqual({ from: 9, to: 9 });
+    });
+  });
 });

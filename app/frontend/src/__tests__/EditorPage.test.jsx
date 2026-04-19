@@ -36,6 +36,8 @@ vi.mock('../components/TiptapEditor', () => ({
   ) {
     const [currentContent, setCurrentContent] = useState(content);
     const [currentVersion, setCurrentVersion] = useState(collaborationVersion);
+    const localInflightRef = React.useRef(false);
+    const queuedBatchRef = React.useRef(null);
 
     useImperativeHandle(ref, () => ({
       getSelectionData() {
@@ -62,6 +64,7 @@ vi.mock('../components/TiptapEditor', () => ({
         const nextVersion = currentVersion + (steps?.length ?? 0);
         setCurrentContent(nextContent);
         setCurrentVersion(nextVersion);
+        localInflightRef.current = false;
         return {
           applied: true,
           html: nextContent,
@@ -70,6 +73,14 @@ vi.mock('../components/TiptapEditor', () => ({
       },
       getCollaborationVersion() {
         return currentVersion;
+      },
+      getPendingStepBatch() {
+        const payload = queuedBatchRef.current;
+        queuedBatchRef.current = null;
+        if (payload) {
+          localInflightRef.current = true;
+        }
+        return payload;
       },
       focus() {
         mockEditorFocus();
@@ -112,7 +123,7 @@ vi.mock('../components/TiptapEditor', () => ({
               hasPendingCollaborationSteps: true,
               collaborationVersion: currentVersion,
             });
-            onSendableSteps?.({
+            const nextPayload = {
               batchId: 'batch-1',
               version: currentVersion,
               clientId: 'client-1',
@@ -124,7 +135,18 @@ vi.mock('../components/TiptapEditor', () => ({
               exactTextSnapshot: 'Initial body',
               prefixContext: 'Before',
               suffixContext: 'After',
-            });
+            };
+
+            if (localInflightRef.current) {
+              queuedBatchRef.current = {
+                ...nextPayload,
+                version: currentVersion + 1,
+              };
+              return;
+            }
+
+            localInflightRef.current = true;
+            onSendableSteps?.(nextPayload);
           }}
         >
           Send collaboration step
@@ -2945,6 +2967,143 @@ describe('EditorPage save flow', () => {
     );
   });
 
+  it('does not resend overlapping local step batches while waiting for confirmation', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
+
+    const sentStepUpdates = MockWebSocket.instances[0].sentMessages.filter(
+      (message) => message.type === 'step_update'
+    );
+
+    expect(sentStepUpdates).toHaveLength(1);
+  });
+
+  it('resumes sending local step batches after the previous batch is confirmed', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
+
+    await act(async () => {
+      MockWebSocket.instances[0].emit({
+        type: 'steps_applied',
+        actor_user_id: 1,
+        actor_display_name: 'Owner',
+        collab_version: 1,
+        steps: [{ mockHtml: '<p>Local collaborative body</p>' }],
+        client_ids: ['client-1'],
+        content: '<p>Local collaborative body</p>',
+        line_spacing: 1.15,
+        batch: {
+          batch_id: 'batch-1',
+          version: 0,
+          client_id: 'client-1',
+          affected_range: { start: 4, end: 21 },
+          candidate_content_snapshot: 'Local collaborative body',
+          exact_text_snapshot: 'Initial body',
+          prefix_context: 'Before',
+          suffix_context: 'After',
+          actor_user_id: 1,
+          actor_display_name: 'Owner',
+        },
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
+
+    await waitFor(() => {
+      const sentStepUpdates = MockWebSocket.instances[0].sentMessages.filter(
+        (message) => message.type === 'step_update'
+      );
+
+      expect(sentStepUpdates).toHaveLength(2);
+      expect(sentStepUpdates[1]).toEqual(
+        expect.objectContaining({
+          version: 1,
+        })
+      );
+    });
+  });
+
   it('publishes local selection awareness over the realtime socket', async () => {
     globalThis.WebSocket = MockWebSocket;
 
@@ -3071,6 +3230,86 @@ describe('EditorPage save flow', () => {
         collab_version: 0,
       })
     );
+  });
+
+  it('re-publishes the current cursor awareness after the collaboration version changes', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move cursor' }));
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+        expect.objectContaining({
+          type: 'selection_update',
+          from: 8,
+          to: 8,
+          direction: 'forward',
+          collab_version: 0,
+        })
+      );
+    });
+
+    MockWebSocket.instances[0].emit({
+      type: 'steps_applied',
+      actor_user_id: 2,
+      actor_display_name: 'Editor',
+      collab_version: 1,
+      steps: [{ mockHtml: '<p>Remote collaborative body</p>' }],
+      client_ids: ['remote-client'],
+      content: '<p>Remote collaborative body</p>',
+      line_spacing: 1.15,
+    });
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+        expect.objectContaining({
+          type: 'selection_update',
+          from: 8,
+          to: 8,
+          direction: 'forward',
+          collab_version: 1,
+        })
+      );
+    });
   });
 
   it('applies remote collaborative steps without forcing a snapshot overwrite', async () => {
