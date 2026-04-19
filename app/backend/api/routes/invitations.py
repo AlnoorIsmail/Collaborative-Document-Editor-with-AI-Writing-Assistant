@@ -10,8 +10,10 @@ from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.user_repository import UserRepository
 from app.backend.schemas.invitation import (
     InvitationAcceptResponse,
+    InvitationDeclineResponse,
     InvitationCreateRequest,
     InvitationCreateResponse,
+    InvitationInboxItemResponse,
 )
 from app.backend.services.invitation_service import InvitationService
 
@@ -45,6 +47,17 @@ def send_invitation(
     )
 
 
+@router.get(
+    "/invitations",
+    response_model=list[InvitationInboxItemResponse],
+)
+def list_invitations(
+    current_user: User = Depends(get_current_authenticated_user),
+    invitation_service: InvitationService = Depends(get_invitation_service),
+) -> list[InvitationInboxItemResponse]:
+    return invitation_service.list_pending_invitations(current_user=current_user)
+
+
 @router.post(
     "/invitations/{invitationId}/accept", response_model=InvitationAcceptResponse
 )
@@ -54,6 +67,20 @@ def accept_invitation(
     invitation_service: InvitationService = Depends(get_invitation_service),
 ) -> InvitationAcceptResponse:
     return invitation_service.accept_invitation(
+        invitation_id=invitationId,
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/invitations/{invitationId}/decline", response_model=InvitationDeclineResponse
+)
+def decline_invitation(
+    invitationId: str,
+    current_user: User = Depends(get_current_authenticated_user),
+    invitation_service: InvitationService = Depends(get_invitation_service),
+) -> InvitationDeclineResponse:
+    return invitation_service.decline_invitation(
         invitation_id=invitationId,
         current_user=current_user,
     )

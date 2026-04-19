@@ -1,19 +1,35 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { apiJSON } from '../api';
 import ShareModal from '../components/ShareModal';
+import InvitationNotificationBanner from '../components/InvitationNotificationBanner';
 import { buildUniqueDisplayTitles, getRoleLabel } from '../documentDisplay';
+import usePendingInvitations from '../hooks/usePendingInvitations';
 import { APP_NAME, usePageTitle } from '../pageTitle';
 
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [inviteFeedback, setInviteFeedback] = useState('');
   const [creating, setCreating] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [sharingDocument, setSharingDocument] = useState(null);
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
+  const location = useLocation();
+  const pendingInvitesRef = useRef(null);
+  const lastFocusedInvitesTokenRef = useRef(null);
+  const {
+    invitations: pendingInvitations,
+    loading: loadingInvitations,
+    error: invitationsError,
+    clearError: clearInvitationsError,
+    activeNotification,
+    dismissNotification,
+    acceptInvitation,
+    declineInvitation,
+  } = usePendingInvitations();
 
   const displayTitles = useMemo(
     () => buildUniqueDisplayTitles(documents),
@@ -21,18 +37,31 @@ export default function DocumentsPage() {
   );
   usePageTitle(APP_NAME);
 
-  useEffect(() => {
-    Promise.all([
-      apiJSON('/documents'),
-      apiJSON('/auth/me'),
-    ])
-      .then(([docs, me]) => {
-        setDocuments(docs);
-        setUser(me);
-      })
-      .catch(err => setError(err.message))
-      .finally(() => setLoading(false));
+  const loadDocuments = useCallback(async () => {
+    const nextDocuments = await apiJSON('/documents');
+    setDocuments(nextDocuments);
+    return nextDocuments;
   }, []);
+
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [docs, me] = await Promise.all([
+        loadDocuments(),
+        apiJSON('/auth/me'),
+      ]);
+      setDocuments(docs);
+      setUser(me);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [loadDocuments]);
+
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
 
   useEffect(() => {
     if (!activeMenuId) {
@@ -50,6 +79,33 @@ export default function DocumentsPage() {
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, [activeMenuId]);
+
+  const focusPendingInvites = useCallback(() => {
+    if (!pendingInvitesRef.current) {
+      return;
+    }
+
+    pendingInvitesRef.current.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+    pendingInvitesRef.current.focus();
+  }, []);
+
+  useEffect(() => {
+    const focusInvitesToken = location.state?.focusInvitesToken;
+    if (!focusInvitesToken || loadingInvitations) {
+      return;
+    }
+    if (lastFocusedInvitesTokenRef.current === focusInvitesToken) {
+      return;
+    }
+
+    lastFocusedInvitesTokenRef.current = focusInvitesToken;
+    window.requestAnimationFrame(() => {
+      focusPendingInvites();
+    });
+  }, [focusPendingInvites, loadingInvitations, location.state]);
 
   async function createDocument() {
     setCreating(true);
@@ -140,6 +196,33 @@ export default function DocumentsPage() {
     setSharingDocument(doc);
   }
 
+  async function handleAcceptInvitation(invitationId) {
+    setInviteFeedback('');
+    clearInvitationsError();
+
+    try {
+      await acceptInvitation(invitationId);
+      await loadDocuments();
+      setInviteFeedback('Invitation accepted. The shared document is now in your list.');
+    } catch (nextError) {
+      setInviteFeedback('');
+      setError(nextError.message || 'Failed to accept the invitation.');
+    }
+  }
+
+  async function handleDeclineInvitation(invitationId) {
+    setInviteFeedback('');
+    clearInvitationsError();
+
+    try {
+      await declineInvitation(invitationId);
+      setInviteFeedback('Invitation declined.');
+    } catch (nextError) {
+      setInviteFeedback('');
+      setError(nextError.message || 'Failed to decline the invitation.');
+    }
+  }
+
   return (
     <div className="docs-page">
       <header className="docs-header">
@@ -156,6 +239,15 @@ export default function DocumentsPage() {
       </header>
 
       <main className="docs-main">
+        <InvitationNotificationBanner
+          invitation={activeNotification}
+          onReview={(invitation) => {
+            dismissNotification(invitation.invitation_id);
+            focusPendingInvites();
+          }}
+          onDismiss={dismissNotification}
+        />
+
         <div className="docs-top">
           <h2>My documents</h2>
           <button className="btn btn-primary" onClick={createDocument} disabled={creating}>
@@ -164,6 +256,76 @@ export default function DocumentsPage() {
         </div>
 
         {error && <div className="error-banner">{error}</div>}
+        {invitationsError && <div className="error-banner">{invitationsError}</div>}
+        {inviteFeedback && <div className="share-success-banner">{inviteFeedback}</div>}
+
+        {(loadingInvitations || pendingInvitations.length > 0) && (
+          <section
+            ref={pendingInvitesRef}
+            className="pending-invitations-panel"
+            aria-label="Pending invitations"
+            id="pending-invitations"
+            tabIndex={-1}
+          >
+            <div className="pending-invitations-header">
+              <div>
+                <h3>Pending invitations</h3>
+                <p>Review invites shared directly with your account.</p>
+              </div>
+            </div>
+
+            {loadingInvitations ? (
+              <div className="pending-invitations-empty">Checking for invitations…</div>
+            ) : (
+              <div className="pending-invitations-list">
+                {pendingInvitations.map((invitation) => (
+                  <article
+                    key={invitation.invitation_id}
+                    className="pending-invitation-card"
+                  >
+                    <div className="pending-invitation-copy">
+                      <div className="pending-invitation-top">
+                        <strong>{invitation.document_title}</strong>
+                        <span className="doc-card-role">
+                          {getRoleLabel(invitation.role)}
+                        </span>
+                      </div>
+                      <div className="pending-invitation-meta">
+                        Shared by{' '}
+                        <strong>
+                          {invitation.inviter.display_name || invitation.inviter.email}
+                        </strong>
+                        {' • '}
+                        expires{' '}
+                        {formatDate(invitation.expires_at)}
+                      </div>
+                      <div className="pending-invitation-email">
+                        Invited as {invitation.invited_email}
+                      </div>
+                    </div>
+
+                    <div className="pending-invitation-actions">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => handleDeclineInvitation(invitation.invitation_id)}
+                      >
+                        Decline
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => handleAcceptInvitation(invitation.invitation_id)}
+                      >
+                        Accept
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {loading ? (
           <div className="docs-loading">Loading…</div>

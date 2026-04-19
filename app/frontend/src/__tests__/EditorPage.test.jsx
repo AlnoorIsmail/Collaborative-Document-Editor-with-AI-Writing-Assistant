@@ -6,6 +6,17 @@ import EditorPage from '../pages/EditorPage';
 import * as api from '../api';
 
 const originalWebSocket = globalThis.WebSocket;
+const mockUsePendingInvitations = vi.fn(() => ({
+  invitations: [],
+  loading: false,
+  error: '',
+  clearError: vi.fn(),
+  activeNotification: null,
+  dismissNotification: vi.fn(),
+  refreshInvitations: vi.fn(),
+  acceptInvitation: vi.fn(),
+  declineInvitation: vi.fn(),
+}));
 const mockEditorCaptureViewState = vi.fn(() => null);
 const mockEditorRestoreViewState = vi.fn(() => true);
 const mockEditorFocus = vi.fn();
@@ -203,6 +214,10 @@ vi.mock('../components/ShareModal', () => ({
   default: function MockShareModal() {
     return <div>Share modal</div>;
   },
+}));
+
+vi.mock('../hooks/usePendingInvitations', () => ({
+  default: (...args) => mockUsePendingInvitations(...args),
 }));
 
 function renderEditorPage() {
@@ -408,6 +423,17 @@ class MockWebSocket {
 describe('EditorPage save flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUsePendingInvitations.mockReturnValue({
+      invitations: [],
+      loading: false,
+      error: '',
+      clearError: vi.fn(),
+      activeNotification: null,
+      dismissNotification: vi.fn(),
+      refreshInvitations: vi.fn(),
+      acceptInvitation: vi.fn(),
+      declineInvitation: vi.fn(),
+    });
     mockEditorCaptureViewState.mockImplementation(() => null);
     mockEditorRestoreViewState.mockImplementation(() => true);
     mockEditorFocus.mockImplementation(() => {});
@@ -441,6 +467,10 @@ describe('EditorPage save flow', () => {
       }
 
       if (path === '/documents/1/comments') {
+        return Promise.resolve([]);
+      }
+
+      if (path === '/invitations') {
         return Promise.resolve([]);
       }
 
@@ -546,6 +576,69 @@ describe('EditorPage save flow', () => {
     expect(screen.queryByRole('button', { name: /edit document/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /show ai/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /comments/i })).toBeInTheDocument();
+  });
+
+  it('shows a live invitation banner on the editor page when a new invite arrives', async () => {
+    const dismissNotification = vi.fn();
+    mockUsePendingInvitations.mockReturnValue({
+      invitations: [],
+      loading: false,
+      error: '',
+      clearError: vi.fn(),
+      activeNotification: {
+        invitation_id: 'inv_9',
+        document_id: 'doc_7',
+        document_title: 'Shared Outline',
+        role: 'commenter',
+        invited_email: 'user@example.com',
+        inviter: {
+          user_id: 'usr_3',
+          email: 'owner@example.com',
+          username: 'owner',
+          display_name: 'Owner',
+        },
+        created_at: '2026-01-01T00:00:00Z',
+        expires_at: '2026-01-03T00:00:00Z',
+      },
+      dismissNotification,
+      refreshInvitations: vi.fn(),
+      acceptInvitation: vi.fn(),
+      declineInvitation: vi.fn(),
+    });
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/comments') {
+        return Promise.resolve([]);
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Owner shared “Shared Outline” with you as Commenter.'
+    );
+    fireEvent.click(screen.getByRole('button', { name: /review invites/i }));
+    expect(dismissNotification).toHaveBeenCalledWith('inv_9');
+    await screen.findByText('Documents page');
   });
 
   it('creates sidebar comments with the selected text snapshot', async () => {

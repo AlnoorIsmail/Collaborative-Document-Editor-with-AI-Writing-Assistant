@@ -134,6 +134,31 @@ html, body {
   font-size: 14px;
 }
 
+.invite-notification-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 12px;
+  color: #3730a3;
+}
+
+.invite-notification-copy {
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.invite-notification-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 /* ── Auth pages ───────────────────────────────────── */
 .auth-page {
   min-height: 100vh;
@@ -250,6 +275,75 @@ html, body {
 }
 .docs-top h2 { margin: 0; font-size: 20px; font-weight: 700; }
 
+.pending-invitations-panel {
+  margin-bottom: 24px;
+  padding: 20px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  outline: none;
+}
+
+.pending-invitations-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.pending-invitations-header p {
+  margin: 6px 0 0;
+  color: var(--color-text-muted);
+}
+
+.pending-invitations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.pending-invitations-empty {
+  margin-top: 16px;
+  color: var(--color-text-muted);
+}
+
+.pending-invitation-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #fafbff;
+}
+
+.pending-invitation-copy {
+  min-width: 0;
+}
+
+.pending-invitation-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pending-invitation-meta,
+.pending-invitation-email {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.pending-invitation-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .docs-loading,
 .docs-empty {
   text-align: center;
@@ -257,6 +351,21 @@ html, body {
   color: var(--color-text-muted);
 }
 .docs-empty p { margin-bottom: 16px; }
+
+@media (max-width: 768px) {
+  .invite-notification-banner,
+  .pending-invitation-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .invite-notification-actions,
+  .pending-invitation-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
 
 .docs-grid {
   display: grid;

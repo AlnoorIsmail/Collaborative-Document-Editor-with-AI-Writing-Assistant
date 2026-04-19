@@ -266,3 +266,231 @@ def test_already_accepted_invitation_is_rejected() -> None:
         "message": "Invitation has already been processed.",
         "retryable": False,
     }
+
+
+def test_invited_user_can_list_pending_invitations() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_user_and_token(client, "editor@example.com", "Editor Name")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Shared Draft", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+    document_id = create_response.json()["document_id"]
+    client.post(
+        "/v1/documents/{document_id}/invitations".format(document_id=document_id),
+        json={"invitee": "editor_name", "role": "editor"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+
+    _, invited_token = create_user_and_token(
+        client, "recipient@example.com", "Recipient"
+    )
+    response = client.get(
+        "/v1/invitations",
+        headers={"Authorization": "Bearer {token}".format(token=invited_token)},
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+    login_response = client.post(
+        "/v1/auth/login",
+        json={"email": "editor@example.com", "password": "strong-password"},
+    )
+    response = client.get(
+        "/v1/invitations",
+        headers={
+            "Authorization": "Bearer {token}".format(
+                token=login_response.json()["access_token"]
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "invitation_id": "inv_1",
+            "document_id": "doc_{id}".format(id=document_id),
+            "document_title": "Shared Draft",
+            "role": "editor",
+            "invited_email": "editor@example.com",
+            "inviter": {
+                "user_id": "usr_1",
+                "email": "owner@example.com",
+                "username": "owner",
+                "display_name": "Owner",
+            },
+            "created_at": response.json()[0]["created_at"],
+            "expires_at": response.json()[0]["expires_at"],
+        }
+    ]
+
+
+def test_processed_and_expired_invitations_are_excluded_from_inbox() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    _, invited_token = create_user_and_token(client, "editor@example.com", "Editor")
+    first_doc = client.post(
+        "/v1/documents",
+        json={"title": "Accepted Doc", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    ).json()
+    second_doc = client.post(
+        "/v1/documents",
+        json={"title": "Declined Doc", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    ).json()
+    third_doc = client.post(
+        "/v1/documents",
+        json={"title": "Expired Doc", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    ).json()
+    fourth_doc = client.post(
+        "/v1/documents",
+        json={"title": "Open Doc", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    ).json()
+
+    accepted_invitation = client.post(
+        "/v1/documents/{document_id}/invitations".format(
+            document_id=first_doc["document_id"]
+        ),
+        json={"invitee": "editor@example.com", "role": "viewer"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    ).json()
+    declined_invitation = client.post(
+        "/v1/documents/{document_id}/invitations".format(
+            document_id=second_doc["document_id"]
+        ),
+        json={"invitee": "editor@example.com", "role": "commenter"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    ).json()
+    client.post(
+        "/v1/documents/{document_id}/invitations".format(
+            document_id=third_doc["document_id"]
+        ),
+        json={"invitee": "editor@example.com", "role": "editor"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+    open_invitation = client.post(
+        "/v1/documents/{document_id}/invitations".format(
+            document_id=fourth_doc["document_id"]
+        ),
+        json={"invitee": "editor@example.com", "role": "editor"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    ).json()
+
+    client.post(
+        "/v1/invitations/{invitation_id}/accept".format(
+            invitation_id=accepted_invitation["invitation_id"]
+        ),
+        headers={"Authorization": "Bearer {token}".format(token=invited_token)},
+    )
+    client.post(
+        "/v1/invitations/{invitation_id}/decline".format(
+            invitation_id=declined_invitation["invitation_id"]
+        ),
+        headers={"Authorization": "Bearer {token}".format(token=invited_token)},
+    )
+
+    db = client.session_factory()
+    try:
+        expired_invitation = db.query(Invitation).filter(Invitation.id == 3).first()
+        expired_invitation.expires_at = utc_now() - timedelta(minutes=1)
+        db.add(expired_invitation)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        "/v1/invitations",
+        headers={"Authorization": "Bearer {token}".format(token=invited_token)},
+    )
+
+    assert response.status_code == 200
+    assert [item["invitation_id"] for item in response.json()] == [
+        open_invitation["invitation_id"]
+    ]
+
+
+def test_invited_user_can_decline_invitation() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    _, invited_token = create_user_and_token(client, "editor@example.com", "Editor")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Decline Me", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+    document_id = create_response.json()["document_id"]
+    invitation_response = client.post(
+        "/v1/documents/{document_id}/invitations".format(document_id=document_id),
+        json={"invited_email": "editor@example.com", "role": "commenter"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+
+    response = client.post(
+        "/v1/invitations/{invitation_id}/decline".format(
+            invitation_id=invitation_response.json()["invitation_id"],
+        ),
+        headers={"Authorization": "Bearer {token}".format(token=invited_token)},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "invitation_id": invitation_response.json()["invitation_id"],
+        "status": "declined",
+        "document_id": "doc_{id}".format(id=document_id),
+        "role": "commenter",
+    }
+
+    inbox_response = client.get(
+        "/v1/invitations",
+        headers={"Authorization": "Bearer {token}".format(token=invited_token)},
+    )
+    assert inbox_response.status_code == 200
+    assert inbox_response.json() == []
+
+
+def test_wrong_user_cannot_decline() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    _, invited_token = create_user_and_token(client, "editor@example.com", "Editor")
+    _, stranger_token = create_user_and_token(
+        client, "stranger@example.com", "Stranger"
+    )
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Decline Me", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+    document_id = create_response.json()["document_id"]
+    invitation_response = client.post(
+        "/v1/documents/{document_id}/invitations".format(document_id=document_id),
+        json={"invited_email": "editor@example.com", "role": "commenter"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+
+    response = client.post(
+        "/v1/invitations/{invitation_id}/decline".format(
+            invitation_id=invitation_response.json()["invitation_id"],
+        ),
+        headers={"Authorization": "Bearer {token}".format(token=stranger_token)},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error_code": "FORBIDDEN",
+        "message": "You are not allowed to decline this invitation.",
+        "retryable": False,
+    }
+
+    inbox_response = client.get(
+        "/v1/invitations",
+        headers={"Authorization": "Bearer {token}".format(token=invited_token)},
+    )
+    assert inbox_response.status_code == 200
+    assert [item["invitation_id"] for item in inbox_response.json()] == [
+        invitation_response.json()["invitation_id"]
+    ]

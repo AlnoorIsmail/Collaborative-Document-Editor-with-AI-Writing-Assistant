@@ -13,8 +13,11 @@ from app.backend.repositories.permission_repository import PermissionRepository
 from app.backend.repositories.user_repository import UserRepository
 from app.backend.schemas.invitation import (
     InvitationAcceptResponse,
+    InvitationDeclineResponse,
     InvitationCreateRequest,
     InvitationCreateResponse,
+    InvitationInboxItemResponse,
+    InvitationInviterResponse,
 )
 from app.backend.services.access_service import DocumentAccessService
 
@@ -90,36 +93,11 @@ class InvitationService:
         invitation_id: str | int,
         current_user: User,
     ) -> InvitationAcceptResponse:
-        invitation = self.invitation_repository.get_by_id(
-            parse_resource_id(invitation_id, "inv")
+        invitation = self._require_actionable_invitation(
+            invitation_id=invitation_id,
+            current_user=current_user,
+            action="accept",
         )
-        if invitation is None:
-            raise ApiError(
-                status_code=status.HTTP_404_NOT_FOUND,
-                error_code="INVITATION_NOT_FOUND",
-                message="Invitation not found.",
-            )
-
-        if invitation.status != "pending":
-            raise ApiError(
-                status_code=status.HTTP_409_CONFLICT,
-                error_code="INVITATION_ALREADY_PROCESSED",
-                message="Invitation has already been processed.",
-            )
-
-        if invitation.expires_at < utc_now():
-            raise ApiError(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                error_code="INVITATION_EXPIRED",
-                message="Invitation has expired.",
-            )
-
-        if current_user.email.lower() != invitation.email.lower():
-            raise ApiError(
-                status_code=status.HTTP_403_FORBIDDEN,
-                error_code="FORBIDDEN",
-                message="You are not allowed to accept this invitation.",
-            )
 
         permission = self.permission_repository.get_by_document_and_user(
             document_id=invitation.document_id,
@@ -153,6 +131,82 @@ class InvitationService:
             role=updated_invitation.role,
         )
 
+    def decline_invitation(
+        self,
+        *,
+        invitation_id: str | int,
+        current_user: User,
+    ) -> InvitationDeclineResponse:
+        invitation = self._require_actionable_invitation(
+            invitation_id=invitation_id,
+            current_user=current_user,
+            action="decline",
+        )
+
+        updated_invitation = self.invitation_repository.update(
+            invitation,
+            status="declined",
+        )
+        self.invitation_repository.db.commit()
+
+        return InvitationDeclineResponse(
+            invitation_id=prefixed_id("inv", updated_invitation.id),
+            status=updated_invitation.status,
+            document_id=prefixed_id("doc", updated_invitation.document_id),
+            role=updated_invitation.role,
+        )
+
+    def list_pending_invitations(
+        self,
+        *,
+        current_user: User,
+    ) -> list[InvitationInboxItemResponse]:
+        invitations = self.invitation_repository.list_pending_for_email(
+            email=current_user.email.lower(),
+            now=utc_now(),
+        )
+        return [self._to_inbox_item_response(invitation) for invitation in invitations]
+
+    def _require_actionable_invitation(
+        self,
+        *,
+        invitation_id: str | int,
+        current_user: User,
+        action: str,
+    ):
+        invitation = self.invitation_repository.get_by_id(
+            parse_resource_id(invitation_id, "inv")
+        )
+        if invitation is None:
+            raise ApiError(
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="INVITATION_NOT_FOUND",
+                message="Invitation not found.",
+            )
+
+        if invitation.status != "pending":
+            raise ApiError(
+                status_code=status.HTTP_409_CONFLICT,
+                error_code="INVITATION_ALREADY_PROCESSED",
+                message="Invitation has already been processed.",
+            )
+
+        if invitation.expires_at < utc_now():
+            raise ApiError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="INVITATION_EXPIRED",
+                message="Invitation has expired.",
+            )
+
+        if current_user.email.lower() != invitation.email.lower():
+            raise ApiError(
+                status_code=status.HTTP_403_FORBIDDEN,
+                error_code="FORBIDDEN",
+                message=f"You are not allowed to {action} this invitation.",
+            )
+
+        return invitation
+
     def _to_create_response(self, invitation) -> InvitationCreateResponse:
         return InvitationCreateResponse(
             invitation_id=prefixed_id("inv", invitation.id),
@@ -160,5 +214,22 @@ class InvitationService:
             invited_email=invitation.email,
             role=invitation.role,
             status=invitation.status,
+            expires_at=utc_z(invitation.expires_at),
+        )
+
+    def _to_inbox_item_response(self, invitation) -> InvitationInboxItemResponse:
+        return InvitationInboxItemResponse(
+            invitation_id=prefixed_id("inv", invitation.id),
+            document_id=prefixed_id("doc", invitation.document_id),
+            document_title=invitation.document.title,
+            role=invitation.role,
+            invited_email=invitation.email,
+            inviter=InvitationInviterResponse(
+                user_id=prefixed_id("usr", invitation.inviter.id),
+                email=invitation.inviter.email,
+                username=invitation.inviter.username,
+                display_name=invitation.inviter.display_name,
+            ),
+            created_at=utc_z(invitation.created_at),
             expires_at=utc_z(invitation.expires_at),
         )

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.backend.models.invitation import Invitation
 
@@ -40,6 +40,27 @@ class InvitationRepository:
         return (
             self.db.query(Invitation)
             .filter(Invitation.document_id == document_id)
+            .order_by(Invitation.created_at.desc(), Invitation.id.desc())
+            .all()
+        )
+
+    def list_pending_for_email(
+        self,
+        *,
+        email: str,
+        now: datetime,
+    ) -> list[Invitation]:
+        return (
+            self.db.query(Invitation)
+            .options(
+                joinedload(Invitation.document),
+                joinedload(Invitation.inviter),
+            )
+            .filter(
+                Invitation.email == email,
+                Invitation.status == "pending",
+                Invitation.expires_at > now,
+            )
             .order_by(Invitation.created_at.desc(), Invitation.id.desc())
             .all()
         )

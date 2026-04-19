@@ -30,3 +30,28 @@ class InvitationAcceptResponse(BaseModel):
     status: str
     document_id: str
     role: str
+
+
+class InvitationInviterResponse(BaseModel):
+    user_id: str
+    email: str
+    username: str | None = None
+    display_name: str
+
+
+class InvitationInboxItemResponse(BaseModel):
+    invitation_id: str
+    document_id: str
+    document_title: str
+    role: str
+    invited_email: str = EmailField
+    inviter: InvitationInviterResponse
+    created_at: str
+    expires_at: str
+
+
+class InvitationDeclineResponse(BaseModel):
+    invitation_id: str
+    status: str
+    document_id: str
+    role: str

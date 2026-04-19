@@ -8,8 +8,10 @@ import AISidebar from '../components/AISidebar';
 import CommentsSidebar from '../components/CommentsSidebar';
 import DocumentHistoryModal from '../components/DocumentHistoryModal';
 import ExportModal from '../components/ExportModal';
+import InvitationNotificationBanner from '../components/InvitationNotificationBanner';
 import PresenceBar, { PresenceSummary } from '../components/PresenceBar';
 import ConflictResolutionTray from '../components/ConflictResolutionTray';
+import usePendingInvitations from '../hooks/usePendingInvitations';
 import {
   buildRealtimeSocketUrl,
   clearOfflineDraft,
@@ -212,6 +214,10 @@ export default function EditorPage() {
   const [collabResetKey, setCollabResetKey] = useState(0);
   const [error, setError] = useState('');
   usePageTitle(buildDocumentPageTitle(title || doc?.title));
+  const {
+    activeNotification: activeInviteNotification,
+    dismissNotification: dismissInviteNotification,
+  } = usePendingInvitations();
 
   const editorRef = useRef(null);
   const docRef = useRef(null);
@@ -2142,6 +2148,19 @@ export default function EditorPage() {
             variant="inline"
           />
         }
+      />
+
+      <InvitationNotificationBanner
+        invitation={activeInviteNotification}
+        onReview={(invitation) => {
+          dismissInviteNotification(invitation.invitation_id);
+          navigate('/', {
+            state: {
+              focusInvitesToken: Date.now(),
+            },
+          });
+        }}
+        onDismiss={dismissInviteNotification}
       />
 
       {isReadOnly && (
