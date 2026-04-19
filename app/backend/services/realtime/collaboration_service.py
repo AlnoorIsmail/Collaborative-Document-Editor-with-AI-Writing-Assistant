@@ -30,11 +30,17 @@ class _ConnectedCollaborator:
 
 @dataclass
 class _CollabStepBatch:
+    batch_id: str
     start_version: int
     steps: list[dict[str, Any]]
-    client_ids: list[str]
+    client_id: str
     actor_user_id: int
     actor_display_name: str
+    affected_range: dict[str, int]
+    candidate_content_snapshot: str
+    exact_text_snapshot: str
+    prefix_context: str
+    suffix_context: str
     created_at: datetime
 
 
@@ -147,6 +153,7 @@ class RealtimeHub:
                     "line_spacing": 1.15,
                     "steps": [],
                     "client_ids": [],
+                    "batches": [],
                 }
 
             if version == state.version:
@@ -155,6 +162,7 @@ class RealtimeHub:
                     "full_reset": False,
                     "steps": [],
                     "client_ids": [],
+                    "batches": [],
                 }
 
             earliest_version = (
@@ -168,23 +176,27 @@ class RealtimeHub:
                     "full_reset": True,
                     "steps": [],
                     "client_ids": [],
+                    "batches": [],
                 }
 
             missing_steps: list[dict[str, Any]] = []
             missing_client_ids: list[str] = []
+            missing_batches: list[dict[str, Any]] = []
             for batch in state.step_batches:
                 batch_end = batch.start_version + len(batch.steps)
                 if batch_end <= version:
                     continue
                 slice_start = max(version - batch.start_version, 0)
                 missing_steps.extend(batch.steps[slice_start:])
-                missing_client_ids.extend(batch.client_ids[slice_start:])
+                missing_client_ids.extend([batch.client_id for _ in batch.steps[slice_start:]])
+                missing_batches.append(self._serialize_batch(batch))
 
             return {
                 **self._snapshot(state),
                 "full_reset": False,
                 "steps": missing_steps,
                 "client_ids": missing_client_ids,
+                "batches": missing_batches,
             }
 
     async def apply_steps(
@@ -192,12 +204,18 @@ class RealtimeHub:
         *,
         document_id: int,
         version: int,
+        batch_id: str,
         steps: list[dict[str, Any]],
         client_id: str,
         content: str,
         line_spacing: float,
         actor_user_id: int,
         actor_display_name: str,
+        affected_range: dict[str, int],
+        candidate_content_snapshot: str,
+        exact_text_snapshot: str,
+        prefix_context: str,
+        suffix_context: str,
     ) -> dict[str, Any]:
         with self._lock:
             state = self._collab_state_by_document.get(document_id)
@@ -217,13 +235,18 @@ class RealtimeHub:
                     **self._missing_steps_payload(state, version),
                 }
 
-            normalized_client_ids = [client_id for _ in steps]
             batch = _CollabStepBatch(
+                batch_id=batch_id,
                 start_version=state.version,
                 steps=steps,
-                client_ids=normalized_client_ids,
+                client_id=client_id,
                 actor_user_id=actor_user_id,
                 actor_display_name=actor_display_name,
+                affected_range=affected_range,
+                candidate_content_snapshot=candidate_content_snapshot,
+                exact_text_snapshot=exact_text_snapshot,
+                prefix_context=prefix_context,
+                suffix_context=suffix_context,
                 created_at=utc_now(),
             )
             state.step_batches.append(batch)
@@ -236,7 +259,8 @@ class RealtimeHub:
                 "accepted": True,
                 **self._snapshot(state),
                 "steps": steps,
-                "client_ids": normalized_client_ids,
+                "client_ids": [client_id for _ in steps],
+                "batch": self._serialize_batch(batch),
             }
 
     async def update_line_spacing(
@@ -326,6 +350,21 @@ class RealtimeHub:
             "updated_at": utc_z(state.updated_at),
         }
 
+    def _serialize_batch(self, batch: _CollabStepBatch) -> dict[str, Any]:
+        return {
+            "batch_id": batch.batch_id,
+            "version": batch.start_version,
+            "client_id": batch.client_id,
+            "affected_range": batch.affected_range,
+            "candidate_content_snapshot": batch.candidate_content_snapshot,
+            "exact_text_snapshot": batch.exact_text_snapshot,
+            "prefix_context": batch.prefix_context,
+            "suffix_context": batch.suffix_context,
+            "actor_user_id": batch.actor_user_id,
+            "actor_display_name": batch.actor_display_name,
+            "created_at": utc_z(batch.created_at),
+        }
+
     def _missing_steps_payload(
         self,
         state: _DocumentCollabState,
@@ -341,22 +380,26 @@ class RealtimeHub:
                 "full_reset": True,
                 "steps": [],
                 "client_ids": [],
+                "batches": [],
             }
 
         missing_steps: list[dict[str, Any]] = []
         missing_client_ids: list[str] = []
+        missing_batches: list[dict[str, Any]] = []
         for batch in state.step_batches:
             batch_end = batch.start_version + len(batch.steps)
             if batch_end <= version:
                 continue
             slice_start = max(version - batch.start_version, 0)
             missing_steps.extend(batch.steps[slice_start:])
-            missing_client_ids.extend(batch.client_ids[slice_start:])
+            missing_client_ids.extend([batch.client_id for _ in batch.steps[slice_start:]])
+            missing_batches.append(self._serialize_batch(batch))
 
         return {
             "full_reset": False,
             "steps": missing_steps,
             "client_ids": missing_client_ids,
+            "batches": missing_batches,
         }
 
 
@@ -499,6 +542,7 @@ class CollaborationService:
                     "full_reset": missing["full_reset"],
                     "steps": missing["steps"],
                     "client_ids": missing["client_ids"],
+                    "batches": missing.get("batches", []),
                     "content": missing["content"],
                     "line_spacing": missing["line_spacing"],
                     "revision": access.current_revision,
@@ -613,17 +657,37 @@ class CollaborationService:
 
             content_snapshot = str(payload.get("content") or access.document.content)
             client_id = str(payload.get("client_id") or session_id)
+            batch_id = str(payload.get("batch_id") or "").strip()
             line_spacing = float(payload.get("line_spacing") or access.document.line_spacing)
+            affected_range = self._parse_text_range(payload.get("affected_range"))
+            candidate_content_snapshot = str(payload.get("candidate_content_snapshot") or "")
+            exact_text_snapshot = str(payload.get("exact_text_snapshot") or "")
+            prefix_context = str(payload.get("prefix_context") or "")
+            suffix_context = str(payload.get("suffix_context") or "")
+
+            if not batch_id or affected_range is None:
+                await self._send_validation_error(
+                    document_id=resolved_document_id,
+                    session_id=session_id,
+                    message="Realtime step payload is missing range metadata.",
+                )
+                return
 
             result = await self._hub.apply_steps(
                 document_id=resolved_document_id,
                 version=version,
+                batch_id=batch_id,
                 steps=steps,
                 client_id=client_id,
                 content=content_snapshot,
                 line_spacing=line_spacing,
                 actor_user_id=current_user.id,
                 actor_display_name=current_user.display_name,
+                affected_range=affected_range,
+                candidate_content_snapshot=candidate_content_snapshot,
+                exact_text_snapshot=exact_text_snapshot,
+                prefix_context=prefix_context,
+                suffix_context=suffix_context,
             )
 
             if not result["accepted"]:
@@ -636,6 +700,7 @@ class CollaborationService:
                         "full_reset": result["full_reset"],
                         "steps": result["steps"],
                         "client_ids": result["client_ids"],
+                        "batches": result.get("batches", []),
                         "content": result["content"],
                         "line_spacing": result["line_spacing"],
                         "revision": access.current_revision,
@@ -667,6 +732,7 @@ class CollaborationService:
                     "document_id": resolved_document_id,
                     "steps": result["steps"],
                     "client_ids": result["client_ids"],
+                    "batch": result.get("batch"),
                     "collab_version": result["version"],
                     "content": result["content"],
                     "line_spacing": result["line_spacing"],
@@ -816,3 +882,12 @@ class CollaborationService:
             return int(value)
         except (TypeError, ValueError):
             return default
+
+    def _parse_text_range(self, value: Any) -> dict[str, int] | None:
+        if not isinstance(value, dict):
+            return None
+        start = self._coerce_int(value.get("start"), default=None)
+        end = self._coerce_int(value.get("end"), default=None)
+        if start is None or end is None or start < 0 or end < start:
+            return None
+        return {"start": start, "end": end}

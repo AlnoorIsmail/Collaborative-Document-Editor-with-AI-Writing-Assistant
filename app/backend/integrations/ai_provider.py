@@ -140,6 +140,14 @@ class StubAIProviderClient(AIProviderClient):
                 usage=self._estimate_usage(prompt=prompt, completion=output),
             )
 
+        if normalized_feature == "conflict_merge":
+            output = self._conflict_merge(prompt)
+            return GeneratedSuggestion(
+                generated_output=output,
+                model_name="local-conflict-merge-fallback",
+                usage=self._estimate_usage(prompt=prompt, completion=output),
+            )
+
         output = self._rewrite(prompt)
         return GeneratedSuggestion(
             generated_output=output,
@@ -256,6 +264,27 @@ class StubAIProviderClient(AIProviderClient):
         opening = sentences[0]
         supporting = " ".join(sentences[1:])
         return f"Overview: {opening}\n\nDetails: {supporting}"
+
+    def _conflict_merge(self, prompt: str) -> str:
+        source_text = self._extract_source_text(prompt)
+        if not source_text:
+            return "No conflicting alternatives were available to merge."
+
+        lines = [
+            line.strip()
+            for line in source_text.splitlines()
+            if line.strip() and ":" in line
+        ]
+        candidate_texts = [
+            line.split(":", 1)[1].strip()
+            for line in lines
+            if line.split(":", 1)[1].strip()
+        ]
+        if not candidate_texts:
+            candidate_texts = [source_text.strip()]
+
+        merged = " ".join(dict.fromkeys(candidate_texts))
+        return self._polish_text(merged)
 
     def _extract_source_text(self, prompt: str) -> str:
         source_text = (
@@ -481,6 +510,12 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
             return (
                 "You reorganize document text to improve flow and readability. Return only "
                 "the reorganized text."
+            )
+
+        if normalized_feature == "conflict_merge":
+            return (
+                "You merge overlapping collaborative edit alternatives into one coherent "
+                "resolution. Return only the merged text."
             )
 
         return (

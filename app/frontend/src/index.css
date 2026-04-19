@@ -615,6 +615,114 @@ html, body {
   flex-wrap: wrap;
 }
 
+.conflict-resolution-tray {
+  margin: 0 24px 24px;
+  padding: 18px;
+  border: 1px solid #f5c26b;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fffdf8 0%, #ffffff 100%);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.conflict-resolution-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.conflict-resolution-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.conflict-resolution-subtitle {
+  margin: 6px 0 0;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.conflict-resolution-status {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.conflict-resolution-status-open {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.conflict-resolution-status-stale {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.conflict-resolution-region,
+.conflict-resolution-manual,
+.conflict-ai-suggestion {
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.conflict-resolution-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+}
+
+.conflict-resolution-region p,
+.conflict-candidate-preview,
+.conflict-ai-suggestion-body {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.conflict-resolution-candidates {
+  display: grid;
+  gap: 12px;
+}
+
+.conflict-candidate-card {
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.9);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conflict-candidate-header,
+.conflict-ai-suggestion-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.conflict-resolution-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 /* ── Tiptap editor ────────────────────────────────── */
 .editor-wrapper {
   flex: 1;
@@ -707,6 +815,23 @@ html, body {
   line-height: var(--editor-line-spacing, 1.15);
   color: var(--color-text);
   display: flow-root;
+}
+
+.editor-content .ProseMirror .editor-conflict-highlight {
+  background: rgba(245, 158, 11, 0.18);
+  box-shadow: inset 0 -2px 0 rgba(234, 88, 12, 0.55);
+  border-radius: 4px;
+}
+
+.editor-content .ProseMirror .editor-conflict-marker {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 2px;
+  border-radius: 999px;
+  background: #f97316;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.16);
+  vertical-align: middle;
 }
 
 .editor-content .ProseMirror p,

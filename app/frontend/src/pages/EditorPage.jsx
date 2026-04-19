@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { apiJSON } from '../api';
+import { apiFetch, apiJSON } from '../api';
 import Navbar from '../components/Navbar';
 import TiptapEditor from '../components/TiptapEditor';
 import ShareModal from '../components/ShareModal';
@@ -8,6 +8,7 @@ import AISidebar from '../components/AISidebar';
 import DocumentHistoryModal from '../components/DocumentHistoryModal';
 import ExportModal from '../components/ExportModal';
 import PresenceBar from '../components/PresenceBar';
+import ConflictResolutionTray from '../components/ConflictResolutionTray';
 import {
   buildRealtimeSocketUrl,
   clearOfflineDraft,
@@ -37,6 +38,107 @@ function resolveRole(docData, userData) {
   return collaborator?.role || docData.role || 'viewer';
 }
 
+function resolveUserId(userData) {
+  return userData?.user_id ?? userData?.id ?? null;
+}
+
+function resolveDisplayName(userData) {
+  return userData?.display_name || userData?.displayName || userData?.name || userData?.email || 'You';
+}
+
+function rangesOverlap(leftRange, rightRange) {
+  if (!leftRange || !rightRange) {
+    return false;
+  }
+  return leftRange.start <= rightRange.end && rightRange.start <= leftRange.end;
+}
+
+function makeConflictKey(documentId, localBatchId, remoteBatchId) {
+  const orderedBatchIds = [localBatchId, remoteBatchId].sort();
+  return `conflict:${documentId}:${orderedBatchIds.join(':')}`;
+}
+
+function upsertConflict(conflicts, nextConflict) {
+  const existingIndex = conflicts.findIndex(
+    (conflict) => conflict.conflict_id === nextConflict.conflict_id
+  );
+  if (existingIndex === -1) {
+    return [...conflicts, nextConflict].sort((left, right) => (
+      new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
+    ));
+  }
+
+  const nextConflicts = [...conflicts];
+  nextConflicts[existingIndex] = nextConflict;
+  return nextConflicts;
+}
+
+function parseSseBlock(block) {
+  const lines = block
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+
+  if (!lines.length) {
+    return null;
+  }
+
+  let event = 'message';
+  const dataLines = [];
+
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+
+  if (!dataLines.length) {
+    return null;
+  }
+
+  return {
+    event,
+    data: JSON.parse(dataLines.join('\n')),
+  };
+}
+
+async function consumeSseStream(response, onEvent) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+    let boundaryIndex = buffer.indexOf('\n\n');
+    while (boundaryIndex !== -1) {
+      const block = buffer.slice(0, boundaryIndex);
+      buffer = buffer.slice(boundaryIndex + 2);
+      const parsedEvent = parseSseBlock(block);
+      if (parsedEvent) {
+        await onEvent(parsedEvent);
+      }
+      boundaryIndex = buffer.indexOf('\n\n');
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    const parsedEvent = parseSseBlock(buffer);
+    if (parsedEvent) {
+      await onEvent(parsedEvent);
+    }
+  }
+}
+
 export default function EditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -59,6 +161,17 @@ export default function EditorPage() {
   const [realtimeStatus, setRealtimeStatus] = useState('connecting');
   const [realtimeMessage, setRealtimeMessage] = useState('');
   const [conflictState, setConflictState] = useState(null);
+  const [documentConflicts, setDocumentConflicts] = useState([]);
+  const [activeConflictId, setActiveConflictId] = useState(null);
+  const [conflictResolutionDraft, setConflictResolutionDraft] = useState('');
+  const [conflictResolveLoading, setConflictResolveLoading] = useState(false);
+  const [conflictAiMerge, setConflictAiMerge] = useState({
+    loading: false,
+    error: '',
+    interactionId: '',
+    suggestion: null,
+    partial: false,
+  });
   const [collabVersion, setCollabVersion] = useState(null);
   const [collabEnabled, setCollabEnabled] = useState(false);
   const [collabResetKey, setCollabResetKey] = useState(0);
@@ -79,6 +192,8 @@ export default function EditorPage() {
   const savePromiseRef = useRef(null);
   const socketRef = useRef(null);
   const reconnectTimerRef = useRef(null);
+  const pendingStepBatchesRef = useRef([]);
+  const reportedConflictKeysRef = useRef(new Set());
 
   const applyDocumentState = useCallback((docData, userData = userRef.current) => {
     setDoc(docData);
@@ -120,6 +235,21 @@ export default function EditorPage() {
     applyDocumentState(docData);
     return docData;
   }, [applyDocumentState, id]);
+
+  const loadDocumentConflicts = useCallback(async () => {
+    try {
+      const conflicts = await apiJSON(`/documents/${id}/conflicts`);
+      setDocumentConflicts(conflicts);
+      setActiveConflictId((current) => {
+        if (current && conflicts.some((conflict) => conflict.conflict_id === current)) {
+          return current;
+        }
+        return conflicts[0]?.conflict_id ?? null;
+      });
+    } catch {
+      // Conflict hydration is secondary to the main editor load and should not block editing.
+    }
+  }, [id]);
 
   const syncRealtimeDocument = useCallback(
     ({
@@ -168,13 +298,132 @@ export default function EditorPage() {
     [id]
   );
 
+  const activeDocumentConflict = documentConflicts.find(
+    (conflict) => conflict.conflict_id === activeConflictId
+  ) ?? null;
+
+  const registerPendingStepBatch = useCallback((payload) => {
+    pendingStepBatchesRef.current = [
+      ...pendingStepBatchesRef.current.filter((batch) => batch.batchId !== payload.batchId),
+      {
+        batchId: payload.batchId,
+        clientId: payload.clientId,
+        version: payload.version,
+        affectedRange: payload.affectedRange,
+        candidateContentSnapshot: payload.candidateContentSnapshot,
+        exactTextSnapshot: payload.exactTextSnapshot,
+        prefixContext: payload.prefixContext,
+        suffixContext: payload.suffixContext,
+        userId: resolveUserId(userRef.current),
+        userDisplayName: resolveDisplayName(userRef.current),
+      },
+    ];
+  }, []);
+
+  const clearPendingStepBatch = useCallback((batchId) => {
+    pendingStepBatchesRef.current = pendingStepBatchesRef.current.filter(
+      (batch) => batch.batchId !== batchId
+    );
+  }, []);
+
+  const reportOverlapConflict = useCallback(async (localBatch, remoteBatch) => {
+    if (!localBatch?.affectedRange || !remoteBatch?.affected_range) {
+      return;
+    }
+
+    const conflictKey = makeConflictKey(id, localBatch.batchId, remoteBatch.batch_id);
+    if (reportedConflictKeysRef.current.has(conflictKey)) {
+      return;
+    }
+    reportedConflictKeysRef.current.add(conflictKey);
+
+    try {
+      const nextConflict = await apiJSON(`/documents/${id}/conflicts`, {
+        method: 'POST',
+        body: JSON.stringify({
+          conflict_key: conflictKey,
+          source_revision: revisionRef.current,
+          source_collab_version: Math.min(localBatch.version, remoteBatch.version ?? localBatch.version),
+          local_candidate: {
+            batch_id: localBatch.batchId,
+            client_id: localBatch.clientId,
+            user_id: localBatch.userId,
+            user_display_name: localBatch.userDisplayName,
+            range: localBatch.affectedRange,
+            candidate_content_snapshot: localBatch.candidateContentSnapshot,
+            exact_text_snapshot: localBatch.exactTextSnapshot,
+            prefix_context: localBatch.prefixContext,
+            suffix_context: localBatch.suffixContext,
+          },
+          remote_candidate: {
+            batch_id: remoteBatch.batch_id,
+            client_id: remoteBatch.client_id,
+            user_id: remoteBatch.actor_user_id,
+            user_display_name: remoteBatch.actor_display_name,
+            range: remoteBatch.affected_range,
+            candidate_content_snapshot: remoteBatch.candidate_content_snapshot,
+            exact_text_snapshot: remoteBatch.exact_text_snapshot,
+            prefix_context: remoteBatch.prefix_context,
+            suffix_context: remoteBatch.suffix_context,
+          },
+        }),
+      });
+
+      setDocumentConflicts((current) => upsertConflict(current, nextConflict));
+      setActiveConflictId((current) => current ?? nextConflict.conflict_id);
+      setRealtimeMessage('Overlapping edits were preserved for manual resolution.');
+    } catch {
+      // Keep the local draft and remote sync; conflict persistence can be retried by reload/reconnect.
+    }
+  }, [id]);
+
   useEffect(() => {
     clearLastAiUndo();
     setCollabVersion(null);
     collabVersionRef.current = 0;
     setCollabEnabled(false);
     setCollabResetKey((current) => current + 1);
+    setDocumentConflicts([]);
+    setActiveConflictId(null);
+    setConflictResolutionDraft('');
+    setConflictAiMerge({
+      loading: false,
+      error: '',
+      interactionId: '',
+      suggestion: null,
+      partial: false,
+    });
+    pendingStepBatchesRef.current = [];
+    reportedConflictKeysRef.current = new Set();
   }, [clearLastAiUndo, id]);
+
+  useEffect(() => {
+    if (!activeDocumentConflict) {
+      setConflictResolutionDraft('');
+      setConflictAiMerge({
+        loading: false,
+        error: '',
+        interactionId: '',
+        suggestion: null,
+        partial: false,
+      });
+      return;
+    }
+
+    setConflictResolutionDraft(
+      activeDocumentConflict.resolved_content
+      || activeDocumentConflict.candidates?.[0]?.candidate_content_snapshot
+      || activeDocumentConflict.exact_text_snapshot
+      || ''
+    );
+    setConflictAiMerge({
+      loading: false,
+      error: '',
+      interactionId: '',
+      suggestion: null,
+      partial: false,
+    });
+  }, [activeDocumentConflict]);
 
   useEffect(() => {
     Promise.all([
@@ -185,6 +434,7 @@ export default function EditorPage() {
         userRef.current = userData;
         setUser(userData);
         applyDocumentState(docData, userData);
+        void loadDocumentConflicts();
         const recoveredDraft = readOfflineDraft(id);
         const recoveredContent = recoveredDraft?.content;
         const recoveredLineSpacing = Number(recoveredDraft?.lineSpacing);
@@ -230,7 +480,7 @@ export default function EditorPage() {
         if (err.status === 404) navigate('/');
         else setError(err.message);
       });
-  }, [applyDocumentState, id, navigate]);
+  }, [applyDocumentState, id, loadDocumentConflicts, navigate]);
 
   const performSaveContent = useCallback(async ({ force = false, saveSource = 'manual' } = {}) => {
     if (role === 'viewer') return true;
@@ -472,17 +722,25 @@ export default function EditorPage() {
       return;
     }
 
+    registerPendingStepBatch(payload);
+
     socketRef.current.send(
       JSON.stringify({
         type: 'step_update',
+        batch_id: payload.batchId,
         version: payload.version,
         client_id: payload.clientId,
         steps: payload.steps,
         content: payload.content,
         line_spacing: payload.lineSpacing,
+        affected_range: payload.affectedRange,
+        candidate_content_snapshot: payload.candidateContentSnapshot,
+        exact_text_snapshot: payload.exactTextSnapshot,
+        prefix_context: payload.prefixContext,
+        suffix_context: payload.suffixContext,
       })
     );
-  }, [role]);
+  }, [registerPendingStepBatch, role]);
 
   function handleLineSpacingChange(nextLineSpacing) {
     clearLastAiUndo();
@@ -733,6 +991,166 @@ export default function EditorPage() {
     );
   }, [conflictState]);
 
+  const resolveDocumentConflict = useCallback(async ({ candidateId = null, resolvedContent = '' }) => {
+    if (!activeDocumentConflict) {
+      return;
+    }
+
+    setConflictResolveLoading(true);
+    try {
+      await apiJSON(`/documents/${id}/conflicts/${activeDocumentConflict.conflict_id}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({
+          candidate_id: candidateId,
+          resolved_content: resolvedContent,
+        }),
+      });
+      await refreshDocument();
+      await loadDocumentConflicts();
+      setConflictAiMerge({
+        loading: false,
+        error: '',
+        interactionId: '',
+        suggestion: null,
+        partial: false,
+      });
+      setRealtimeMessage('Conflict resolved and synchronized to collaborators.');
+    } finally {
+      setConflictResolveLoading(false);
+    }
+  }, [activeDocumentConflict, id, loadDocumentConflicts, refreshDocument]);
+
+  const handleUseConflictCandidate = useCallback(async (candidate) => {
+    await resolveDocumentConflict({ candidateId: candidate.candidate_id });
+  }, [resolveDocumentConflict]);
+
+  const handleResolveConflictManual = useCallback(async () => {
+    await resolveDocumentConflict({ resolvedContent: conflictResolutionDraft.trim() });
+  }, [conflictResolutionDraft, resolveDocumentConflict]);
+
+  const handleAskAiMerge = useCallback(async () => {
+    if (!activeDocumentConflict) {
+      return;
+    }
+
+    setConflictAiMerge({
+      loading: true,
+      error: '',
+      interactionId: '',
+      suggestion: null,
+      partial: false,
+    });
+
+    try {
+      const response = await apiFetch(`/documents/${id}/conflicts/${activeDocumentConflict.conflict_id}/ai-merge/stream`, {
+        method: 'POST',
+        headers: {
+          Accept: 'text/event-stream',
+        },
+      });
+
+      let nextInteractionId = '';
+      let streamedOutput = '';
+
+      await consumeSseStream(response, async ({ event, data }) => {
+        if (event === 'meta') {
+          nextInteractionId = data.interaction_id;
+          setConflictAiMerge({
+            loading: true,
+            error: '',
+            interactionId: nextInteractionId,
+            suggestion: null,
+            partial: false,
+          });
+          return;
+        }
+
+        if (event === 'chunk') {
+          streamedOutput = data.output || `${streamedOutput}${data.delta || ''}`;
+          setConflictAiMerge({
+            loading: true,
+            error: '',
+            interactionId: nextInteractionId,
+            suggestion: {
+              suggestion_id: '',
+              generated_output: streamedOutput,
+            },
+            partial: true,
+          });
+          return;
+        }
+
+        if (event === 'complete') {
+          setConflictAiMerge({
+            loading: false,
+            error: '',
+            interactionId: data.interaction_id,
+            suggestion: data.suggestion,
+            partial: false,
+          });
+          return;
+        }
+
+        if (event === 'error' || event === 'cancelled') {
+          setConflictAiMerge({
+            loading: false,
+            error: data.message || 'AI merge generation failed.',
+            interactionId: nextInteractionId,
+            suggestion: streamedOutput
+              ? {
+                  suggestion_id: '',
+                  generated_output: streamedOutput,
+                }
+              : null,
+            partial: Boolean(streamedOutput),
+          });
+        }
+      });
+    } catch (error) {
+      setConflictAiMerge({
+        loading: false,
+        error: error.message || 'AI merge generation failed.',
+        interactionId: '',
+        suggestion: null,
+        partial: false,
+      });
+    }
+  }, [activeDocumentConflict, id]);
+
+  const handleAcceptAiMerge = useCallback(async () => {
+    const suggestionOutput = conflictAiMerge.suggestion?.generated_output?.trim();
+    if (!suggestionOutput) {
+      return;
+    }
+    await resolveDocumentConflict({ resolvedContent: suggestionOutput });
+  }, [conflictAiMerge.suggestion, resolveDocumentConflict]);
+
+  const handleRejectAiMerge = useCallback(async () => {
+    const suggestionId = conflictAiMerge.suggestion?.suggestion_id;
+    if (suggestionId) {
+      try {
+        await apiJSON(`/ai/suggestions/${suggestionId}/reject`, {
+          method: 'POST',
+        });
+      } catch {
+        // Ignore outcome-recording failures; the UI still clears the suggestion locally.
+      }
+    }
+
+    setConflictAiMerge({
+      loading: false,
+      error: '',
+      interactionId: '',
+      suggestion: null,
+      partial: false,
+    });
+  }, [conflictAiMerge.suggestion?.suggestion_id]);
+
+  const handleUseAiMergeAsDraft = useCallback(() => {
+    const suggestionOutput = conflictAiMerge.suggestion?.generated_output ?? '';
+    setConflictResolutionDraft(suggestionOutput);
+  }, [conflictAiMerge.suggestion]);
+
   useEffect(() => {
     if (!doc || !user) {
       return undefined;
@@ -780,6 +1198,7 @@ export default function EditorPage() {
         setCollabEnabled(true);
         setCollabVersion(bootstrapCollabVersion);
         collabVersionRef.current = bootstrapCollabVersion;
+        void loadDocumentConflicts();
 
         if (!isDirtyRef.current) {
           syncRealtimeDocument({
@@ -918,6 +1337,24 @@ export default function EditorPage() {
           if (payload.type === 'steps_applied') {
             const editor = editorRef.current;
             const nextCollabVersion = Number(payload.collab_version) || collabVersionRef.current;
+            const remoteBatch = payload.batch || null;
+            const currentUserId = resolveUserId(userRef.current);
+            const isOwnStepBatch = payload.actor_user_id === currentUserId;
+
+            if (isOwnStepBatch && remoteBatch?.batch_id) {
+              clearPendingStepBatch(remoteBatch.batch_id);
+            }
+
+            if (!isOwnStepBatch && remoteBatch?.affected_range) {
+              const overlappingLocalBatches = pendingStepBatchesRef.current.filter((localBatch) => (
+                Math.abs((localBatch.version ?? 0) - (remoteBatch.version ?? 0)) <= 1
+                && rangesOverlap(localBatch.affectedRange, remoteBatch.affected_range)
+              ));
+              overlappingLocalBatches.forEach((localBatch) => {
+                void reportOverlapConflict(localBatch, remoteBatch);
+              });
+            }
+
             const applied = editor?.applyRemoteSteps?.({
               steps: payload.steps || [],
               clientIds: payload.client_ids || [],
@@ -950,6 +1387,9 @@ export default function EditorPage() {
           if (payload.type === 'steps_resync') {
             const nextCollabVersion = Number(payload.collab_version) || 0;
             if (payload.full_reset) {
+              pendingStepBatchesRef.current = [];
+            }
+            if (payload.full_reset) {
               syncRealtimeDocument({
                 nextContent: payload.content,
                 nextLineSpacing: payload.line_spacing,
@@ -977,7 +1417,29 @@ export default function EditorPage() {
                 collabVersionRef.current = nextCollabVersion;
               }
             }
+            void loadDocumentConflicts();
             setRealtimeMessage('Realtime re-synced with the latest collaboration state.');
+            return;
+          }
+
+          if (payload.type === 'conflict_created') {
+            if (payload.conflict) {
+              setDocumentConflicts((current) => upsertConflict(current, payload.conflict));
+              setActiveConflictId((current) => current ?? payload.conflict.conflict_id);
+              setRealtimeMessage('A collaboration conflict needs review.');
+            }
+            return;
+          }
+
+          if (payload.type === 'conflict_resolved') {
+            setDocumentConflicts((current) => current.filter(
+              (conflict) => conflict.conflict_id !== payload.conflict_id
+            ));
+            setActiveConflictId((current) => (
+              current === payload.conflict_id ? null : current
+            ));
+            setRealtimeMessage('A collaboration conflict was resolved.');
+            void loadDocumentConflicts();
             return;
           }
 
@@ -1061,7 +1523,7 @@ export default function EditorPage() {
       }
       setPresence([]);
     };
-  }, [doc?.document_id, id, syncRealtimeDocument, user?.id, user?.user_id]);
+  }, [clearPendingStepBatch, doc?.document_id, id, loadDocumentConflicts, reportOverlapConflict, syncRealtimeDocument, user?.id, user?.user_id]);
 
   useEffect(() => {
     if (realtimeStatus !== 'connected' || !socketRef.current) {
@@ -1151,9 +1613,32 @@ export default function EditorPage() {
             collaborationEnabled={collabEnabled}
             collaborationVersion={collabVersion}
             collaborationResetKey={collabResetKey}
+            conflictHighlights={documentConflicts
+              .filter((conflict) => conflict.anchor_range)
+              .map((conflict) => ({
+                conflictId: conflict.conflict_id,
+                range: conflict.anchor_range,
+              }))}
             readOnly={isReadOnly}
             placeholder="Start writing…"
           />
+
+          {activeDocumentConflict ? (
+            <ConflictResolutionTray
+              conflict={activeDocumentConflict}
+              role={role}
+              resolutionDraft={conflictResolutionDraft}
+              onResolutionDraftChange={setConflictResolutionDraft}
+              onUseCandidate={handleUseConflictCandidate}
+              onResolveManual={handleResolveConflictManual}
+              onAskAiMerge={handleAskAiMerge}
+              onAcceptAiMerge={handleAcceptAiMerge}
+              onRejectAiMerge={handleRejectAiMerge}
+              onUseAiMergeAsDraft={handleUseAiMergeAsDraft}
+              aiMergeState={conflictAiMerge}
+              resolving={conflictResolveLoading}
+            />
+          ) : null}
         </div>
 
         {isAiOpen && (

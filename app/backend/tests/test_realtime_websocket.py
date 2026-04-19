@@ -148,11 +148,17 @@ def test_websocket_supports_step_sync_and_resync() -> None:
         socket.send_json(
             {
                 "type": "step_update",
+                "batch_id": "batch-1",
                 "version": 0,
                 "client_id": "client-1",
                 "steps": [{"mock": "replace", "text": "Realtime stepped content"}],
                 "content": "Realtime stepped content",
                 "line_spacing": 1.15,
+                "affected_range": {"start": 1, "end": 5},
+                "candidate_content_snapshot": "Realtime stepped content",
+                "exact_text_snapshot": "Draft",
+                "prefix_context": "",
+                "suffix_context": "",
             }
         )
 
@@ -160,15 +166,23 @@ def test_websocket_supports_step_sync_and_resync() -> None:
         assert applied["collab_version"] == 1
         assert applied["content"] == "Realtime stepped content"
         assert applied["steps"] == [{"mock": "replace", "text": "Realtime stepped content"}]
+        assert applied["batch"]["batch_id"] == "batch-1"
+        assert applied["batch"]["affected_range"] == {"start": 1, "end": 5}
 
         socket.send_json(
             {
                 "type": "step_update",
+                "batch_id": "batch-2",
                 "version": 0,
                 "client_id": "client-2",
                 "steps": [{"mock": "replace", "text": "Stale content"}],
                 "content": "Stale content",
                 "line_spacing": 1.15,
+                "affected_range": {"start": 1, "end": 5},
+                "candidate_content_snapshot": "Stale content",
+                "exact_text_snapshot": "Draft",
+                "prefix_context": "",
+                "suffix_context": "",
             }
         )
 
@@ -177,6 +191,7 @@ def test_websocket_supports_step_sync_and_resync() -> None:
         assert resync["collab_version"] == 1
         assert resync["steps"] == [{"mock": "replace", "text": "Realtime stepped content"}]
         assert resync["client_ids"] == ["client-1"]
+        assert resync["batches"][0]["batch_id"] == "batch-1"
 
     refreshed_document = client.get(
         f"/v1/documents/{document_id}",
