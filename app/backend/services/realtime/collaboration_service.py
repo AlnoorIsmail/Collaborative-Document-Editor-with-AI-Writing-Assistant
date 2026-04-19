@@ -9,8 +9,8 @@ from fastapi import WebSocket, WebSocketDisconnect, status
 
 from app.backend.core.contracts import parse_resource_id, utc_now, utc_z
 from app.backend.core.errors import ApiError
+from app.backend.core.security import decode_realtime_session_token
 from app.backend.models.user import User
-from app.backend.repositories.sessions import SessionRepository
 from app.backend.schemas.document import DocumentContentSaveRequest
 from app.backend.services.document_service import DocumentService
 
@@ -26,6 +26,11 @@ class _ConnectedCollaborator:
     joined_at: datetime
     last_seen_at: datetime
     typing: bool = False
+    selection_from: int | None = None
+    selection_to: int | None = None
+    selection_direction: str = "forward"
+    collab_version: int | None = None
+    last_selection_at: datetime | None = None
 
 
 @dataclass
@@ -77,6 +82,7 @@ class RealtimeHub:
                     updated_at=updated_at,
                 )
                 self._collab_state_by_document[document_id] = state
+                self._clear_all_awareness_locked(document_id)
             return self._snapshot(state)
 
     async def ensure_document_state(
@@ -131,6 +137,36 @@ class RealtimeHub:
     async def get_presence_snapshot(self, document_id: int) -> list[dict[str, Any]]:
         with self._lock:
             return self._presence_snapshot(document_id)
+
+    def get_presence_snapshot_sync(self, document_id: int) -> list[dict[str, Any]]:
+        with self._lock:
+            return self._presence_snapshot(document_id)
+
+    async def update_selection(
+        self,
+        *,
+        document_id: int,
+        session_id: str,
+        selection_from: int,
+        selection_to: int,
+        selection_direction: str,
+        collab_version: int,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            collaborator = self._connections_by_document.get(document_id, {}).get(session_id)
+            if collaborator is None:
+                return []
+            collaborator.selection_from = selection_from
+            collaborator.selection_to = selection_to
+            collaborator.selection_direction = selection_direction
+            collaborator.collab_version = collab_version
+            collaborator.last_selection_at = utc_now()
+            collaborator.last_seen_at = utc_now()
+            return self._awareness_snapshot(document_id)
+
+    async def get_awareness_snapshot(self, document_id: int) -> list[dict[str, Any]]:
+        with self._lock:
+            return self._awareness_snapshot(document_id)
 
     async def get_collab_snapshot(self, document_id: int) -> dict[str, Any] | None:
         with self._lock:
@@ -254,6 +290,7 @@ class RealtimeHub:
             state.content = content
             state.line_spacing = line_spacing
             state.updated_at = utc_now()
+            self._clear_stale_awareness_locked(document_id, state.version)
 
             return {
                 "accepted": True,
@@ -300,6 +337,7 @@ class RealtimeHub:
                 updated_at=updated_at,
             )
             self._collab_state_by_document[document_id] = state
+            self._clear_all_awareness_locked(document_id)
             return self._snapshot(state)
 
     async def send_json(
@@ -335,6 +373,30 @@ class RealtimeHub:
                 "joined_at": utc_z(collaborator.joined_at),
                 "last_seen_at": utc_z(collaborator.last_seen_at),
                 "typing": collaborator.typing,
+            }
+            for collaborator in sorted(
+                collaborators.values(),
+                key=lambda candidate: (candidate.joined_at, candidate.user_id),
+            )
+        ]
+
+    def _awareness_snapshot(self, document_id: int) -> list[dict[str, Any]]:
+        collaborators = self._connections_by_document.get(document_id, {})
+        return [
+            {
+                "user_id": collaborator.user_id,
+                "display_name": collaborator.display_name,
+                "session_id": collaborator.session_id,
+                "selection_from": collaborator.selection_from,
+                "selection_to": collaborator.selection_to,
+                "selection_direction": collaborator.selection_direction,
+                "collab_version": collaborator.collab_version,
+                "last_selection_at": (
+                    utc_z(collaborator.last_selection_at)
+                    if collaborator.last_selection_at is not None
+                    else None
+                ),
+                "color_token": f"presence-{collaborator.user_id % 8}",
             }
             for collaborator in sorted(
                 collaborators.values(),
@@ -402,16 +464,30 @@ class RealtimeHub:
             "batches": missing_batches,
         }
 
+    def _clear_all_awareness_locked(self, document_id: int) -> None:
+        for collaborator in self._connections_by_document.get(document_id, {}).values():
+            self._clear_collaborator_selection_locked(collaborator)
+
+    def _clear_stale_awareness_locked(self, document_id: int, collab_version: int) -> None:
+        for collaborator in self._connections_by_document.get(document_id, {}).values():
+            if collaborator.collab_version != collab_version:
+                self._clear_collaborator_selection_locked(collaborator)
+
+    def _clear_collaborator_selection_locked(self, collaborator: _ConnectedCollaborator) -> None:
+        collaborator.selection_from = None
+        collaborator.selection_to = None
+        collaborator.selection_direction = "forward"
+        collaborator.collab_version = None
+        collaborator.last_selection_at = None
+
 
 class CollaborationService:
     def __init__(
         self,
         *,
-        session_repository: SessionRepository,
         document_service: DocumentService,
         hub: RealtimeHub,
     ) -> None:
-        self._session_repository = session_repository
         self._document_service = document_service
         self._hub = hub
 
@@ -425,20 +501,32 @@ class CollaborationService:
         current_user: User,
     ) -> None:
         resolved_document_id = parse_resource_id(document_id, "doc")
-        session = self._session_repository.validate_session(
-            document_id=resolved_document_id,
-            user_id=current_user.id,
-            session_id=session_id,
-            session_token=session_token,
-        )
-        if session is None:
-            await websocket.close(code=4401, reason="Invalid realtime session.")
+        try:
+            session_claims = decode_realtime_session_token(session_token)
+            token_document_id = int(session_claims["document_id"])
+            token_user_id = int(session_claims["sub"])
+            token_session_id = str(session_claims["session_id"])
+        except (KeyError, TypeError, ValueError):
+            await websocket.close(code=4401, reason="Invalid or expired realtime session.")
             return
 
-        access = self._document_service.ensure_read_access(
-            document_id=document_id,
-            current_user=current_user,
-        )
+        if (
+            token_document_id != resolved_document_id
+            or token_user_id != current_user.id
+            or token_session_id != session_id
+        ):
+            await websocket.close(code=4401, reason="Realtime session does not match the document or user.")
+            return
+
+        try:
+            access = self._document_service.ensure_read_access(
+                document_id=document_id,
+                current_user=current_user,
+            )
+        except ApiError as error:
+            close_code = 4403 if error.status_code == status.HTTP_403_FORBIDDEN else 4401
+            await websocket.close(code=close_code, reason=error.detail["message"])
+            return
         collab_state = await self._hub.ensure_document_state(
             document_id=access.document.id,
             content=access.document.content,
@@ -451,29 +539,31 @@ class CollaborationService:
             _ConnectedCollaborator(
                 websocket=websocket,
                 document_id=access.document.id,
-                session_id=session.session_id,
+                session_id=session_id,
                 user_id=current_user.id,
                 display_name=current_user.display_name,
                 last_known_revision=access.current_revision,
-                joined_at=session.joined_at,
-                last_seen_at=session.last_seen_at,
+                joined_at=utc_now(),
+                last_seen_at=utc_now(),
             )
         )
         await self._hub.send_json(
             document_id=access.document.id,
-            session_id=session.session_id,
+            session_id=session_id,
             payload={
                 "type": "session_joined",
-                "session_id": session.session_id,
+                "session_id": session_id,
                 "document_id": access.document.id,
                 "revision": access.current_revision,
                 "content": collab_state["content"],
                 "line_spacing": collab_state["line_spacing"],
                 "collab_version": collab_state["version"],
                 "presence": await self._hub.get_presence_snapshot(access.document.id),
+                "awareness": await self._hub.get_awareness_snapshot(access.document.id),
             },
         )
         await self._broadcast_presence(access.document.id)
+        await self._broadcast_awareness(access.document.id)
 
         try:
             while True:
@@ -481,13 +571,14 @@ class CollaborationService:
                 await self._handle_message(
                     document_id=document_id,
                     resolved_document_id=access.document.id,
-                    session_id=session.session_id,
+                    session_id=session_id,
                     current_user=current_user,
                     payload=message,
                 )
         except WebSocketDisconnect:
-            await self._hub.disconnect(access.document.id, session.session_id)
+            await self._hub.disconnect(access.document.id, session_id)
             await self._broadcast_presence(access.document.id)
+            await self._broadcast_awareness(access.document.id)
 
     async def _handle_message(
         self,
@@ -503,10 +594,6 @@ class CollaborationService:
         if message_type == "heartbeat":
             last_known_revision = payload.get("last_known_revision")
             if isinstance(last_known_revision, int):
-                self._session_repository.mark_session_seen(
-                    session_id=session_id,
-                    last_known_revision=last_known_revision,
-                )
                 await self._hub.update_state(
                     document_id=resolved_document_id,
                     session_id=session_id,
@@ -521,6 +608,37 @@ class CollaborationService:
                 typing=bool(payload.get("active")),
             )
             await self._broadcast_presence(resolved_document_id)
+            return
+
+        if message_type == "selection_update":
+            selection_from = self._coerce_int(payload.get("from"), default=None)
+            selection_to = self._coerce_int(payload.get("to"), default=None)
+            collab_version = self._coerce_int(payload.get("collab_version"), default=None)
+            selection_direction = str(payload.get("direction") or "forward").strip().lower()
+            if (
+                selection_from is None
+                or selection_to is None
+                or collab_version is None
+                or selection_from < 0
+                or selection_to < selection_from
+                or selection_direction not in {"forward", "backward"}
+            ):
+                await self._send_validation_error(
+                    document_id=resolved_document_id,
+                    session_id=session_id,
+                    message="Realtime selection payload is invalid.",
+                )
+                return
+
+            await self._hub.update_selection(
+                document_id=resolved_document_id,
+                session_id=session_id,
+                selection_from=selection_from,
+                selection_to=selection_to,
+                selection_direction=selection_direction,
+                collab_version=collab_version,
+            )
+            await self._broadcast_awareness(resolved_document_id)
             return
 
         if message_type == "request_resync":
@@ -576,10 +694,6 @@ class CollaborationService:
                 content=collab_state["content"],
                 line_spacing=collab_state["line_spacing"],
             )
-            self._session_repository.mark_session_seen(
-                session_id=session_id,
-                last_known_revision=persisted_access.current_revision,
-            )
             await self._hub.broadcast_json(
                 document_id=resolved_document_id,
                 payload={
@@ -633,6 +747,7 @@ class CollaborationService:
                 },
             )
             await self._broadcast_presence(resolved_document_id)
+            await self._broadcast_awareness(resolved_document_id)
             return
 
         if message_type == "step_update":
@@ -715,10 +830,6 @@ class CollaborationService:
                 content=result["content"],
                 line_spacing=result["line_spacing"],
             )
-            self._session_repository.mark_session_seen(
-                session_id=session_id,
-                last_known_revision=persisted_access.current_revision,
-            )
             await self._hub.update_state(
                 document_id=resolved_document_id,
                 session_id=session_id,
@@ -741,6 +852,7 @@ class CollaborationService:
                 },
             )
             await self._broadcast_presence(resolved_document_id)
+            await self._broadcast_awareness(resolved_document_id)
             return
 
         if message_type != "content_update":
@@ -821,10 +933,6 @@ class CollaborationService:
             line_spacing=access.document.line_spacing,
             updated_at=access.document.updated_at,
         )
-        self._session_repository.mark_session_seen(
-            session_id=session_id,
-            last_known_revision=response.revision,
-        )
         await self._hub.update_state(
             document_id=resolved_document_id,
             session_id=session_id,
@@ -848,6 +956,7 @@ class CollaborationService:
             },
         )
         await self._broadcast_presence(resolved_document_id)
+        await self._broadcast_awareness(resolved_document_id)
 
     async def _send_validation_error(
         self,
@@ -872,6 +981,15 @@ class CollaborationService:
             payload={
                 "type": "presence_snapshot",
                 "presence": await self._hub.get_presence_snapshot(document_id),
+            },
+        )
+
+    async def _broadcast_awareness(self, document_id: int) -> None:
+        await self._hub.broadcast_json(
+            document_id=document_id,
+            payload={
+                "type": "awareness_snapshot",
+                "collaborators": await self._hub.get_awareness_snapshot(document_id),
             },
         )
 

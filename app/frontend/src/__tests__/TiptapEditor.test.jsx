@@ -113,4 +113,45 @@ describe('TiptapEditor', () => {
       expect(hardBreakRef.current.getHTML()).toContain('<p>Hello<br>World</p>');
     });
   });
+
+  it('renders remote cursor and selection awareness decorations', async () => {
+    const { container, rerender } = render(
+      <TiptapEditor
+        content="<p>Draft body</p>"
+        remoteAwareness={[
+          {
+            sessionId: 'sess-2',
+            from: 3,
+            to: 3,
+            color: '#2563eb',
+            label: 'Editor',
+          },
+        ]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.editor-remote-caret')).toBeTruthy();
+      expect(container.querySelector('.editor-remote-caret-label')?.textContent).toContain('Editor');
+    });
+
+    rerender(
+      <TiptapEditor
+        content="<p>Draft body</p>"
+        remoteAwareness={[
+          {
+            sessionId: 'sess-3',
+            from: 2,
+            to: 6,
+            color: '#db2777',
+            label: 'Reviewer',
+          },
+        ]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.editor-remote-selection')).toBeTruthy();
+    });
+  });
 });

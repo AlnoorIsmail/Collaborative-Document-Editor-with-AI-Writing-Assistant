@@ -35,6 +35,13 @@ class Settings(BaseSettings):
             "AI_COLLAB_ACCESS_TOKEN_EXPIRE_MINUTES",
         ),
     )
+    realtime_session_expire_minutes: int = Field(
+        default=15,
+        validation_alias=AliasChoices(
+            "REALTIME_SESSION_EXPIRE_MINUTES",
+            "AI_COLLAB_REALTIME_SESSION_EXPIRE_MINUTES",
+        ),
+    )
     refresh_token_expire_days: int = Field(
         default=7,
         validation_alias=AliasChoices(

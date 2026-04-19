@@ -21,6 +21,7 @@ const LINE_SPACING_OPTIONS = [
 ];
 
 const CONFLICT_HIGHLIGHTS_KEY = new PluginKey('conflict-highlights');
+const REMOTE_AWARENESS_KEY = new PluginKey('remote-awareness');
 const ANCHOR_CONTEXT_WINDOW = 24;
 
 const EditorKeymap = Extension.create({
@@ -156,6 +157,68 @@ function createConflictHighlightPlugin() {
   });
 }
 
+function createRemoteAwarenessPlugin() {
+  return new Plugin({
+    key: REMOTE_AWARENESS_KEY,
+    state: {
+      init() {
+        return DecorationSet.empty;
+      },
+      apply(transaction, decorationSet) {
+        const nextAwareness = transaction.getMeta(REMOTE_AWARENESS_KEY);
+        if (!nextAwareness) {
+          return decorationSet.map(transaction.mapping, transaction.doc);
+        }
+
+        const decorations = [];
+        for (const awareness of nextAwareness) {
+          const safeFrom = Math.max(0, Math.min(awareness.from, transaction.doc.content.size));
+          const safeTo = Math.max(safeFrom, Math.min(awareness.to, transaction.doc.content.size));
+          const color = awareness.color || '#4f46e5';
+          const label = awareness.label || 'Collaborator';
+
+          if (safeFrom === safeTo) {
+            decorations.push(
+              Decoration.widget(safeFrom, () => {
+                const caret = document.createElement('span');
+                caret.className = 'editor-remote-caret';
+                caret.style.setProperty('--remote-awareness-color', color);
+                caret.dataset.sessionId = String(awareness.sessionId || '');
+
+                const labelBadge = document.createElement('span');
+                labelBadge.className = 'editor-remote-caret-label';
+                labelBadge.textContent = label;
+
+                const line = document.createElement('span');
+                line.className = 'editor-remote-caret-line';
+
+                caret.append(labelBadge, line);
+                return caret;
+              }, { side: 1 })
+            );
+            continue;
+          }
+
+          decorations.push(
+            Decoration.inline(safeFrom, safeTo, {
+              class: 'editor-remote-selection',
+              style: `--remote-awareness-color: ${color};`,
+              'data-session-id': String(awareness.sessionId || ''),
+            })
+          );
+        }
+
+        return DecorationSet.create(transaction.doc, decorations);
+      },
+    },
+    props: {
+      decorations(state) {
+        return this.getState(state);
+      },
+    },
+  });
+}
+
 function createCollaborationExtension({ enabled, version }) {
   return Extension.create({
     name: 'collaborationBridge',
@@ -170,6 +233,15 @@ function createConflictHighlightExtension() {
     name: 'conflictHighlightBridge',
     addProseMirrorPlugins() {
       return [createConflictHighlightPlugin()];
+    },
+  });
+}
+
+function createRemoteAwarenessExtension() {
+  return Extension.create({
+    name: 'remoteAwarenessBridge',
+    addProseMirrorPlugins() {
+      return [createRemoteAwarenessPlugin()];
     },
   });
 }
@@ -335,6 +407,7 @@ function Toolbar({ editor, lineSpacing, onLineSpacingChange }) {
  *   collaborationResetKey - forces a collab editor re-initialization after a full snapshot reset
  *   onSendableSteps - called with locally pending ProseMirror steps that should be sent
  *   conflictHighlights - unresolved conflicts with re-anchored ranges for inline markers
+ *   remoteAwareness - remote cursor and selection decorations for active collaborators
  *
  * Ref methods:
  *   getSelectionData() - returns the current selected text and range
@@ -359,6 +432,7 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     collaborationResetKey = 0,
     onSendableSteps,
     conflictHighlights = [],
+    remoteAwareness = [],
   },
   ref
 ) {
@@ -370,7 +444,9 @@ const TiptapEditor = forwardRef(function TiptapEditor(
   const sendableStepsHandlerRef = useRef(onSendableSteps);
   const selectionHandlerRef = useRef(onSelectionUpdate);
   const conflictHighlightsRef = useRef(conflictHighlights);
+  const remoteAwarenessRef = useRef(remoteAwareness);
   const highlightSignatureRef = useRef('');
+  const awarenessSignatureRef = useRef('');
 
   useEffect(() => {
     lineSpacingRef.current = normalizedLineSpacing;
@@ -392,6 +468,10 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     conflictHighlightsRef.current = conflictHighlights;
   }, [conflictHighlights]);
 
+  useEffect(() => {
+    remoteAwarenessRef.current = remoteAwareness;
+  }, [remoteAwareness]);
+
   const editor = useEditor({
     extensions: [
       createCollaborationExtension({
@@ -399,6 +479,7 @@ const TiptapEditor = forwardRef(function TiptapEditor(
         version: collaborationVersion,
       }),
       createConflictHighlightExtension(),
+      createRemoteAwarenessExtension(),
       StarterKit,
       Placeholder.configure({ placeholder }),
       EditorKeymap,
@@ -450,9 +531,19 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     },
     onSelectionUpdate({ editor }) {
       if (selectionHandlerRef.current) {
-        const { from, to } = editor.state.selection;
+        const {
+          from,
+          to,
+          anchor,
+          head,
+        } = editor.state.selection;
         const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ');
-        selectionHandlerRef.current({ text, from, to });
+        selectionHandlerRef.current({
+          text,
+          from,
+          to,
+          direction: anchor <= head ? 'forward' : 'backward',
+        });
       }
     },
   }, [collaborationEnabled, collaborationResetKey]);
@@ -588,6 +679,28 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     highlightSignatureRef.current = signature;
     editor.view.dispatch(editor.state.tr.setMeta(CONFLICT_HIGHLIGHTS_KEY, highlights));
   }, [editor, conflictHighlights]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const awareness = (remoteAwarenessRef.current || [])
+      .filter((entry) => Number.isFinite(entry?.from) && Number.isFinite(entry?.to))
+      .map((entry) => ({
+        sessionId: entry.sessionId,
+        from: entry.from,
+        to: entry.to,
+        color: entry.color,
+        label: entry.label,
+      }));
+    const signature = JSON.stringify(awareness);
+    if (signature === awarenessSignatureRef.current) {
+      return;
+    }
+    awarenessSignatureRef.current = signature;
+    editor.view.dispatch(editor.state.tr.setMeta(REMOTE_AWARENESS_KEY, awareness));
+  }, [editor, remoteAwareness]);
 
   return (
     <div

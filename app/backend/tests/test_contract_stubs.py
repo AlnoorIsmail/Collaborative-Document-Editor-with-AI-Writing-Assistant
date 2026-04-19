@@ -94,26 +94,20 @@ def test_session_bootstrap_returns_contract_shaped_response(
 
     assert response.status_code == 201
     body = response.json()
-    assert body["session_id"] == "sess_1"
+    assert body["session_id"].startswith("sess_")
     assert body["session_token"]
     assert body["document_id"] == document["document_id"]
     assert body["revision"] == 0
     assert body["collab_version"] == 0
     assert body["content_snapshot"] == ""
     assert body["line_spacing_snapshot"] == 1.15
-    assert body["realtime_url"] == "/v1/documents/1/sessions/sess_1/ws"
+    assert (
+        body["realtime_url"]
+        == f"/v1/documents/{document['document_id']}/sessions/{body['session_id']}/ws"
+    )
     assert body["resync_required"] is False
     assert body["missed_revision_count"] == 0
-    assert body["active_collaborators"] == [
-        {
-            "user_id": 1,
-            "display_name": "Fixture User",
-            "session_id": "sess_1",
-            "last_known_revision": 0,
-            "joined_at": body["active_collaborators"][0]["joined_at"],
-            "last_seen_at": body["active_collaborators"][0]["last_seen_at"],
-        }
-    ]
+    assert body["active_collaborators"] == []
 
 
 def test_create_ai_interaction_returns_pending_stub(client, auth_headers) -> None:
