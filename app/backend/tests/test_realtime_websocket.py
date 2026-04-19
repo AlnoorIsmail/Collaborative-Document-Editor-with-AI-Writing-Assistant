@@ -202,6 +202,30 @@ def test_websocket_broadcasts_selection_awareness_and_clears_stale_ranges() -> N
 
         socket.send_json(
             {
+                "type": "selection_clear",
+            }
+        )
+
+        manually_cleared_awareness = _receive_until(socket, "awareness_snapshot")
+        assert manually_cleared_awareness["collaborators"][0]["selection_from"] is None
+        assert manually_cleared_awareness["collaborators"][0]["selection_to"] is None
+
+        socket.send_json(
+            {
+                "type": "selection_update",
+                "from": 2,
+                "to": 5,
+                "direction": "forward",
+                "collab_version": 0,
+            }
+        )
+
+        awareness = _receive_until(socket, "awareness_snapshot")
+        assert awareness["collaborators"][0]["selection_from"] == 2
+        assert awareness["collaborators"][0]["selection_to"] == 5
+
+        socket.send_json(
+            {
                 "type": "step_update",
                 "batch_id": "batch-awareness",
                 "version": 0,
