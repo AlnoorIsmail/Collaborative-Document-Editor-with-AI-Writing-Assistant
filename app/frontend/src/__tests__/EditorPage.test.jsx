@@ -3145,20 +3145,23 @@ describe('EditorPage save flow', () => {
     await waitFor(() => {
       expect(MockWebSocket.instances).toHaveLength(1);
     });
+    vi.useFakeTimers();
 
     fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
 
-    await waitFor(() => {
-      expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
-        expect.objectContaining({
-          type: 'selection_update',
-          from: 4,
-          to: 21,
-          direction: 'forward',
-          collab_version: 0,
-        })
-      );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(140);
     });
+
+    expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'selection_update',
+        from: 4,
+        to: 21,
+        direction: 'forward',
+        collab_version: 0,
+      })
+    );
   });
 
   it('keeps the selected-text awareness update when a cursor collapse follows immediately', async () => {
@@ -3207,18 +3210,14 @@ describe('EditorPage save flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
     fireEvent.click(screen.getByRole('button', { name: 'Move cursor' }));
 
-    expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
-      expect.objectContaining({
-        type: 'selection_update',
-        from: 4,
-        to: 21,
-        direction: 'forward',
-        collab_version: 0,
-      })
-    );
+    expect(
+      MockWebSocket.instances[0].sentMessages.filter(
+        (message) => message.type === 'selection_update'
+      )
+    ).toEqual([]);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(120);
+      await vi.advanceTimersByTimeAsync(0);
     });
 
     expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
@@ -3228,6 +3227,158 @@ describe('EditorPage save flow', () => {
         to: 8,
         direction: 'forward',
         collab_version: 0,
+      })
+    );
+  });
+
+  it('re-publishes the current stable selection after the collaboration version changes', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+    vi.useFakeTimers();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(140);
+    });
+
+    const selectionMessagesBeforeVersionChange = MockWebSocket.instances[0].sentMessages.filter(
+      (message) => message.type === 'selection_update'
+    );
+    expect(selectionMessagesBeforeVersionChange).toHaveLength(1);
+
+    MockWebSocket.instances[0].emit({
+      type: 'steps_applied',
+      actor_user_id: 2,
+      actor_display_name: 'Editor',
+      collab_version: 1,
+      steps: [{ mockHtml: '<p>Remote collaborative body</p>' }],
+      client_ids: ['remote-client'],
+      content: '<p>Remote collaborative body</p>',
+      line_spacing: 1.15,
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+
+    const selectionMessagesAfterVersionChange = MockWebSocket.instances[0].sentMessages.filter(
+      (message) => message.type === 'selection_update'
+    );
+    expect(selectionMessagesAfterVersionChange).toHaveLength(2);
+    expect(selectionMessagesAfterVersionChange.at(-1)).toEqual(
+      expect.objectContaining({
+        type: 'selection_update',
+        from: 4,
+        to: 21,
+        direction: 'forward',
+        collab_version: 1,
+      })
+    );
+  });
+
+  it('clears remote awareness while local collaboration steps are in flight', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+    vi.useFakeTimers();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move cursor' }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(40);
+    });
+
+    expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'selection_update',
+        from: 8,
+        to: 8,
+        direction: 'forward',
+        collab_version: 0,
+      })
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
+
+    expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'selection_clear',
       })
     );
   });
@@ -3516,10 +3667,42 @@ describe('EditorPage save flow', () => {
             display_name: 'Editor',
             session_id: 'sess_2',
             selection_from: 7,
+            selection_to: 7,
+            selection_direction: 'forward',
+            collab_version: 0,
+            color_token: 'presence-2',
+            last_selection_at: new Date().toISOString(),
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-awareness')).toHaveTextContent('Editor:7-7');
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 1_650));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-awareness')).toBeEmptyDOMElement();
+    });
+
+    act(() => {
+      MockWebSocket.instances[0].emit({
+        type: 'awareness_snapshot',
+        collaborators: [
+          {
+            user_id: 2,
+            display_name: 'Editor',
+            session_id: 'sess_2',
+            selection_from: 7,
             selection_to: 12,
             selection_direction: 'forward',
             collab_version: 0,
             color_token: 'presence-2',
+            last_selection_at: new Date().toISOString(),
           },
         ],
       });
@@ -3534,7 +3717,7 @@ describe('EditorPage save flow', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('remote-awareness')).toHaveTextContent('');
+      expect(screen.getByTestId('remote-awareness')).toBeEmptyDOMElement();
     });
   });
 

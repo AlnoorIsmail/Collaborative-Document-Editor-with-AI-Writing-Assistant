@@ -42,6 +42,12 @@ beforeAll(() => {
   if (!document.elementFromPoint) {
     document.elementFromPoint = () => document.body;
   }
+  if (!window.requestAnimationFrame) {
+    window.requestAnimationFrame = (callback) => window.setTimeout(() => callback(Date.now()), 0);
+  }
+  if (!window.cancelAnimationFrame) {
+    window.cancelAnimationFrame = (id) => window.clearTimeout(id);
+  }
 });
 
 describe('TiptapEditor', () => {
@@ -66,6 +72,24 @@ describe('TiptapEditor', () => {
     });
 
     expect(onLineSpacingChange).toHaveBeenCalledWith(2);
+  });
+
+  it('disables browser spellcheck and grammar overlays on the editor surface', async () => {
+    const { container } = render(
+      <TiptapEditor
+        content="<p>Draft body</p>"
+      />
+    );
+
+    await waitFor(() => {
+      const editorElement = getEditorElement(container);
+      expect(editorElement.getAttribute('spellcheck')).toBe('false');
+      expect(editorElement.getAttribute('autocorrect')).toBe('off');
+      expect(editorElement.getAttribute('autocapitalize')).toBe('off');
+      expect(editorElement.getAttribute('translate')).toBe('no');
+      expect(editorElement.getAttribute('data-gramm')).toBe('false');
+      expect(editorElement.getAttribute('data-enable-grammarly')).toBe('false');
+    });
   });
 
   it('keeps Enter as a paragraph break and Shift+Enter as a soft line break', async () => {
@@ -131,8 +155,9 @@ describe('TiptapEditor', () => {
     );
 
     await waitFor(() => {
-      expect(container.querySelector('.editor-remote-caret')).toBeTruthy();
-      expect(container.querySelector('.editor-remote-caret-label')?.textContent).toContain('Editor');
+      expect(container.querySelector('.editor-remote-awareness-overlay .editor-remote-caret')).toBeTruthy();
+      expect(container.querySelector('.editor-remote-awareness-overlay .editor-remote-caret-label')?.textContent).toContain('Editor');
+      expect(container.querySelector('.ProseMirror .editor-remote-caret')).toBeFalsy();
     });
 
     rerender(
@@ -172,7 +197,8 @@ describe('TiptapEditor', () => {
     );
 
     await waitFor(() => {
-      expect(container.querySelector('.editor-remote-caret')).toBeTruthy();
+      expect(container.querySelector('.editor-remote-awareness-overlay .editor-remote-caret')).toBeTruthy();
+      expect(container.querySelector('.ProseMirror .editor-remote-caret')).toBeFalsy();
     });
 
     rerender(

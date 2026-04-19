@@ -19,7 +19,9 @@ import { resolvePresenceColor } from '../presenceColors';
 import { buildDocumentPageTitle, usePageTitle } from '../pageTitle';
 
 const AUTO_SAVE_DELAY = 1_500;
-const SELECTION_AWARENESS_DELAY = 120;
+const RANGE_SELECTION_AWARENESS_DELAY = 140;
+const CURSOR_SELECTION_AWARENESS_DELAY = 40;
+const CURSOR_AWARENESS_TTL_MS = 1_500;
 
 function resolveRole(docData, userData) {
   if (!userData) {
@@ -161,6 +163,7 @@ export default function EditorPage() {
   const [showExport, setShowExport] = useState(false);
   const [presence, setPresence] = useState([]);
   const [awareness, setAwareness] = useState([]);
+  const [awarenessClock, setAwarenessClock] = useState(() => Date.now());
   const [realtimeStatus, setRealtimeStatus] = useState('connecting');
   const [realtimeMessage, setRealtimeMessage] = useState('');
   const [conflictState, setConflictState] = useState(null);
@@ -334,12 +337,45 @@ export default function EditorPage() {
   const activeDocumentConflict = documentConflicts.find(
     (conflict) => conflict.conflict_id === activeConflictId
   ) ?? null;
+
+  useEffect(() => {
+    if (realtimeStatus !== 'connected') {
+      return undefined;
+    }
+
+    const now = Date.now();
+    const pendingCursorExpirations = awareness
+      .filter((entry) => (
+        Number.isFinite(entry?.selection_from)
+        && Number.isFinite(entry?.selection_to)
+        && entry.selection_from === entry.selection_to
+        && entry.last_selection_at
+      ))
+      .map((entry) => {
+        const timestamp = new Date(entry.last_selection_at).getTime();
+        return Number.isFinite(timestamp) ? timestamp + CURSOR_AWARENESS_TTL_MS - now : null;
+      })
+      .filter((value) => value !== null);
+
+    if (!pendingCursorExpirations.length) {
+      return undefined;
+    }
+
+    const nextExpiry = Math.max(0, Math.min(...pendingCursorExpirations));
+    const timer = window.setTimeout(() => {
+      setAwarenessClock(Date.now());
+    }, nextExpiry + 10);
+
+    return () => window.clearTimeout(timer);
+  }, [awareness, realtimeStatus]);
+
   const remoteAwareness = useMemo(() => {
     if (realtimeStatus !== 'connected') {
       return [];
     }
 
     const currentUserId = resolveUserId(user);
+    const now = awarenessClock;
     return awareness
       .filter((entry) => (
         entry?.user_id !== currentUserId
@@ -347,6 +383,14 @@ export default function EditorPage() {
         && Number.isFinite(entry?.selection_to)
         && Number.isFinite(entry?.collab_version)
         && entry.collab_version === collabVersion
+        && (
+          entry.selection_to > entry.selection_from
+          || (
+            entry.last_selection_at
+            && Number.isFinite(new Date(entry.last_selection_at).getTime())
+            && (now - new Date(entry.last_selection_at).getTime()) <= CURSOR_AWARENESS_TTL_MS
+          )
+        )
       ))
       .map((entry) => ({
         sessionId: entry.session_id,
@@ -356,7 +400,7 @@ export default function EditorPage() {
         label: entry.display_name,
         color: resolvePresenceColor(entry.color_token, entry.user_id),
       }));
-  }, [awareness, collabVersion, realtimeStatus, user]);
+  }, [awareness, awarenessClock, collabVersion, realtimeStatus, user]);
   const conflictHighlights = useMemo(
     () => documentConflicts
       .filter((conflict) => conflict.anchor_range)
@@ -462,6 +506,7 @@ export default function EditorPage() {
     liveSelectionRef.current = { text: '', from: 0, to: 0, direction: 'forward' };
     queuedSelectionPayloadRef.current = null;
     lastSentSelectionSignatureRef.current = '';
+    hasPublishedSelectionAwarenessRef.current = false;
     if (selectionPublishTimerRef.current) {
       window.clearTimeout(selectionPublishTimerRef.current);
       selectionPublishTimerRef.current = null;
@@ -649,6 +694,51 @@ export default function EditorPage() {
     clearOfflineDraft(id);
   }, [id]);
 
+  const clearSelectionPublishTimer = useCallback(() => {
+    if (selectionPublishTimerRef.current) {
+      window.clearTimeout(selectionPublishTimerRef.current);
+      selectionPublishTimerRef.current = null;
+    }
+  }, []);
+
+  const clearPublishedSelectionAwareness = useCallback((broadcast = false) => {
+    clearSelectionPublishTimer();
+    queuedSelectionPayloadRef.current = null;
+    lastSentSelectionSignatureRef.current = '';
+
+    if (
+      broadcast
+      && typeof WebSocket !== 'undefined'
+      && socketRef.current?.readyState === WebSocket.OPEN
+    ) {
+      socketRef.current.send(JSON.stringify({ type: 'selection_clear' }));
+    }
+  }, [clearSelectionPublishTimer]);
+
+  const publishSelectionAwareness = useCallback((payload) => {
+    if (
+      !payload
+      || typeof WebSocket === 'undefined'
+      || socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
+      return false;
+    }
+
+    const normalizedPayload = {
+      ...payload,
+      collab_version: collabVersionRef.current ?? payload.collab_version ?? 0,
+    };
+    const payloadSignature = `${normalizedPayload.from}:${normalizedPayload.to}:${normalizedPayload.direction}:${normalizedPayload.collab_version}`;
+    if (payloadSignature === lastSentSelectionSignatureRef.current) {
+      return false;
+    }
+
+    lastSentSelectionSignatureRef.current = payloadSignature;
+    hasPublishedSelectionAwarenessRef.current = true;
+    socketRef.current.send(JSON.stringify(normalizedPayload));
+    return true;
+  }, []);
+
   const broadcastFullSnapshotUpdate = useCallback((saveSource = 'manual') => {
     if (
       typeof WebSocket === 'undefined'
@@ -804,6 +894,7 @@ export default function EditorPage() {
   }
 
   function handleSelectionUpdate(nextSelection) {
+    const previousSelection = liveSelectionRef.current;
     liveSelectionRef.current = nextSelection || {
       text: '',
       from: 0,
@@ -828,6 +919,17 @@ export default function EditorPage() {
       || typeof WebSocket === 'undefined'
       || socketRef.current?.readyState !== WebSocket.OPEN
     ) {
+      clearSelectionPublishTimer();
+      queuedSelectionPayloadRef.current = null;
+      return;
+    }
+
+    if (
+      inflightStepBatchRef.current
+      || editorRef.current?.hasPendingCollaborationSteps?.()
+    ) {
+      clearSelectionPublishTimer();
+      queuedSelectionPayloadRef.current = null;
       return;
     }
 
@@ -838,58 +940,39 @@ export default function EditorPage() {
       direction: nextSelection?.direction === 'backward' ? 'backward' : 'forward',
       collab_version: collabVersionRef.current ?? 0,
     };
-    const signature = `${nextPayload.from}:${nextPayload.to}:${nextPayload.direction}:${nextPayload.collab_version}`;
-    const sendSelectionPayload = (payload) => {
-      if (
-        !payload
-        || typeof WebSocket === 'undefined'
-        || socketRef.current?.readyState !== WebSocket.OPEN
-      ) {
-        return false;
-      }
+    const hadRangeSelection = Number(previousSelection?.to) > Number(previousSelection?.from);
+    const hasRangeSelection = Boolean(nextSelection?.text?.trim()) && to > from;
 
-      const payloadSignature = `${payload.from}:${payload.to}:${payload.direction}:${payload.collab_version}`;
-      if (payloadSignature === lastSentSelectionSignatureRef.current) {
-        return false;
-      }
-
-      lastSentSelectionSignatureRef.current = payloadSignature;
-      socketRef.current.send(JSON.stringify(payload));
-      return true;
-    };
-
-    if (nextSelection?.text?.trim()) {
-      queuedSelectionPayloadRef.current = null;
-      if (selectionPublishTimerRef.current) {
-        window.clearTimeout(selectionPublishTimerRef.current);
-        selectionPublishTimerRef.current = null;
-      }
-      sendSelectionPayload(nextPayload);
-      return;
-    }
-
+    clearSelectionPublishTimer();
     queuedSelectionPayloadRef.current = nextPayload;
-
-    if (selectionPublishTimerRef.current) {
-      return;
-    }
 
     selectionPublishTimerRef.current = window.setTimeout(() => {
       selectionPublishTimerRef.current = null;
-      const nextPayload = queuedSelectionPayloadRef.current;
+      const queuedPayload = queuedSelectionPayloadRef.current;
       if (
-        !nextPayload
+        !queuedPayload
         || typeof WebSocket === 'undefined'
         || socketRef.current?.readyState !== WebSocket.OPEN
       ) {
         return;
       }
-      sendSelectionPayload(nextPayload);
-    }, SELECTION_AWARENESS_DELAY);
+      publishSelectionAwareness(queuedPayload);
+    }, hasRangeSelection
+      ? RANGE_SELECTION_AWARENESS_DELAY
+      : hadRangeSelection
+        ? 0
+        : CURSOR_SELECTION_AWARENESS_DELAY);
   }
 
   useEffect(() => {
     if (!hasPublishedSelectionAwarenessRef.current) {
+      return;
+    }
+
+    if (
+      inflightStepBatchRef.current
+      || editorRef.current?.hasPendingCollaborationSteps?.()
+    ) {
       return;
     }
 
@@ -905,11 +988,7 @@ export default function EditorPage() {
       return;
     }
 
-    if (selectionPublishTimerRef.current) {
-      window.clearTimeout(selectionPublishTimerRef.current);
-      selectionPublishTimerRef.current = null;
-    }
-
+    clearSelectionPublishTimer();
     queuedSelectionPayloadRef.current = null;
     const nextPayload = {
       type: 'selection_update',
@@ -918,14 +997,17 @@ export default function EditorPage() {
       direction: currentSelection?.direction === 'backward' ? 'backward' : 'forward',
       collab_version: collabVersionRef.current ?? 0,
     };
-    const payloadSignature = `${nextPayload.from}:${nextPayload.to}:${nextPayload.direction}:${nextPayload.collab_version}`;
-    if (payloadSignature === lastSentSelectionSignatureRef.current) {
+    publishSelectionAwareness(nextPayload);
+  }, [clearSelectionPublishTimer, collabVersion, publishSelectionAwareness, realtimeStatus]);
+
+  useEffect(() => {
+    if (realtimeStatus === 'connected') {
       return;
     }
 
-    lastSentSelectionSignatureRef.current = payloadSignature;
-    socketRef.current.send(JSON.stringify(nextPayload));
-  }, [collabVersion, realtimeStatus]);
+    clearPublishedSelectionAwareness(false);
+    hasPublishedSelectionAwarenessRef.current = false;
+  }, [clearPublishedSelectionAwareness, realtimeStatus]);
 
   const handleSendableSteps = useCallback((payload) => {
     if (
@@ -940,6 +1022,7 @@ export default function EditorPage() {
       return;
     }
 
+    clearPublishedSelectionAwareness(true);
     registerPendingStepBatch(payload);
     inflightStepBatchRef.current = {
       batchId: payload.batchId,
@@ -962,7 +1045,7 @@ export default function EditorPage() {
         suffix_context: payload.suffixContext,
       })
     );
-  }, [registerPendingStepBatch, role]);
+  }, [clearPublishedSelectionAwareness, registerPendingStepBatch, role]);
 
   const flushPendingCollaborationSteps = useCallback(() => {
     if (

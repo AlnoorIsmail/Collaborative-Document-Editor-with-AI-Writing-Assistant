@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Extension } from '@tiptap/core';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -222,27 +222,8 @@ function createRemoteAwarenessPlugin() {
           const safeFrom = normalizedRange.from;
           const safeTo = normalizedRange.to;
           const color = awareness.color || '#4f46e5';
-          const label = awareness.label || 'Collaborator';
 
           if (safeFrom === safeTo) {
-            decorations.push(
-              Decoration.widget(safeFrom, () => {
-                const caret = document.createElement('span');
-                caret.className = 'editor-remote-caret';
-                caret.style.setProperty('--remote-awareness-color', color);
-                caret.dataset.sessionId = String(awareness.sessionId || '');
-
-                const labelBadge = document.createElement('span');
-                labelBadge.className = 'editor-remote-caret-label';
-                labelBadge.textContent = label;
-
-                const line = document.createElement('span');
-                line.className = 'editor-remote-caret-line';
-
-                caret.append(labelBadge, line);
-                return caret;
-              }, { side: 1 })
-            );
             continue;
           }
 
@@ -516,9 +497,12 @@ const TiptapEditor = forwardRef(function TiptapEditor(
   const selectionHandlerRef = useRef(onSelectionUpdate);
   const conflictHighlightsRef = useRef(conflictHighlights);
   const remoteAwarenessRef = useRef(remoteAwareness);
+  const editorSurfaceRef = useRef(null);
+  const remoteCaretUpdateFrameRef = useRef(null);
   const lastEmittedContentRef = useRef(content || '');
   const highlightSignatureRef = useRef('');
   const awarenessSignatureRef = useRef('');
+  const [remoteCaretOverlays, setRemoteCaretOverlays] = useState([]);
 
   useEffect(() => {
     lineSpacingRef.current = normalizedLineSpacing;
@@ -558,6 +542,17 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     ],
     content,
     editable: !readOnly,
+    editorProps: {
+      attributes: {
+        spellcheck: 'false',
+        autocorrect: 'off',
+        autocapitalize: 'off',
+        translate: 'no',
+        'data-gramm': 'false',
+        'data-gramm_editor': 'false',
+        'data-enable-grammarly': 'false',
+      },
+    },
     onTransaction({ editor, transaction }) {
       const isRemote = applyingRemoteRef.current;
       const pending = collaborationEnabled ? sendableSteps(editor.state) : null;
@@ -616,6 +611,76 @@ const TiptapEditor = forwardRef(function TiptapEditor(
       }
     },
   }, [collaborationEnabled, collaborationResetKey]);
+
+  const updateRemoteCaretOverlays = useCallback(() => {
+    if (!editor || !editorSurfaceRef.current) {
+      setRemoteCaretOverlays([]);
+      return;
+    }
+
+    const shellRect = editorSurfaceRef.current.getBoundingClientRect();
+    const overlays = (remoteAwarenessRef.current || [])
+      .filter((entry) => Number.isFinite(entry?.from) && Number.isFinite(entry?.to))
+      .map((entry) => {
+        const normalizedSelection = normalizeSelectionRange(
+          editor.state.doc,
+          entry.from,
+          entry.to
+        );
+
+        if (normalizedSelection.from !== normalizedSelection.to) {
+          return null;
+        }
+
+        try {
+          const coords = editor.view.coordsAtPos(normalizedSelection.from);
+          const left = coords.left - shellRect.left;
+          const top = coords.top - shellRect.top;
+
+          if (!Number.isFinite(left) || !Number.isFinite(top)) {
+            return null;
+          }
+
+          if (
+            left < -32
+            || left > shellRect.width + 32
+            || top < -32
+            || top > shellRect.height + 32
+          ) {
+            return null;
+          }
+
+          return {
+            sessionId: entry.sessionId,
+            label: entry.label || 'Collaborator',
+            color: entry.color || '#4f46e5',
+            left,
+            top,
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+
+    setRemoteCaretOverlays(overlays);
+  }, [editor]);
+
+  const scheduleRemoteCaretOverlayUpdate = useCallback(() => {
+    if (typeof window === 'undefined') {
+      updateRemoteCaretOverlays();
+      return;
+    }
+
+    if (remoteCaretUpdateFrameRef.current !== null) {
+      window.cancelAnimationFrame(remoteCaretUpdateFrameRef.current);
+    }
+
+    remoteCaretUpdateFrameRef.current = window.requestAnimationFrame(() => {
+      remoteCaretUpdateFrameRef.current = null;
+      updateRemoteCaretOverlays();
+    });
+  }, [updateRemoteCaretOverlays]);
 
   // Expose imperative API via ref
   useImperativeHandle(ref, () => ({
@@ -859,6 +924,39 @@ const TiptapEditor = forwardRef(function TiptapEditor(
     editor.view.dispatch(editor.state.tr.setMeta(REMOTE_AWARENESS_KEY, awareness));
   }, [editor, remoteAwareness]);
 
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+    scheduleRemoteCaretOverlayUpdate();
+  }, [editor, remoteAwareness, scheduleRemoteCaretOverlayUpdate]);
+
+  useEffect(() => {
+    if (!editor) {
+      return undefined;
+    }
+
+    const scrollElement = editorSurfaceRef.current?.querySelector('.editor-content');
+    const handleScroll = () => scheduleRemoteCaretOverlayUpdate();
+    const handleResize = () => scheduleRemoteCaretOverlayUpdate();
+    const handleTransaction = () => scheduleRemoteCaretOverlayUpdate();
+
+    scrollElement?.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleResize);
+    editor.on('transaction', handleTransaction);
+    scheduleRemoteCaretOverlayUpdate();
+
+    return () => {
+      scrollElement?.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleResize);
+      editor.off('transaction', handleTransaction);
+      if (remoteCaretUpdateFrameRef.current !== null) {
+        window.cancelAnimationFrame(remoteCaretUpdateFrameRef.current);
+        remoteCaretUpdateFrameRef.current = null;
+      }
+    };
+  }, [editor, scheduleRemoteCaretOverlayUpdate]);
+
   return (
     <div
       className={`editor-wrapper ${readOnly ? 'editor-readonly' : ''}`}
@@ -874,7 +972,26 @@ const TiptapEditor = forwardRef(function TiptapEditor(
           onLineSpacingChange={onLineSpacingChange}
         />
       )}
-      <EditorContent editor={editor} className="editor-content" />
+      <div className="editor-content-shell" ref={editorSurfaceRef}>
+        <EditorContent editor={editor} className="editor-content" />
+        <div className="editor-remote-awareness-overlay" aria-hidden="true">
+          {remoteCaretOverlays.map((overlay) => (
+            <div
+              key={overlay.sessionId || `${overlay.label}-${overlay.left}-${overlay.top}`}
+              className="editor-remote-caret"
+              data-session-id={String(overlay.sessionId || '')}
+              style={{
+                left: `${overlay.left}px`,
+                top: `${overlay.top}px`,
+                '--remote-awareness-color': overlay.color,
+              }}
+            >
+              <span className="editor-remote-caret-label">{overlay.label}</span>
+              <span className="editor-remote-caret-line" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 });

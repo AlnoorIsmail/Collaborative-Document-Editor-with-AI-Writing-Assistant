@@ -164,6 +164,20 @@ class RealtimeHub:
             collaborator.last_seen_at = utc_now()
             return self._awareness_snapshot(document_id)
 
+    async def clear_selection(
+        self,
+        *,
+        document_id: int,
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            collaborator = self._connections_by_document.get(document_id, {}).get(session_id)
+            if collaborator is None:
+                return []
+            self._clear_collaborator_selection_locked(collaborator)
+            collaborator.last_seen_at = utc_now()
+            return self._awareness_snapshot(document_id)
+
     async def get_awareness_snapshot(self, document_id: int) -> list[dict[str, Any]]:
         with self._lock:
             return self._awareness_snapshot(document_id)
@@ -637,6 +651,14 @@ class CollaborationService:
                 selection_to=selection_to,
                 selection_direction=selection_direction,
                 collab_version=collab_version,
+            )
+            await self._broadcast_awareness(resolved_document_id)
+            return
+
+        if message_type == "selection_clear":
+            await self._hub.clear_selection(
+                document_id=resolved_document_id,
+                session_id=session_id,
             )
             await self._broadcast_awareness(resolved_document_id)
             return
