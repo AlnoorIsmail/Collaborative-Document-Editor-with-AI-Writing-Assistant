@@ -35,7 +35,13 @@ export default function LoginPage() {
 
   return (
     <div className="auth-page">
-      <div className="auth-card">
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+        <div style={{ marginBottom: '1.5rem' }}>
+          <span style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--color-primary)', letterSpacing: '-0.5px' }}>
+            CollabDocs
+          </span>
+        </div>
+        <div className="auth-card">
         <h1 className="auth-title">Sign in</h1>
         <form onSubmit={handleSubmit} className="auth-form">
           {error && <div className="error-banner">{error}</div>}
@@ -69,6 +75,7 @@ export default function LoginPage() {
         <p className="auth-footer">
           No account? <Link to="/register">Create one</Link>
         </p>
+        </div>
       </div>
     </div>
   );
