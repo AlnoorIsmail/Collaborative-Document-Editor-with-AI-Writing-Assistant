@@ -33,6 +33,11 @@ def get_invitation_service(db: Session = Depends(get_db)) -> InvitationService:
     "/documents/{documentId}/invitations",
     response_model=InvitationCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create a direct document invitation",
+    description=(
+        "Invite an existing registered user to a document by email address or "
+        "username. Invitations remain pending until the recipient accepts or declines."
+    ),
 )
 def send_invitation(
     documentId: str,
@@ -50,6 +55,11 @@ def send_invitation(
 @router.get(
     "/invitations",
     response_model=list[InvitationInboxItemResponse],
+    summary="List pending invitations for the current user",
+    description=(
+        "Return all unexpired pending invitations addressed to the authenticated "
+        "user so the inbox UI can review them."
+    ),
 )
 def list_invitations(
     current_user: User = Depends(get_current_authenticated_user),
@@ -59,7 +69,13 @@ def list_invitations(
 
 
 @router.post(
-    "/invitations/{invitationId}/accept", response_model=InvitationAcceptResponse
+    "/invitations/{invitationId}/accept",
+    response_model=InvitationAcceptResponse,
+    summary="Accept a direct document invitation",
+    description=(
+        "Grant the invited role to the authenticated recipient and mark the "
+        "invitation as accepted."
+    ),
 )
 def accept_invitation(
     invitationId: str,
@@ -73,7 +89,12 @@ def accept_invitation(
 
 
 @router.post(
-    "/invitations/{invitationId}/decline", response_model=InvitationDeclineResponse
+    "/invitations/{invitationId}/decline",
+    response_model=InvitationDeclineResponse,
+    summary="Decline a direct document invitation",
+    description=(
+        "Mark a pending invitation as declined without granting document access."
+    ),
 )
 def decline_invitation(
     invitationId: str,

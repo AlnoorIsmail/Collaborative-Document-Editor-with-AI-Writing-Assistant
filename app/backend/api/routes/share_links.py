@@ -29,7 +29,14 @@ def get_share_link_service(db: Session = Depends(get_db)) -> ShareLinkService:
 
 
 @router.post(
-    "", response_model=ShareLinkCreateResponse, status_code=status.HTTP_201_CREATED
+    "",
+    response_model=ShareLinkCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a share link",
+    description=(
+        "Create a bearer-style share link that can grant the requested role until "
+        "it expires or is revoked."
+    ),
 )
 def create_share_link(
     payload: ShareLinkCreateRequest,
@@ -41,7 +48,15 @@ def create_share_link(
     )
 
 
-@router.post("/{token}/redeem", response_model=ShareLinkRedeemResponse)
+@router.post(
+    "/{token}/redeem",
+    response_model=ShareLinkRedeemResponse,
+    summary="Redeem a share link",
+    description=(
+        "Validate a share-link token and grant access when the token is still "
+        "active and satisfies its sign-in rules."
+    ),
+)
 def redeem_share_link(
     token: str,
     current_user: User = Depends(get_optional_authenticated_user),

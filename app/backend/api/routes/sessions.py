@@ -27,6 +27,12 @@ router = APIRouter(prefix="/documents/{documentId}/sessions", tags=["sessions"])
     "",
     response_model=SessionBootstrapResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Bootstrap a realtime collaboration session",
+    description=(
+        "Create or resume an authenticated document collaboration session and "
+        "return the short-lived websocket session token plus the current "
+        "collaboration snapshot."
+    ),
 )
 def create_or_join_session(
     documentId: str,

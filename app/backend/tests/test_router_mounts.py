@@ -36,6 +36,34 @@ EXPECTED_PATHS = {
     "/health": {"get"},
 }
 
+DOCUMENTED_OPERATIONS = [
+    ("/v1/documents/{documentId}/invitations", "post"),
+    ("/v1/invitations", "get"),
+    ("/v1/invitations/{invitationId}/accept", "post"),
+    ("/v1/invitations/{invitationId}/decline", "post"),
+    ("/v1/documents/{documentId}/permissions", "post"),
+    ("/v1/documents/{documentId}/permissions/{permissionId}", "delete"),
+    ("/v1/share-links", "post"),
+    ("/v1/share-links/{token}/redeem", "post"),
+    ("/v1/documents/{documentId}/sessions", "post"),
+    ("/v1/documents/{documentId}/ai/interactions", "post"),
+    ("/v1/documents/{documentId}/ai/interactions/stream", "post"),
+    ("/v1/documents/{documentId}/ai/chat/thread", "get"),
+    ("/v1/documents/{documentId}/ai/chat/thread", "delete"),
+    ("/v1/documents/{documentId}/ai/chat/messages/stream", "post"),
+    ("/v1/documents/{documentId}/ai/interactions", "get"),
+    ("/v1/ai/interactions/{interactionId}", "get"),
+    ("/v1/ai/interactions/{interactionId}/cancel", "post"),
+    ("/v1/ai/suggestions/{suggestionId}/accept", "post"),
+    ("/v1/ai/suggestions/{suggestionId}/reject", "post"),
+    ("/v1/ai/suggestions/{suggestionId}/apply-edited", "post"),
+    ("/v1/documents/{documentId}/conflicts", "get"),
+    ("/v1/documents/{documentId}/conflicts", "post"),
+    ("/v1/documents/{documentId}/conflicts/{conflictId}", "get"),
+    ("/v1/documents/{documentId}/conflicts/{conflictId}/resolve", "post"),
+    ("/v1/documents/{documentId}/conflicts/{conflictId}/ai-merge/stream", "post"),
+]
+
 
 def test_expected_contract_paths_are_mounted(client) -> None:
     response = client.get("/openapi.json")
@@ -72,3 +100,15 @@ def test_protected_routes_use_bearer_security_scheme(client) -> None:
             parameter["name"].lower() != "authorization"
             for parameter in operation["parameters"]
         )
+
+
+def test_key_routes_have_openapi_summaries_and_descriptions(client) -> None:
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    body = response.json()
+
+    for path, method in DOCUMENTED_OPERATIONS:
+        operation = body["paths"][path][method]
+        assert operation.get("summary")
+        assert operation.get("description")

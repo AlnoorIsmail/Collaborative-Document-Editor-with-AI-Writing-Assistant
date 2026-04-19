@@ -41,6 +41,11 @@ def _encode_sse(event: str, data: object) -> str:
     "/documents/{documentId}/ai/interactions",
     response_model=AIInteractionAcceptedResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue an AI suggestion interaction",
+    description=(
+        "Create an AI interaction record for document or selected-text scope and "
+        "return the accepted interaction metadata."
+    ),
 )
 def create_ai_interaction(
     documentId: str,
@@ -58,6 +63,11 @@ def create_ai_interaction(
 @router.post(
     "/documents/{documentId}/ai/interactions/stream",
     status_code=status.HTTP_202_ACCEPTED,
+    summary="Stream an AI suggestion interaction",
+    description=(
+        "Start an AI suggestion request and stream incremental Server-Sent Events "
+        "for metadata, text chunks, completion, cancellation, or errors."
+    ),
 )
 async def stream_ai_interaction(
     documentId: str,
@@ -84,6 +94,11 @@ async def stream_ai_interaction(
     "/documents/{documentId}/ai/chat/thread",
     response_model=list[AIChatThreadEntryResponse],
     status_code=status.HTTP_200_OK,
+    summary="List the document AI chat thread",
+    description=(
+        "Return the authenticated user's persisted AI chat sidebar thread for the "
+        "requested document."
+    ),
 )
 def get_ai_chat_thread(
     documentId: str,
@@ -100,6 +115,11 @@ def get_ai_chat_thread(
     "/documents/{documentId}/ai/chat/thread",
     response_model=AIChatThreadClearResponse,
     status_code=status.HTTP_200_OK,
+    summary="Clear the document AI chat thread",
+    description=(
+        "Delete the authenticated user's AI chat thread entries and related "
+        "interaction history for the requested document."
+    ),
 )
 def clear_ai_chat_thread(
     documentId: str,
@@ -115,6 +135,11 @@ def clear_ai_chat_thread(
 @router.post(
     "/documents/{documentId}/ai/chat/messages/stream",
     status_code=status.HTTP_202_ACCEPTED,
+    summary="Stream an AI chat reply",
+    description=(
+        "Send a sidebar chat message to the AI assistant and stream the reply back "
+        "over Server-Sent Events."
+    ),
 )
 async def stream_ai_chat_message(
     documentId: str,
@@ -232,6 +257,11 @@ def _stream_response(
     "/documents/{documentId}/ai/interactions",
     response_model=list[AIInteractionHistoryItem],
     status_code=status.HTTP_200_OK,
+    summary="List document AI interaction history",
+    description=(
+        "Return document-level AI interaction history items, including feature type, "
+        "scope, status, and token totals when available."
+    ),
 )
 def list_ai_interactions(
     documentId: str,
@@ -248,6 +278,11 @@ def list_ai_interactions(
     "/ai/interactions/{interactionId}",
     response_model=AIInteractionDetailResponse,
     status_code=status.HTTP_200_OK,
+    summary="Get AI interaction details",
+    description=(
+        "Return the full persisted AI interaction record, including prompt context, "
+        "review state, and any stored suggestion payload."
+    ),
 )
 def get_ai_interaction(
     interactionId: str,
@@ -264,6 +299,11 @@ def get_ai_interaction(
     "/ai/interactions/{interactionId}/cancel",
     response_model=AIInteractionCancelResponse,
     status_code=status.HTTP_200_OK,
+    summary="Cancel a streaming AI interaction",
+    description=(
+        "Request cancellation for an in-progress streaming AI interaction and "
+        "return the updated interaction status."
+    ),
 )
 def cancel_ai_interaction(
     interactionId: str,
@@ -280,6 +320,11 @@ def cancel_ai_interaction(
     "/ai/suggestions/{suggestionId}/accept",
     response_model=AcceptSuggestionResponse,
     status_code=status.HTTP_200_OK,
+    summary="Accept an AI suggestion",
+    description=(
+        "Apply a stored AI suggestion into the requested document range and record "
+        "an accepted review outcome."
+    ),
 )
 def accept_ai_suggestion(
     suggestionId: str,
@@ -298,6 +343,11 @@ def accept_ai_suggestion(
     "/ai/suggestions/{suggestionId}/reject",
     response_model=RejectSuggestionResponse,
     status_code=status.HTTP_200_OK,
+    summary="Reject an AI suggestion",
+    description=(
+        "Reject a stored AI suggestion without changing document content while "
+        "recording the review outcome."
+    ),
 )
 def reject_ai_suggestion(
     suggestionId: str,
@@ -314,6 +364,11 @@ def reject_ai_suggestion(
     "/ai/suggestions/{suggestionId}/apply-edited",
     response_model=ApplyEditedSuggestionResponse,
     status_code=status.HTTP_200_OK,
+    summary="Apply an edited AI suggestion",
+    description=(
+        "Apply a human-edited variant of a stored AI suggestion into the document "
+        "and record the modified review outcome."
+    ),
 )
 def apply_edited_ai_suggestion(
     suggestionId: str,

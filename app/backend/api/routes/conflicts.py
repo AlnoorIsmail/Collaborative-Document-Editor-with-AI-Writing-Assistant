@@ -32,6 +32,11 @@ router = APIRouter(prefix="/documents/{documentId}/conflicts", tags=["conflicts"
     "",
     response_model=list[DocumentConflictResponse],
     status_code=status.HTTP_200_OK,
+    summary="List document conflicts",
+    description=(
+        "Return unresolved or historical overlap conflicts that are visible to the "
+        "authenticated collaborator for the requested document."
+    ),
 )
 def list_document_conflicts(
     documentId: str,
@@ -48,6 +53,11 @@ def list_document_conflicts(
     "/{conflictId}",
     response_model=DocumentConflictResponse,
     status_code=status.HTTP_200_OK,
+    summary="Get a single document conflict",
+    description=(
+        "Return the preserved candidates, anchoring context, and status for one "
+        "specific document conflict."
+    ),
 )
 def get_document_conflict(
     documentId: str,
@@ -66,6 +76,11 @@ def get_document_conflict(
     "",
     response_model=DocumentConflictResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Create a document conflict record",
+    description=(
+        "Persist an overlap-aware conflict artifact so collaborators can resolve "
+        "preserved conflicting edits later."
+    ),
 )
 async def create_document_conflict(
     documentId: str,
@@ -94,6 +109,11 @@ async def create_document_conflict(
     "/{conflictId}/resolve",
     response_model=DocumentConflictResolveResponse,
     status_code=status.HTTP_200_OK,
+    summary="Resolve a document conflict",
+    description=(
+        "Finalize a conflict by choosing or editing a resolved content result, then "
+        "rebroadcast the updated document snapshot to collaborators."
+    ),
 )
 async def resolve_document_conflict(
     documentId: str,
@@ -146,6 +166,11 @@ async def resolve_document_conflict(
 @router.post(
     "/{conflictId}/ai-merge/stream",
     status_code=status.HTTP_202_ACCEPTED,
+    summary="Stream an AI conflict-merge suggestion",
+    description=(
+        "Generate an AI-assisted merge suggestion for a document conflict and "
+        "stream the response over Server-Sent Events."
+    ),
 )
 async def stream_conflict_ai_merge(
     documentId: str,

@@ -25,6 +25,11 @@ def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
     "/{documentId}/permissions",
     response_model=PermissionResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Grant direct document access",
+    description=(
+        "Grant a registered user explicit document access with the requested role "
+        "and AI permission flag."
+    ),
 )
 def grant_permission(
     documentId: str,
@@ -40,7 +45,12 @@ def grant_permission(
 
 
 @router.delete(
-    "/{documentId}/permissions/{permissionId}", status_code=status.HTTP_204_NO_CONTENT
+    "/{documentId}/permissions/{permissionId}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke direct document access",
+    description=(
+        "Remove an existing direct permission entry from the document sharing roster."
+    ),
 )
 def revoke_permission(
     documentId: str,

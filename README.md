@@ -11,6 +11,15 @@ This project implements a React + FastAPI collaborative document editor for Assi
 - Realtime: authenticated WebSockets
 - AI responses: FastAPI `StreamingResponse` with SSE (`text/event-stream`)
 
+## Architecture Overview
+
+- Frontend: React routes for dashboard, editor, share-link redemption, and auth flows, with Tiptap as the rich-text editor surface.
+- Backend: FastAPI routes layered over services, repositories, and SQLAlchemy models for auth, documents, sharing, comments, AI, and realtime bootstrap.
+- Persistence: SQLite by default, with append-only version history plus persisted invitations, permissions, comments, share links, refresh tokens, and conflict records.
+- Auth: JWT access tokens backed by rotated refresh tokens, with the frontend silently refreshing expired access tokens.
+- Realtime: document-scoped authenticated WebSockets for presence, cursor awareness, step-sync collaboration, and conflict updates.
+- AI: SSE streaming responses with review-before-apply suggestion workflows and a provider abstraction seam in the backend.
+
 ## Implemented Scope
 
 ### Authentication and sessions
@@ -87,7 +96,7 @@ If you already had a local `.venv` before pulling recent realtime changes, rerun
 That starts:
 
 - FastAPI backend on `http://127.0.0.1:8000`
-- Vite frontend on `http://localhost:5173`
+- Vite frontend on `http://127.0.0.1:5173`
 
 ### Optional single-process commands
 
@@ -109,13 +118,17 @@ The main variables are defined in `.env.example`.
 
 - `SECRET_KEY`: JWT signing secret
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: access-token TTL
+- `REALTIME_SESSION_EXPIRE_MINUTES`: realtime websocket session-token TTL
 - `REFRESH_TOKEN_EXPIRE_DAYS`: refresh-token TTL
 - `DATABASE_URL`: SQLite database URL by default
 - `JWT_ALGORITHM`: JWT signing algorithm
 - `AI_COLLAB_ALLOWED_ORIGINS`: allowed CORS origins
-- `AI_COLLAB_AI_API_KEY`: optional real AI provider key
-- `AI_COLLAB_AI_API_URL`: OpenAI-compatible endpoint URL
+- `AI_COLLAB_AI_API_KEY`: optional provider key; leave blank to use the local stub provider
+- `AI_COLLAB_AI_API_URL`: optional OpenAI-compatible endpoint URL
 - `AI_COLLAB_AI_MODEL`: configured model name
+- `AI_COLLAB_AI_REQUEST_TIMEOUT_SECONDS`: provider request timeout in seconds
+- `AI_COLLAB_AI_PROMPT_TOKEN_COST_PER_1K`: optional prompt-token cost metadata
+- `AI_COLLAB_AI_COMPLETION_TOKEN_COST_PER_1K`: optional completion-token cost metadata
 
 If the AI key and URL are not configured, the backend falls back to the local stub AI provider.
 
@@ -147,6 +160,8 @@ FastAPI docs:
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
 - Health check: `http://127.0.0.1:8000/health`
+
+The HTTP API docs include route summaries/descriptions and schema field descriptions for the documented REST surface. WebSocket protocol details stay documented in this README because they are not represented meaningfully in OpenAPI.
 
 ## Auth Lifecycle
 
@@ -354,4 +369,4 @@ Version history is restore/audit history, not the same feature as editor undo.
 
 ## Deviations
 
-This repository documents Assignment 1 deviations in `DEVIATIONS.md`. The most important collaboration choice is that the editor now uses ProseMirror step-based synchronization with explicit conflict preservation and resolution rather than a full CRDT such as Yjs. That is closer to OT-style collaboration than the earlier revision-only baseline, while still remaining simpler than a full CRDT stack.
+This repository documents Assignment 1 deviations in [DEVIATIONS.md](DEVIATIONS.md). The most important collaboration choice is that the editor now uses ProseMirror step-based synchronization with explicit conflict preservation and resolution rather than a full CRDT such as Yjs. That is closer to OT-style collaboration than the earlier revision-only baseline, while still remaining simpler than a full CRDT stack.
