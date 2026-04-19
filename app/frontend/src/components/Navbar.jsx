@@ -137,7 +137,12 @@ export default function Navbar({
             Share
           </button>
         )}
-        {user && <span className="navbar-user">{user.name || user.email}</span>}
+        {user && (
+          <div className="navbar-user">
+            <span className="navbar-user-name">{user.username || user.name}</span>
+            <span className="navbar-user-email">{user.email}</span>
+          </div>
+        )}
         <button className="btn btn-ghost" onClick={logout}>
           Sign out
         </button>
