@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch, apiJSON } from '../api';
 import Navbar from '../components/Navbar';
@@ -301,6 +301,15 @@ export default function EditorPage() {
   const activeDocumentConflict = documentConflicts.find(
     (conflict) => conflict.conflict_id === activeConflictId
   ) ?? null;
+  const conflictHighlights = useMemo(
+    () => documentConflicts
+      .filter((conflict) => conflict.anchor_range)
+      .map((conflict) => ({
+        conflictId: conflict.conflict_id,
+        range: conflict.anchor_range,
+      })),
+    [documentConflicts]
+  );
 
   const registerPendingStepBatch = useCallback((payload) => {
     pendingStepBatchesRef.current = [
@@ -1613,12 +1622,7 @@ export default function EditorPage() {
             collaborationEnabled={collabEnabled}
             collaborationVersion={collabVersion}
             collaborationResetKey={collabResetKey}
-            conflictHighlights={documentConflicts
-              .filter((conflict) => conflict.anchor_range)
-              .map((conflict) => ({
-                conflictId: conflict.conflict_id,
-                range: conflict.anchor_range,
-              }))}
+            conflictHighlights={conflictHighlights}
             readOnly={isReadOnly}
             placeholder="Start writing…"
           />

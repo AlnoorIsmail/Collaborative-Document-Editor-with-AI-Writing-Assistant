@@ -370,6 +370,7 @@ const TiptapEditor = forwardRef(function TiptapEditor(
   const sendableStepsHandlerRef = useRef(onSendableSteps);
   const selectionHandlerRef = useRef(onSelectionUpdate);
   const conflictHighlightsRef = useRef(conflictHighlights);
+  const highlightSignatureRef = useRef('');
 
   useEffect(() => {
     lineSpacingRef.current = normalizedLineSpacing;
@@ -408,11 +409,13 @@ const TiptapEditor = forwardRef(function TiptapEditor(
       const isRemote = applyingRemoteRef.current;
       const pending = collaborationEnabled ? sendableSteps(editor.state) : null;
       const batchMetadata = !isRemote ? buildStepBatchMetadata(transaction) : null;
-      changeHandlerRef.current?.(editor.getHTML(), {
-        isRemote,
-        hasPendingCollaborationSteps: Boolean(pending?.steps?.length),
-        collaborationVersion: collaborationEnabled ? getVersion(editor.state) : collaborationVersion,
-      });
+      if (transaction.docChanged || isRemote) {
+        changeHandlerRef.current?.(editor.getHTML(), {
+          isRemote,
+          hasPendingCollaborationSteps: Boolean(pending?.steps?.length),
+          collaborationVersion: collaborationEnabled ? getVersion(editor.state) : collaborationVersion,
+        });
+      }
 
       if (collaborationEnabled) {
         if (!pending || pending.steps.length === 0) {
@@ -578,7 +581,11 @@ const TiptapEditor = forwardRef(function TiptapEditor(
         start: conflict.range.start,
         end: conflict.range.end,
       }));
-
+    const signature = JSON.stringify(highlights);
+    if (signature === highlightSignatureRef.current) {
+      return;
+    }
+    highlightSignatureRef.current = signature;
     editor.view.dispatch(editor.state.tr.setMeta(CONFLICT_HIGHLIGHTS_KEY, highlights));
   }, [editor, conflictHighlights]);
 
