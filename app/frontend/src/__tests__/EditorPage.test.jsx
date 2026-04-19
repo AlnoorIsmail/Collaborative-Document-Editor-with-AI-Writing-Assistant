@@ -3356,23 +3356,76 @@ describe('EditorPage save flow', () => {
     await waitFor(() => {
       expect(MockWebSocket.instances).toHaveLength(1);
     });
-    vi.useFakeTimers();
+
+    act(() => {
+      MockWebSocket.instances[0].emit({
+        type: 'session_joined',
+        session_id: 'sess_1',
+        document_id: 1,
+        revision: 0,
+        content: '<p>Initial body</p>',
+        line_spacing: 1.15,
+        collab_version: 0,
+        presence: [
+          {
+            user_id: 1,
+            display_name: 'Owner',
+            session_id: 'sess_1',
+            last_known_revision: 0,
+            joined_at: '2026-01-01T00:00:00Z',
+            last_seen_at: '2026-01-01T00:00:00Z',
+            typing: false,
+          },
+          {
+            user_id: 2,
+            display_name: 'Editor',
+            session_id: 'sess_2',
+            last_known_revision: 0,
+            joined_at: '2026-01-01T00:00:00Z',
+            last_seen_at: '2026-01-01T00:00:00Z',
+            typing: false,
+          },
+        ],
+        awareness: [],
+      });
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Move cursor' }));
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(40);
+    await waitFor(() => {
+      expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+        expect.objectContaining({
+          type: 'selection_update',
+          from: 8,
+          to: 8,
+          direction: 'forward',
+          collab_version: 0,
+        })
+      );
     });
 
-    expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
-      expect.objectContaining({
-        type: 'selection_update',
-        from: 8,
-        to: 8,
-        direction: 'forward',
-        collab_version: 0,
-      })
-    );
+    act(() => {
+      MockWebSocket.instances[0].emit({
+        type: 'awareness_snapshot',
+        collaborators: [
+          {
+            user_id: 2,
+            display_name: 'Editor',
+            session_id: 'sess_2',
+            selection_from: 7,
+            selection_to: 7,
+            selection_direction: 'forward',
+            collab_version: 0,
+            color_token: 'presence-2',
+            last_selection_at: new Date().toISOString(),
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-awareness')).toHaveTextContent('Editor:7-7');
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Send collaboration step' }));
 
@@ -3381,6 +3434,10 @@ describe('EditorPage save flow', () => {
         type: 'selection_clear',
       })
     );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-awareness')).toBeEmptyDOMElement();
+    });
   });
 
   it('re-publishes the current cursor awareness after the collaboration version changes', async () => {

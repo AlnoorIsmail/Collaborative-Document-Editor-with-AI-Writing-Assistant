@@ -798,7 +798,7 @@ const TiptapEditor = forwardRef(function TiptapEditor(
       const nextSelection = hadFocus
         ? normalizeSelectionRange(
           transaction.doc,
-          transaction.mapping.map(previousSelection.from, -1),
+          transaction.mapping.map(previousSelection.from, selectionWasCollapsed ? 1 : -1),
           transaction.mapping.map(previousSelection.to, 1)
         )
         : null;

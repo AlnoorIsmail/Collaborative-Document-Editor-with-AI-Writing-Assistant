@@ -266,4 +266,50 @@ describe('TiptapEditor', () => {
       expect(readerRef.current.getViewState().selection).toEqual({ from: 9, to: 9 });
     });
   });
+
+  it('moves a collapsed local cursor to the far side of a remote insert at the same position', async () => {
+    const writerRef = createRef();
+    const readerRef = createRef();
+
+    render(
+      <>
+        <TiptapEditor
+          ref={writerRef}
+          content="<p>Hello world</p>"
+          collaborationEnabled
+          collaborationVersion={0}
+        />
+        <TiptapEditor
+          ref={readerRef}
+          content="<p>Hello world</p>"
+          collaborationEnabled
+          collaborationVersion={0}
+        />
+      </>
+    );
+
+    await waitFor(() => {
+      expect(writerRef.current).toBeTruthy();
+      expect(readerRef.current).toBeTruthy();
+    });
+
+    readerRef.current.focus();
+    readerRef.current.setSelection({ from: 7, to: 7 });
+
+    expect(readerRef.current.getViewState().selection).toEqual({ from: 7, to: 7 });
+
+    writerRef.current.replaceRange({ from: 7, to: 7, text: 'X ' });
+    const pendingBatch = writerRef.current.getPendingStepBatch();
+
+    expect(pendingBatch).toBeTruthy();
+
+    readerRef.current.applyRemoteSteps({
+      steps: pendingBatch.steps,
+      clientIds: pendingBatch.steps.map(() => pendingBatch.clientId),
+    });
+
+    await waitFor(() => {
+      expect(readerRef.current.getViewState().selection).toEqual({ from: 9, to: 9 });
+    });
+  });
 });

@@ -164,6 +164,7 @@ export default function EditorPage() {
   const [presence, setPresence] = useState([]);
   const [awareness, setAwareness] = useState([]);
   const [awarenessClock, setAwarenessClock] = useState(() => Date.now());
+  const [hasPendingLocalCollaboration, setHasPendingLocalCollaboration] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState('connecting');
   const [realtimeMessage, setRealtimeMessage] = useState('');
   const [conflictState, setConflictState] = useState(null);
@@ -374,6 +375,10 @@ export default function EditorPage() {
       return [];
     }
 
+    if (hasPendingLocalCollaboration) {
+      return [];
+    }
+
     const currentUserId = resolveUserId(user);
     const now = awarenessClock;
     return awareness
@@ -400,7 +405,7 @@ export default function EditorPage() {
         label: entry.display_name,
         color: resolvePresenceColor(entry.color_token, entry.user_id),
       }));
-  }, [awareness, awarenessClock, collabVersion, realtimeStatus, user]);
+  }, [awareness, awarenessClock, collabVersion, hasPendingLocalCollaboration, realtimeStatus, user]);
   const conflictHighlights = useMemo(
     () => documentConflicts
       .filter((conflict) => conflict.anchor_range)
@@ -514,6 +519,7 @@ export default function EditorPage() {
     pendingStepBatchesRef.current = [];
     inflightStepBatchRef.current = null;
     reportedConflictKeysRef.current = new Set();
+    setHasPendingLocalCollaboration(false);
   }, [clearLastAiUndo, id]);
 
   useEffect(() => {
@@ -678,6 +684,7 @@ export default function EditorPage() {
     const hasPendingLocalSteps = Boolean(inflightStepBatchRef.current)
       || Boolean(editorRef.current?.hasPendingCollaborationSteps?.());
 
+    setHasPendingLocalCollaboration(hasPendingLocalSteps);
     isDirtyRef.current = hasPendingLocalSteps;
     setSaveStatus(hasPendingLocalSteps ? 'unsaved' : 'saved');
 
@@ -891,6 +898,10 @@ export default function EditorPage() {
     if (typeof meta.collaborationVersion === 'number') {
       collabVersionRef.current = meta.collaborationVersion;
     }
+
+    if (!isRemote) {
+      setHasPendingLocalCollaboration(Boolean(meta.hasPendingCollaborationSteps));
+    }
   }
 
   function handleSelectionUpdate(nextSelection) {
@@ -1028,6 +1039,7 @@ export default function EditorPage() {
       batchId: payload.batchId,
       version: payload.version,
     };
+    setHasPendingLocalCollaboration(true);
 
     socketRef.current.send(
       JSON.stringify({
@@ -1500,6 +1512,7 @@ export default function EditorPage() {
         setAwareness([]);
         lastSentSelectionSignatureRef.current = '';
         inflightStepBatchRef.current = null;
+        setHasPendingLocalCollaboration(false);
         setRealtimeStatus(reconnecting ? 'reconnecting' : 'connecting');
       if (!reconnecting) {
         setRealtimeMessage('');
@@ -1610,6 +1623,7 @@ export default function EditorPage() {
             if (payload.collab_reset) {
               setAwareness([]);
               inflightStepBatchRef.current = null;
+              setHasPendingLocalCollaboration(false);
             }
 
             if (isOwnUpdate || !isDirtyRef.current) {
@@ -1685,6 +1699,7 @@ export default function EditorPage() {
               clearPendingStepBatch(remoteBatch.batch_id);
               if (inflightStepBatchRef.current?.batchId === remoteBatch.batch_id) {
                 inflightStepBatchRef.current = null;
+                setHasPendingLocalCollaboration(Boolean(editorRef.current?.hasPendingCollaborationSteps?.()));
               }
             }
 
@@ -1736,6 +1751,7 @@ export default function EditorPage() {
             const nextCollabVersion = Number(payload.collab_version) || 0;
             setAwareness([]);
             inflightStepBatchRef.current = null;
+            setHasPendingLocalCollaboration(false);
             if (payload.full_reset) {
               pendingStepBatchesRef.current = [];
             }
@@ -1821,6 +1837,7 @@ export default function EditorPage() {
           setAwareness([]);
           lastSentSelectionSignatureRef.current = '';
           inflightStepBatchRef.current = null;
+          setHasPendingLocalCollaboration(false);
 
           setRealtimeStatus('reconnecting');
           setRealtimeMessage(
@@ -1841,6 +1858,7 @@ export default function EditorPage() {
           setPresence([]);
           setAwareness([]);
           inflightStepBatchRef.current = null;
+          setHasPendingLocalCollaboration(false);
           setRealtimeMessage('Realtime hit a network error.');
         }
       };
@@ -1849,6 +1867,7 @@ export default function EditorPage() {
           setPresence([]);
           setAwareness([]);
           inflightStepBatchRef.current = null;
+          setHasPendingLocalCollaboration(false);
           setCollabEnabled(false);
           if (collabVersionRef.current === 0) {
             setCollabVersion(0);
@@ -1876,6 +1895,7 @@ export default function EditorPage() {
       }
       setPresence([]);
       setAwareness([]);
+      setHasPendingLocalCollaboration(false);
       inflightStepBatchRef.current = null;
       if (selectionPublishTimerRef.current) {
         window.clearTimeout(selectionPublishTimerRef.current);
