@@ -506,6 +506,21 @@ describe('EditorPage save flow', () => {
     await screen.findByText('Documents page');
   });
 
+  it('navigates back immediately when there are no unsaved changes', async () => {
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    fireEvent.click(screen.getByTitle('All documents'));
+
+    await screen.findByText('Documents page');
+    expect(api.apiJSON).not.toHaveBeenCalledWith(
+      '/documents/1/content',
+      expect.objectContaining({
+        method: 'PATCH',
+      })
+    );
+  });
+
   it('saves line spacing changes with the current revision', async () => {
     renderEditorPage();
 

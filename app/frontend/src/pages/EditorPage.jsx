@@ -1267,7 +1267,10 @@ export default function EditorPage() {
   }, [broadcastFullSnapshotUpdate, clearLastAiUndo, id, refreshDocument]);
 
   async function handleBack() {
-    const saved = await saveContent({ force: true, saveSource: 'manual' });
+    const needsSave = isDirtyRef.current || saveStatus === 'unsaved' || saveStatus === 'saving';
+    const saved = needsSave
+      ? await saveContent({ force: true, saveSource: 'manual' })
+      : true;
     if (saved) {
       navigate('/');
     }
