@@ -1,6 +1,11 @@
 from fastapi.testclient import TestClient
 
+from app.backend.models.user import User
+from app.backend.repositories.document_repository import DocumentRepository
+from app.backend.repositories.permission_repository import PermissionRepository
+from app.backend.repositories.version_repository import VersionRepository
 from app.backend.services.document_service import (
+    DocumentService,
     generate_unique_document_title,
 )
 from app.backend.tests.conftest import create_test_client
@@ -385,6 +390,59 @@ def test_stale_same_content_save_returns_current_version_instead_of_conflict() -
     assert first_save.status_code == 200
     assert late_duplicate_save.status_code == 200
     assert late_duplicate_save.json() == first_save.json()
+
+
+def test_live_snapshot_same_content_save_creates_a_new_version() -> None:
+    client = create_test_client()
+    _, token = create_user_and_token(client, "owner@example.com", "Owner")
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Realtime Doc", "initial_content": ""},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    document_id = create_response.json()["document_id"]
+
+    first_save = client.patch(
+        f"/v1/documents/{document_id}/content",
+        json={"content": "Stable body", "base_revision": 0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    db = client.session_factory()
+    try:
+        service = DocumentService(
+            DocumentRepository(db),
+            VersionRepository(db),
+            PermissionRepository(db),
+        )
+        current_user = db.get(User, 1)
+        assert current_user is not None
+        service.persist_live_snapshot(
+            document_id=document_id,
+            current_user=current_user,
+            content="Live collaborative body",
+            line_spacing=1.15,
+        )
+    finally:
+        db.close()
+
+    saved_live_snapshot = client.patch(
+        f"/v1/documents/{document_id}/content",
+        json={"content": "Live collaborative body", "base_revision": 1},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    versions = client.get(
+        f"/v1/documents/{document_id}/versions",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert first_save.status_code == 200
+    assert saved_live_snapshot.status_code == 200
+    assert saved_live_snapshot.json()["revision"] == 2
+    assert versions.status_code == 200
+    assert len(versions.json()) == 2
+    assert versions.json()[0]["version_number"] == 2
 
 
 def test_session_bootstrap_reports_resync_and_active_collaborators() -> None:
