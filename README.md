@@ -76,6 +76,8 @@ cp .env.example .env
 ./run.sh install
 ```
 
+If you already had a local `.venv` before pulling recent realtime changes, rerun `./run.sh install` so the websocket server dependencies from `uvicorn[standard]` are installed too.
+
 ### 3. Start the full app with one command
 
 ```bash
