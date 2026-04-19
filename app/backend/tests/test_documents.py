@@ -56,6 +56,7 @@ def test_create_document_success() -> None:
     assert response.json()["owner_user_id"] == owner["user_id"]
     assert response.json()["role"] == "owner"
     assert response.json()["ai_enabled"] is True
+    assert response.json()["can_use_ai"] is True
     assert response.json()["line_spacing"] == 1.15
     assert response.json()["revision"] == 0
     assert response.json()["latest_version_id"] is None
@@ -89,6 +90,7 @@ def test_get_document_success() -> None:
     }
     assert response.json()["owner_user_id"] == owner["user_id"]
     assert response.json()["role"] == "owner"
+    assert response.json()["can_use_ai"] is True
     assert response.json()["line_spacing"] == 1.15
     assert response.json()["revision"] == 0
     assert response.json()["created_at"]
@@ -113,6 +115,7 @@ def test_list_documents_success() -> None:
     assert response.json()[0]["title"] == "Readable Doc"
     assert response.json()[0]["preview_text"] == "Body"
     assert response.json()[0]["role"] == "owner"
+    assert response.json()[0]["can_use_ai"] is True
     assert response.json()[0]["line_spacing"] == 1.15
     assert response.json()[0]["created_at"]
     assert response.json()[0]["updated_at"]
@@ -158,6 +161,7 @@ def test_list_documents_includes_shared_documents_for_grantee() -> None:
             "owner_user_id": owner["user_id"],
             "role": "viewer",
             "ai_enabled": True,
+            "can_use_ai": False,
             "line_spacing": 1.15,
             "revision": 0,
             "latest_version_id": None,
@@ -166,6 +170,79 @@ def test_list_documents_includes_shared_documents_for_grantee() -> None:
             "updated_at": response.json()[0]["updated_at"],
         }
     ]
+
+
+def test_document_responses_report_caller_specific_ai_availability() -> None:
+    client = create_test_client()
+    owner, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    editor, editor_token = create_user_and_token(client, "editor@example.com", "Editor")
+    viewer, viewer_token = create_user_and_token(client, "viewer@example.com", "Viewer")
+    commenter, commenter_token = create_user_and_token(
+        client, "commenter@example.com", "Commenter"
+    )
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Shared Doc", "initial_content": "Body", "ai_enabled": True},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    document_id = create_response.json()["document_id"]
+
+    client.post(
+        f"/v1/documents/{document_id}/permissions",
+        json={
+            "grantee_type": "user",
+            "user_id": f"usr_{editor['user_id']}",
+            "role": "editor",
+            "ai_allowed": True,
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    client.post(
+        f"/v1/documents/{document_id}/permissions",
+        json={
+            "grantee_type": "user",
+            "user_id": f"usr_{viewer['user_id']}",
+            "role": "viewer",
+            "ai_allowed": False,
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    client.post(
+        f"/v1/documents/{document_id}/permissions",
+        json={
+            "grantee_type": "user",
+            "user_id": f"usr_{commenter['user_id']}",
+            "role": "commenter",
+            "ai_allowed": False,
+        },
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+
+    owner_document = client.get(
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    editor_document = client.get(
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {editor_token}"},
+    )
+    viewer_document = client.get(
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {viewer_token}"},
+    )
+    commenter_document = client.get(
+        f"/v1/documents/{document_id}",
+        headers={"Authorization": f"Bearer {commenter_token}"},
+    )
+
+    assert owner_document.status_code == 200
+    assert editor_document.status_code == 200
+    assert viewer_document.status_code == 200
+    assert commenter_document.status_code == 200
+    assert owner_document.json()["can_use_ai"] is True
+    assert editor_document.json()["can_use_ai"] is True
+    assert viewer_document.json()["can_use_ai"] is False
+    assert commenter_document.json()["can_use_ai"] is False
 
 
 def test_generate_unique_document_title_adds_predictable_suffixes() -> None:
@@ -304,6 +381,7 @@ def test_update_document_success() -> None:
     assert response.json()["document_id"] == document_id
     assert response.json()["title"] == "Updated"
     assert response.json()["ai_enabled"] is False
+    assert response.json()["can_use_ai"] is False
     assert response.json()["line_spacing"] == 1.15
     assert response.json()["role"] == "owner"
     assert response.json()["updated_at"]

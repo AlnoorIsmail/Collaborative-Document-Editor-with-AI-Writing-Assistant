@@ -109,13 +109,14 @@ class InvitationService:
                 user_id=current_user.id,
                 grantee_type="user",
                 role=invitation.role,
-                ai_allowed=False,
+                ai_allowed=self._ai_allowed_for_role(invitation.role),
             )
         else:
             self.permission_repository.update(
                 permission,
                 grantee_type="user",
                 role=invitation.role,
+                ai_allowed=self._ai_allowed_for_role(invitation.role),
             )
 
         updated_invitation = self.invitation_repository.update(
@@ -155,6 +156,9 @@ class InvitationService:
             document_id=prefixed_id("doc", updated_invitation.document_id),
             role=updated_invitation.role,
         )
+
+    def _ai_allowed_for_role(self, role: str) -> bool:
+        return role == "editor"
 
     def list_pending_invitations(
         self,

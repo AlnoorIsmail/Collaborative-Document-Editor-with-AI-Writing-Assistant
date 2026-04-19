@@ -249,6 +249,17 @@ async function openAiSidebar() {
 }
 
 function buildDocument(overrides = {}) {
+  const {
+    current_user_id: currentUserId = 1,
+    ...documentOverrides
+  } = overrides;
+  const ownerUserId = documentOverrides.owner_user_id ?? 1;
+  const collaboratorRole = (documentOverrides.collaborators ?? []).find(
+    (entry) => entry.user_id === currentUserId
+  )?.role;
+  const role = documentOverrides.role
+    ?? (ownerUserId === currentUserId ? 'owner' : collaboratorRole ?? 'viewer');
+  const aiEnabled = documentOverrides.ai_enabled ?? true;
   return {
     document_id: 1,
     title: 'Draft',
@@ -257,8 +268,12 @@ function buildDocument(overrides = {}) {
     revision: 0,
     owner_user_id: 1,
     collaborators: [],
-    ai_enabled: true,
-    ...overrides,
+    ai_enabled: aiEnabled,
+    can_use_ai: documentOverrides.can_use_ai ?? (
+      aiEnabled && (role === 'owner' || role === 'editor')
+    ),
+    role,
+    ...documentOverrides,
   };
 }
 
@@ -576,6 +591,44 @@ describe('EditorPage save flow', () => {
     expect(screen.queryByRole('button', { name: /edit document/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /show ai/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /comments/i })).toBeInTheDocument();
+  });
+
+  it('keeps AI access available for shared editors when the backend allows it', async () => {
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument({
+          owner_user_id: 2,
+          collaborators: [
+            {
+              user_id: 1,
+              role: 'editor',
+            },
+          ],
+        }));
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'editor@example.com',
+        });
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve([]);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    expect(screen.getByRole('button', { name: /hide ai/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /shortcuts/i })).toBeEnabled();
+    expect(
+      screen.queryByText('AI is not available for your current access level.')
+    ).not.toBeInTheDocument();
   });
 
   it('shows a live invitation banner on the editor page when a new invite arrives', async () => {
@@ -2867,6 +2920,7 @@ describe('EditorPage save flow', () => {
           document_id: 1,
           title: 'Renamed draft',
           ai_enabled: true,
+          can_use_ai: true,
           line_spacing: 1.15,
           updated_at: '2026-01-01T00:00:03Z',
         });
@@ -3014,7 +3068,7 @@ describe('EditorPage save flow', () => {
     expect(
       screen.getByText('Your role can view this document, but it cannot run AI actions.')
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /shortcuts/i })).toBeDisabled();
+    expect(screen.getByText('Shortcuts').closest('button')).toBeDisabled();
   });
 
   it('shows when AI is disabled for the document', async () => {
@@ -3046,7 +3100,7 @@ describe('EditorPage save flow', () => {
     await screen.findByText('Draft');
 
     expect(screen.getByText('AI is disabled for this document.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /shortcuts/i })).toBeDisabled();
+    expect(screen.getByText('Shortcuts').closest('button')).toBeDisabled();
   });
 
   it('clears the AI chat and the AI history together', async () => {

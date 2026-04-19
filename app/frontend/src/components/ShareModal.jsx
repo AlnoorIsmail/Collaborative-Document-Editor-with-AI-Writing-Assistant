@@ -66,7 +66,6 @@ export default function ShareModal({ docId, onClose }) {
   const [invitee, setInvitee] = useState('');
   const [inviteRole, setInviteRole] = useState('editor');
   const [linkRole, setLinkRole] = useState('viewer');
-  const [linkRequiresSignIn, setLinkRequiresSignIn] = useState(true);
   const [linkExpiryDays, setLinkExpiryDays] = useState(7);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -180,7 +179,7 @@ export default function ShareModal({ docId, onClose }) {
         body: JSON.stringify({
           document_id: docId,
           role: linkRole,
-          require_sign_in: linkRequiresSignIn,
+          require_sign_in: true,
           expires_at: buildExpiryTimestamp(linkExpiryDays),
         }),
       });
@@ -353,14 +352,9 @@ export default function ShareModal({ docId, onClose }) {
                 </label>
               </div>
 
-              <label className="share-checkbox">
-                <input
-                  type="checkbox"
-                  checked={linkRequiresSignIn}
-                  onChange={(event) => setLinkRequiresSignIn(event.target.checked)}
-                />
-                Require sign-in before this link grants access
-              </label>
+              <p className="share-helper-text">
+                Shared links always require sign-in before access is granted.
+              </p>
 
               <div className="modal-actions">
                 <button className="btn btn-secondary" type="submit" disabled={creatingLink}>
@@ -458,7 +452,7 @@ export default function ShareModal({ docId, onClose }) {
                           <strong>{buildShareLinkUrl(shareLink.token)}</strong>
                           <span>
                             {shareLink.role}
-                            {shareLink.require_sign_in ? ' • sign-in required' : ' • public'}
+                            {' • sign-in required'}
                           </span>
                           <span>Expires {formatDate(shareLink.expires_at)}</span>
                         </div>

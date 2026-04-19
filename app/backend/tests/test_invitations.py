@@ -157,6 +157,106 @@ def test_invited_user_with_matching_email_can_accept() -> None:
         db.close()
 
 
+def test_accepting_editor_invitation_enables_ai_for_the_editor_role() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    invited_user, invited_token = create_user_and_token(
+        client, "editor@example.com", "Editor"
+    )
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Doc", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+    document_id = create_response.json()["document_id"]
+    invitation_response = client.post(
+        "/v1/documents/{document_id}/invitations".format(document_id=document_id),
+        json={"invited_email": "editor@example.com", "role": "editor"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+
+    response = client.post(
+        "/v1/invitations/{invitation_id}/accept".format(
+            invitation_id=invitation_response.json()["invitation_id"],
+        ),
+        headers={"Authorization": "Bearer {token}".format(token=invited_token)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "editor"
+
+    db = client.session_factory()
+    try:
+        permission = (
+            db.query(DocumentPermission)
+            .filter(
+                DocumentPermission.document_id == document_id,
+                DocumentPermission.user_id == invited_user["user_id"],
+            )
+            .first()
+        )
+        assert permission is not None
+        assert permission.role == "editor"
+        assert permission.ai_allowed is True
+    finally:
+        db.close()
+
+
+def test_accepting_editor_invitation_updates_existing_permission_role_and_ai_flag() -> None:
+    client = create_test_client()
+    _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")
+    invited_user, invited_token = create_user_and_token(
+        client, "editor@example.com", "Editor"
+    )
+    create_response = client.post(
+        "/v1/documents",
+        json={"title": "Doc", "initial_content": ""},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+    document_id = create_response.json()["document_id"]
+    client.post(
+        "/v1/documents/{document_id}/permissions".format(document_id=document_id),
+        json={
+            "grantee_type": "user",
+            "user_id": "usr_{id}".format(id=invited_user["user_id"]),
+            "role": "viewer",
+            "ai_allowed": False,
+        },
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+    invitation_response = client.post(
+        "/v1/documents/{document_id}/invitations".format(document_id=document_id),
+        json={"invited_email": "editor@example.com", "role": "editor"},
+        headers={"Authorization": "Bearer {token}".format(token=owner_token)},
+    )
+
+    response = client.post(
+        "/v1/invitations/{invitation_id}/accept".format(
+            invitation_id=invitation_response.json()["invitation_id"],
+        ),
+        headers={"Authorization": "Bearer {token}".format(token=invited_token)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "editor"
+
+    db = client.session_factory()
+    try:
+        permission = (
+            db.query(DocumentPermission)
+            .filter(
+                DocumentPermission.document_id == document_id,
+                DocumentPermission.user_id == invited_user["user_id"],
+            )
+            .first()
+        )
+        assert permission is not None
+        assert permission.role == "editor"
+        assert permission.ai_allowed is True
+    finally:
+        db.close()
+
+
 def test_wrong_user_cannot_accept() -> None:
     client = create_test_client()
     _, owner_token = create_user_and_token(client, "owner@example.com", "Owner")

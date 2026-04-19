@@ -54,6 +54,7 @@ def test_backend_document_flow_contracts(client) -> None:
         "owner_user_id",
         "role",
         "ai_enabled",
+        "can_use_ai",
         "line_spacing",
         "revision",
         "latest_version_id",
@@ -71,6 +72,7 @@ def test_backend_document_flow_contracts(client) -> None:
     assert create_body["owner_user_id"] == user_id
     assert create_body["role"] == "owner"
     assert create_body["ai_enabled"] is True
+    assert create_body["can_use_ai"] is True
     assert create_body["line_spacing"] == 1.15
     assert create_body["revision"] == 0
     assert create_body["latest_version_id"] is None
@@ -94,6 +96,7 @@ def test_backend_document_flow_contracts(client) -> None:
         "owner_user_id",
         "role",
         "ai_enabled",
+        "can_use_ai",
         "line_spacing",
         "revision",
         "latest_version_id",
@@ -109,6 +112,7 @@ def test_backend_document_flow_contracts(client) -> None:
         "display_name": "Integration User",
     }
     assert get_body["owner_user_id"] == user_id
+    assert get_body["can_use_ai"] is True
     assert get_body["line_spacing"] == 1.15
     assert get_body["revision"] == 0
     assert get_body["latest_version"] is None

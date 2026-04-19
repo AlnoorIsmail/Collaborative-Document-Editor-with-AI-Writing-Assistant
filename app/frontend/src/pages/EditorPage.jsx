@@ -246,7 +246,7 @@ export default function EditorPage() {
   const pendingFocusRestoreRef = useRef(null);
   const canEditDocument = role === 'owner' || role === 'editor';
   const isReadOnly = !canEditDocument;
-  const canUseAi = canEditDocument && Boolean(doc?.ai_enabled);
+  const canUseAi = Boolean(doc?.can_use_ai);
   const canOpenComments = Boolean(user);
   const isAiOpen = activeSidebar === 'ai';
   const isCommentsOpen = activeSidebar === 'comments';
@@ -484,10 +484,10 @@ export default function EditorPage() {
     if (!doc) {
       return;
     }
-    if (role === 'commenter' && activeSidebar === 'ai') {
+    if (!canUseAi && activeSidebar === 'ai') {
       setActiveSidebar(null);
     }
-  }, [activeSidebar, doc, role]);
+  }, [activeSidebar, canUseAi, doc]);
 
   useEffect(() => {
     if (isCommentsOpen) {
@@ -1333,6 +1333,7 @@ export default function EditorPage() {
           ...current,
           title: updated.title,
           ai_enabled: updated.ai_enabled,
+          can_use_ai: updated.can_use_ai,
           line_spacing: updated.line_spacing,
           updated_at: updated.updated_at,
         };
@@ -2285,6 +2286,7 @@ export default function EditorPage() {
           currentRevision={revision}
           role={role}
           aiEnabled={Boolean(doc.ai_enabled)}
+          canUseAi={canUseAi}
           selection={selection}
           hasUnsavedChanges={saveStatus !== 'saved'}
           ensureSavedDocument={ensureSavedDocument}

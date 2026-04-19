@@ -136,6 +136,7 @@ class DocumentService:
             documents_by_id[document.id] = self._to_document_summary_response(
                 document=document,
                 role="owner",
+                can_use_ai=bool(document.ai_enabled),
             )
 
         for permission in shared_permissions:
@@ -145,6 +146,11 @@ class DocumentService:
             documents_by_id[document.id] = self._to_document_summary_response(
                 document=document,
                 role=permission.role,
+                can_use_ai=bool(
+                    document.ai_enabled
+                    and permission.role == "editor"
+                    and permission.ai_allowed
+                ),
             )
 
         return sorted(
@@ -220,6 +226,7 @@ class DocumentService:
                 document_id=refreshed_access.document.id,
                 title=refreshed_access.document.title,
                 ai_enabled=refreshed_access.document.ai_enabled,
+                can_use_ai=refreshed_access.can_use_ai,
                 line_spacing=refreshed_access.document.line_spacing,
                 role=refreshed_access.role,
                 updated_at=refreshed_access.document.updated_at,
@@ -248,6 +255,7 @@ class DocumentService:
                     document_id=refreshed_access.document.id,
                     title=refreshed_access.document.title,
                     ai_enabled=refreshed_access.document.ai_enabled,
+                    can_use_ai=refreshed_access.can_use_ai,
                     line_spacing=refreshed_access.document.line_spacing,
                     role=refreshed_access.role,
                     updated_at=refreshed_access.document.updated_at,
@@ -716,6 +724,7 @@ class DocumentService:
             owner_user_id=document.owner_id,
             role=role,
             ai_enabled=document.ai_enabled,
+            can_use_ai=bool(document.ai_enabled and role == "owner"),
             line_spacing=document.line_spacing,
             revision=revision,
             latest_version_id=document.latest_version_id,
@@ -729,6 +738,7 @@ class DocumentService:
         *,
         document: Document,
         role: str,
+        can_use_ai: bool,
     ) -> DocumentSummaryResponse:
         latest_version = self._latest_version_reference(document)
         return DocumentSummaryResponse(
@@ -740,6 +750,7 @@ class DocumentService:
             owner_user_id=document.owner_id,
             role=role,
             ai_enabled=document.ai_enabled,
+            can_use_ai=can_use_ai,
             line_spacing=document.line_spacing,
             revision=0 if latest_version is None else latest_version.revision,
             latest_version_id=document.latest_version_id,
@@ -761,6 +772,7 @@ class DocumentService:
             owner_user_id=access.document.owner_id,
             role=access.role,
             ai_enabled=access.document.ai_enabled,
+            can_use_ai=access.can_use_ai,
             line_spacing=access.document.line_spacing,
             revision=access.current_revision,
             latest_version_id=access.document.latest_version_id,
