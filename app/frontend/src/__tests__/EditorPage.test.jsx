@@ -2494,6 +2494,51 @@ describe('EditorPage save flow', () => {
     expect(screen.getByTestId('editor-line-spacing')).toHaveTextContent('1.5');
   });
 
+  it('uses the latest refreshed access token when opening the realtime socket', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        localStorage.setItem('access_token', 'fresh-token');
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+
+    expect(MockWebSocket.instances[0].url).toContain('access_token=fresh-token');
+    expect(MockWebSocket.instances[0].url).not.toContain('access_token=test-token');
+  });
+
   it('hides the status pill when realtime is connected and only the current user is present', async () => {
     globalThis.WebSocket = MockWebSocket;
 

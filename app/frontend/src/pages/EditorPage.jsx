@@ -650,8 +650,7 @@ export default function EditorPage() {
     let reconnectHandle = null;
 
     async function connectRealtime({ reconnecting = false } = {}) {
-      const accessToken = localStorage.getItem('access_token');
-      if (!accessToken) {
+      if (!localStorage.getItem('access_token')) {
         return;
       }
       if (typeof WebSocket === 'undefined') {
@@ -675,6 +674,13 @@ export default function EditorPage() {
         });
 
         if (cancelled) {
+          return;
+        }
+
+        const accessToken = localStorage.getItem('access_token');
+        if (!accessToken) {
+          setRealtimeStatus('offline');
+          setRealtimeMessage('Your session expired. Refresh the page to sign in again.');
           return;
         }
 
