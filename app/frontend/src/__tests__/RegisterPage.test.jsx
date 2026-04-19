@@ -41,7 +41,7 @@ describe('RegisterPage', () => {
 
   it('renders name, email, and password fields', () => {
     renderRegisterPage();
-    expect(screen.getByLabelText(/^name$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^username$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
     expect(document.title).toBe('Create account • CollabDocs');
@@ -62,7 +62,7 @@ describe('RegisterPage', () => {
 
   it('shows inline required-field feedback on submit', async () => {
     renderRegisterPage();
-    const nameInput = screen.getByLabelText(/^name$/i);
+    const nameInput = screen.getByLabelText(/^username$/i);
     const passwordInput = screen.getByLabelText(/password/i);
 
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'alice@example.com' } });
@@ -83,7 +83,7 @@ describe('RegisterPage', () => {
       json: async () => ({ access_token: 'tok', refresh_token: 'ref' }),
     });
     renderRegisterPage();
-    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'Alice' } });
+    fireEvent.change(screen.getByLabelText(/^username$/i), { target: { value: 'Alice' } });
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'alice@example.com' } });
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'password123' } });
     fireEvent.click(screen.getByRole('button', { name: /create account/i }));
@@ -104,7 +104,7 @@ describe('RegisterPage', () => {
     });
     renderRegisterPage();
     const emailInput = screen.getByLabelText(/email/i);
-    fireEvent.change(screen.getByLabelText(/^name$/i), { target: { value: 'Alice' } });
+    fireEvent.change(screen.getByLabelText(/^username$/i), { target: { value: 'Alice' } });
     fireEvent.change(emailInput, { target: { value: 'alice@example.com' } });
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'password123' } });
     fireEvent.click(screen.getByRole('button', { name: /create account/i }));
@@ -119,7 +119,7 @@ describe('RegisterPage', () => {
     const user = userEvent.setup();
     renderRegisterPageWithRoutes();
 
-    await user.click(screen.getByLabelText(/^name$/i));
+    await user.click(screen.getByLabelText(/^username$/i));
     await user.click(screen.getByRole('link', { name: /sign in/i }));
 
     await screen.findByText('Login page');
