@@ -199,6 +199,19 @@ These changes improved usability, auditability, and backend/frontend consistency
 
 These are improvements. They make the system easier to use and easier to explain during evaluation.
 
+## 10. Explicitly Not Implemented Or Only Partially Implemented
+
+For clarity, the following Assignment 1 ideas were not fully implemented in the final repository as originally envisioned:
+
+- PDF and DOCX export are not implemented. The app currently exports HTML, plain text, Markdown, and JSON.
+- A separate dedicated "content generation" AI workflow is not implemented as its own feature. That use case is covered more generally through custom prompts and the expand action.
+- A full CRDT or standalone OT collaboration engine is not implemented. The final system uses authenticated ProseMirror step-based synchronization instead.
+- Anonymous or public share-link redemption is not implemented. Share links require sign-in before they can grant access.
+- Production-grade HTTPS termination and database-at-rest encryption are not part of the repository's local runtime setup.
+- Independent horizontal scaling of collaboration, API, and AI subsystems is not implemented because the final project ships as a modular monolith backed by SQLite.
+
+These omissions were not accidental. They reflect deliberate scope choices to keep the implemented system stable, testable, and demonstrable within the Assignment 2 constraints.
+
 ## Final Assessment
 
 Most Assignment 1 design goals were preserved in the final system. The main deviations were practical implementation choices:
