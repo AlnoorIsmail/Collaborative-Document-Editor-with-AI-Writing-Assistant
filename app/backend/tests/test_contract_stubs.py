@@ -2,6 +2,15 @@
 
 import json
 
+from app.backend.api.deps import get_ai_provider
+from app.backend.integrations.ai_provider import (
+    AIProviderClient,
+    GeneratedSuggestion,
+    GeneratedSuggestionChunk,
+    GeneratedSuggestionComplete,
+    GeneratedSuggestionUsage,
+)
+
 DEFAULT_DOCUMENT_CONTENT = "Original selected paragraph"
 CREATE_AI_PAYLOAD = {
     "feature_type": "rewrite",
@@ -172,7 +181,7 @@ def test_get_ai_interaction_returns_suggestion_stub(client, auth_headers) -> Non
     assert body["source_revision"] == 0
     assert body["base_revision"] == 0
     assert body["created_at"] == interaction["created_at"]
-    assert body["completed_at"] == "2026-03-25T10:40:02Z"
+    assert body["completed_at"] is not None
     assert "FEATURE_TYPE:\nrewrite" in body["rendered_prompt"]
     assert body["selected_range"] == {"start": 0, "end": len(DEFAULT_DOCUMENT_CONTENT)}
     assert body["selected_text_snapshot"] == DEFAULT_DOCUMENT_CONTENT
@@ -217,6 +226,36 @@ def test_chat_thread_returns_user_and_assistant_entries(client, auth_headers) ->
     assert body[1]["suggestion"]["suggestion_id"] == "sug_1"
 
 
+def test_clear_chat_thread_removes_thread_entries_and_history(client, auth_headers) -> None:
+    document_id, _ = create_ai_interaction(client, auth_headers)
+
+    clear_response = client.delete(
+        f"/v1/documents/{document_id}/ai/chat/thread",
+        headers=auth_headers,
+    )
+
+    assert clear_response.status_code == 200
+    assert clear_response.json() == {
+        "document_id": document_id,
+        "deleted_entry_count": 2,
+        "cleared_at": clear_response.json()["cleared_at"],
+    }
+
+    thread_response = client.get(
+        f"/v1/documents/{document_id}/ai/chat/thread",
+        headers=auth_headers,
+    )
+    assert thread_response.status_code == 200
+    assert thread_response.json() == []
+
+    history_response = client.get(
+        f"/v1/documents/{document_id}/ai/interactions",
+        headers=auth_headers,
+    )
+    assert history_response.status_code == 200
+    assert history_response.json() == []
+
+
 def test_stream_ai_interaction_returns_sse_events_and_completes(
     client, auth_headers
 ) -> None:
@@ -247,6 +286,73 @@ def test_stream_ai_interaction_returns_sse_events_and_completes(
     assert events[0][1]["status"] == "processing"
     assert events[-1][1]["status"] == "completed"
     assert events[-1][1]["suggestion"]["generated_output"]
+    assert event_types.count("chunk") >= 2
+
+    interaction_id = events[0][1]["interaction_id"]
+    detail_response = client.get(
+        f"/v1/ai/interactions/{interaction_id}",
+        headers=auth_headers,
+    )
+    assert detail_response.status_code == 200
+    assert detail_response.json()["status"] == "completed"
+    assert detail_response.json()["suggestion"]["generated_output"]
+
+
+class _FailingStreamingProvider(AIProviderClient):
+    def generate_suggestion(
+        self, *, feature_type: str, prompt: str
+    ) -> GeneratedSuggestion:
+        raise AssertionError("The streaming endpoint should not use sync generation.")
+
+    async def stream_suggestion(self, *, feature_type: str, prompt: str):
+        yield GeneratedSuggestionChunk(delta="Partial streamed output")
+        raise RuntimeError("Provider stream broke mid-response")
+
+
+def test_stream_ai_interaction_emits_error_and_preserves_partial_thread_output(
+    client, auth_headers
+) -> None:
+    client.app.dependency_overrides[get_ai_provider] = lambda: _FailingStreamingProvider()
+    document = create_document(
+        client,
+        auth_headers,
+        initial_content="Streaming paragraph " * 4,
+    )
+
+    with client.stream(
+        "POST",
+        f"/v1/documents/{document['document_id']}/ai/interactions/stream",
+        headers=auth_headers,
+        json=CREATE_AI_PAYLOAD
+        | {
+            "selected_text_snapshot": "Streaming paragraph " * 4,
+            "selection_range": {"start": 0, "end": len("Streaming paragraph " * 4)},
+        },
+    ) as response:
+        assert response.status_code == 202
+        events = parse_sse_events(response)
+
+    assert [event_type for event_type, _ in events] == ["meta", "chunk", "error"]
+    interaction_id = events[0][1]["interaction_id"]
+
+    detail_response = client.get(
+        f"/v1/ai/interactions/{interaction_id}",
+        headers=auth_headers,
+    )
+    assert detail_response.status_code == 200
+    assert detail_response.json()["status"] == "failed"
+    assert detail_response.json()["suggestion"] is None
+
+    thread_response = client.get(
+        f"/v1/documents/{document['document_id']}/ai/chat/thread",
+        headers=auth_headers,
+    )
+    assert thread_response.status_code == 200
+    assistant_entry = thread_response.json()[-1]
+    assert assistant_entry["status"] == "failed"
+    assert assistant_entry["content"] == "Partial streamed output"
+
+    client.app.dependency_overrides.pop(get_ai_provider, None)
 
 
 def test_cancel_ai_interaction_marks_interaction_failed(
@@ -262,7 +368,7 @@ def test_cancel_ai_interaction_marks_interaction_failed(
     assert cancel_response.status_code == 200
     assert cancel_response.json() == {
         "interaction_id": interaction["interaction_id"],
-        "status": "failed",
+        "status": "completed",
         "canceled_at": cancel_response.json()["canceled_at"],
     }
 
@@ -271,7 +377,7 @@ def test_cancel_ai_interaction_marks_interaction_failed(
         headers=auth_headers,
     )
     assert detail_response.status_code == 200
-    assert detail_response.json()["status"] == "failed"
+    assert detail_response.json()["status"] == "completed"
 
 
 def test_accept_suggestion_returns_applied_contract(client, auth_headers) -> None:

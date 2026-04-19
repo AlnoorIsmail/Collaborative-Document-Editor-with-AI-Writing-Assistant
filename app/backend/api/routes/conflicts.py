@@ -160,14 +160,14 @@ async def stream_conflict_ai_merge(
         conflict_id=conflictId,
         principal=principal,
     )
-    accepted_response, generated_output = ai_service.start_stream_interaction(
+    accepted_response, stream_handle = ai_service.start_stream_interaction(
         document_id=documentId,
         principal=principal,
         payload=ai_payload,
     )
     return _stream_response(
         accepted_response=accepted_response,
-        generated_output=generated_output,
+        stream_handle=stream_handle,
         request=request,
         principal=principal,
         service=ai_service,

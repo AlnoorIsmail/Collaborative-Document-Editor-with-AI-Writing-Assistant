@@ -87,6 +87,12 @@ class AIInteractionCancelResponse(AppSchema):
     canceled_at: datetime
 
 
+class AIChatThreadClearResponse(AppSchema):
+    document_id: int
+    deleted_entry_count: int = Field(ge=0)
+    cleared_at: datetime
+
+
 class AIUsageResponse(AppSchema):
     prompt_tokens: int = Field(ge=0)
     completion_tokens: int = Field(ge=0)

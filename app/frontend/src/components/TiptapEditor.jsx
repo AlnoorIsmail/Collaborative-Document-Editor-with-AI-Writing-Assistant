@@ -9,7 +9,7 @@ import {
   receiveTransaction,
   sendableSteps,
 } from '@tiptap/pm/collab';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { Step } from '@tiptap/pm/transform';
 
@@ -114,19 +114,45 @@ function buildStepBatchMetadata(transaction) {
 }
 
 function clampSelectionPosition(editor, from, to = from) {
-  const docSize = editor?.state?.doc?.content?.size ?? 0;
-  const maxPosition = Math.max(1, docSize);
+  return normalizeSelectionRange(editor?.state?.doc, from, to);
+}
+
+function normalizeSelectionRange(doc, from, to = from) {
+  const docSize = doc?.content?.size ?? 0;
+  if (!doc || docSize <= 0) {
+    return { from: 0, to: 0 };
+  }
+
   const numericFrom = Number(from);
   const numericTo = Number(to);
   const safeFrom = Math.max(
-    1,
-    Math.min(Number.isFinite(numericFrom) ? numericFrom : 1, maxPosition)
+    0,
+    Math.min(Number.isFinite(numericFrom) ? numericFrom : 0, docSize)
   );
   const safeTo = Math.max(
-    safeFrom,
-    Math.min(Number.isFinite(numericTo) ? numericTo : safeFrom, maxPosition)
+    0,
+    Math.min(Number.isFinite(numericTo) ? numericTo : safeFrom, docSize)
   );
-  return { from: safeFrom, to: safeTo };
+
+  try {
+    if (safeFrom === safeTo) {
+      const cursor = TextSelection.near(doc.resolve(safeFrom), 1);
+      return { from: cursor.from, to: cursor.to };
+    }
+
+    const selection = TextSelection.between(
+      doc.resolve(Math.min(safeFrom, safeTo)),
+      doc.resolve(Math.max(safeFrom, safeTo))
+    );
+    return {
+      from: Math.min(selection.from, selection.to),
+      to: Math.max(selection.from, selection.to),
+    };
+  } catch {
+    const fallbackFrom = Math.max(1, Math.min(safeFrom || 1, docSize));
+    const fallbackTo = Math.max(fallbackFrom, Math.min(safeTo || fallbackFrom, docSize));
+    return { from: fallbackFrom, to: fallbackTo };
+  }
 }
 
 function createConflictHighlightPlugin() {
@@ -188,8 +214,13 @@ function createRemoteAwarenessPlugin() {
 
         const decorations = [];
         for (const awareness of nextAwareness) {
-          const safeFrom = Math.max(0, Math.min(awareness.from, transaction.doc.content.size));
-          const safeTo = Math.max(safeFrom, Math.min(awareness.to, transaction.doc.content.size));
+          const normalizedRange = normalizeSelectionRange(
+            transaction.doc,
+            awareness.from,
+            awareness.to
+          );
+          const safeFrom = normalizedRange.from;
+          const safeTo = normalizedRange.to;
           const color = awareness.color || '#4f46e5';
           const label = awareness.label || 'Collaborator';
 
@@ -553,11 +584,18 @@ const TiptapEditor = forwardRef(function TiptapEditor(
           anchor,
           head,
         } = editor.state.selection;
-        const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ');
+        const normalizedSelection = normalizeSelectionRange(editor.state.doc, from, to);
+        const text = normalizedSelection.from === normalizedSelection.to
+          ? ''
+          : editor.state.doc.textBetween(
+            normalizedSelection.from,
+            normalizedSelection.to,
+            ' '
+          );
         selectionHandlerRef.current({
           text,
-          from,
-          to,
+          from: normalizedSelection.from,
+          to: normalizedSelection.to,
           direction: anchor <= head ? 'forward' : 'backward',
         });
       }
@@ -570,9 +608,23 @@ const TiptapEditor = forwardRef(function TiptapEditor(
       if (!editor) {
         return { text: '', from: 0, to: 0 };
       }
-      const { from, to } = editor.state.selection;
-      const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ');
-      return { text, from, to };
+      const normalizedSelection = normalizeSelectionRange(
+        editor.state.doc,
+        editor.state.selection.from,
+        editor.state.selection.to
+      );
+      const text = normalizedSelection.from === normalizedSelection.to
+        ? ''
+        : editor.state.doc.textBetween(
+          normalizedSelection.from,
+          normalizedSelection.to,
+          ' '
+        );
+      return {
+        text,
+        from: normalizedSelection.from,
+        to: normalizedSelection.to,
+      };
     },
     getHTML() {
       return editor?.getHTML() ?? '';
@@ -731,13 +783,20 @@ const TiptapEditor = forwardRef(function TiptapEditor(
 
     const awareness = (remoteAwarenessRef.current || [])
       .filter((entry) => Number.isFinite(entry?.from) && Number.isFinite(entry?.to))
-      .map((entry) => ({
-        sessionId: entry.sessionId,
-        from: entry.from,
-        to: entry.to,
-        color: entry.color,
-        label: entry.label,
-      }));
+      .map((entry) => {
+        const normalizedSelection = normalizeSelectionRange(
+          editor.state.doc,
+          entry.from,
+          entry.to
+        );
+        return {
+          sessionId: entry.sessionId,
+          from: normalizedSelection.from,
+          to: normalizedSelection.to,
+          color: entry.color,
+          label: entry.label,
+        };
+      });
     const signature = JSON.stringify(awareness);
     if (signature === awarenessSignatureRef.current) {
       return;

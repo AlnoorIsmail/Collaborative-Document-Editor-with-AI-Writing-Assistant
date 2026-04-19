@@ -29,6 +29,7 @@ export default function Navbar({
   user,
   isAiOpen,
   onToggleAi,
+  presenceSummary = null,
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -82,25 +83,32 @@ export default function Navbar({
         <button className="btn btn-ghost navbar-back" onClick={onBack} title="All documents">
           &#8592;
         </button>
+        <div className="navbar-title-row">
+          {editing ? (
+            <input
+              ref={inputRef}
+              className="navbar-title-input"
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={handleKeyDown}
+            />
+          ) : (
+            <span
+              className={`navbar-title ${!isReadOnly ? 'navbar-title-editable' : ''}`}
+              onClick={startEditing}
+              title={isReadOnly ? undefined : 'Click to rename'}
+            >
+              {title || DEFAULT_DOCUMENT_TITLE}
+            </span>
+          )}
 
-        {editing ? (
-          <input
-            ref={inputRef}
-            className="navbar-title-input"
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onBlur={commitTitle}
-            onKeyDown={handleKeyDown}
-          />
-        ) : (
-          <span
-            className={`navbar-title ${!isReadOnly ? 'navbar-title-editable' : ''}`}
-            onClick={startEditing}
-            title={isReadOnly ? undefined : 'Click to rename'}
-          >
-            {title || DEFAULT_DOCUMENT_TITLE}
-          </span>
-        )}
+          {presenceSummary ? (
+            <div className="navbar-presence-summary">
+              {presenceSummary}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="navbar-center">

@@ -177,6 +177,11 @@ function renderEditorPage() {
   );
 }
 
+async function clickAiShortcut(label) {
+  fireEvent.click(screen.getByRole('button', { name: /shortcuts/i }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: label }));
+}
+
 function buildDocument(overrides = {}) {
   return {
     document_id: 1,
@@ -624,7 +629,7 @@ describe('EditorPage save flow', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Make it clearer' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
+    await clickAiShortcut('Rewrite');
 
     await screen.findByText('AI rewritten document');
 
@@ -751,7 +756,7 @@ describe('EditorPage save flow', () => {
     renderEditorPage();
 
     await screen.findByText('Draft');
-    fireEvent.click(screen.getByRole('button', { name: 'Summarize' }));
+    await clickAiShortcut('Summarize');
 
     await screen.findByText('A short review-only summary');
 
@@ -889,7 +894,7 @@ describe('EditorPage save flow', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Tighten this section' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
+    await clickAiShortcut('Rewrite');
 
     await screen.findByText('Sharper text');
 
@@ -1038,7 +1043,7 @@ describe('EditorPage save flow', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'What should I improve here?' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
     await screen.findByText('You should make this sentence more specific.');
 
@@ -1171,7 +1176,7 @@ describe('EditorPage save flow', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Translate for a Spanish-speaking teammate.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Translate' }));
+    await clickAiShortcut('Translate');
 
     await screen.findByText('Texto traducido');
 
@@ -1315,7 +1320,7 @@ describe('EditorPage save flow', () => {
     renderEditorPage();
 
     await screen.findByText('Draft');
-    fireEvent.click(screen.getByRole('button', { name: 'Summarize' }));
+    await clickAiShortcut('Summarize');
 
     await screen.findByText('A short streamed summary');
     expect(api.apiFetch).toHaveBeenCalledWith(
@@ -1344,7 +1349,52 @@ describe('EditorPage save flow', () => {
       }
 
       if (path === '/documents/1/ai/chat/thread') {
-        return Promise.resolve([]);
+        return Promise.resolve(
+          buildThreadEntries([
+            {
+              entry_id: 'thread_user_cancel',
+              message_role: 'user',
+              entry_kind: 'chat_message',
+              feature_type: 'summarize',
+              content: 'Summarize the document.',
+            },
+            {
+              entry_id: 'thread_cancel',
+              interaction_id: 'ai_cancel',
+              message_role: 'assistant',
+              entry_kind: 'chat_message',
+              feature_type: 'summarize',
+              status: 'failed',
+              content: 'Partial answer',
+              review_only: true,
+              suggestion: null,
+            },
+          ])
+        );
+      }
+
+      if (path === '/documents/1/ai/interactions') {
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_cancel',
+            entry_kind: 'chat_message',
+            feature_type: 'summarize',
+            status: 'failed',
+          }),
+        ]);
+      }
+
+      if (path === '/ai/interactions/ai_cancel') {
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_cancel',
+            entry_kind: 'chat_message',
+            feature_type: 'summarize',
+            status: 'failed',
+            completed_at: '2026-01-01T00:00:01Z',
+            suggestion: null,
+          })
+        );
       }
 
       if (path === '/ai/interactions/ai_cancel/cancel') {
@@ -1397,10 +1447,10 @@ describe('EditorPage save flow', () => {
     renderEditorPage();
 
     await screen.findByText('Draft');
-    fireEvent.click(screen.getByRole('button', { name: 'Summarize' }));
+    await clickAiShortcut('Summarize');
 
     await screen.findByText('Partial answer');
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stop AI generation' }));
 
     await waitFor(() => {
       expect(api.apiJSON).toHaveBeenCalledWith(
@@ -1413,6 +1463,121 @@ describe('EditorPage save flow', () => {
 
     expect(screen.getByText('AI generation canceled.')).toBeInTheDocument();
     expect(screen.getByText('Partial answer')).toBeInTheDocument();
+    expect(
+      screen.getByText('Partial output was kept after the AI stream was interrupted.')
+    ).toBeInTheDocument();
+  });
+
+  it('preserves partial streamed output when the AI stream fails mid-response', async () => {
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/ai/chat/thread') {
+        return Promise.resolve(
+          buildThreadEntries([
+            {
+              entry_id: 'thread_user_error',
+              message_role: 'user',
+              entry_kind: 'chat_message',
+              feature_type: 'summarize',
+              content: 'Summarize the document.',
+            },
+            {
+              entry_id: 'thread_error',
+              interaction_id: 'ai_error',
+              message_role: 'assistant',
+              entry_kind: 'chat_message',
+              feature_type: 'summarize',
+              status: 'failed',
+              content: 'Partial streamed output',
+              review_only: true,
+              suggestion: null,
+            },
+          ])
+        );
+      }
+
+      if (path === '/documents/1/ai/interactions') {
+        return Promise.resolve([
+          buildHistoryItem({
+            interaction_id: 'ai_error',
+            entry_kind: 'chat_message',
+            feature_type: 'summarize',
+            status: 'failed',
+          }),
+        ]);
+      }
+
+      if (path === '/ai/interactions/ai_error') {
+        return Promise.resolve(
+          buildInteractionDetail({
+            interaction_id: 'ai_error',
+            entry_kind: 'chat_message',
+            feature_type: 'summarize',
+            status: 'failed',
+            completed_at: '2026-01-01T00:00:01Z',
+            suggestion: null,
+          })
+        );
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    api.apiFetch.mockResolvedValue(
+      createSseResponse([
+        {
+          type: 'meta',
+          data: {
+            interaction_id: 'ai_error',
+            status: 'processing',
+            document_id: 1,
+            base_revision: 0,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        {
+          type: 'chunk',
+          data: {
+            interaction_id: 'ai_error',
+            delta: 'Partial streamed output',
+            output: 'Partial streamed output',
+          },
+        },
+        {
+          type: 'error',
+          data: {
+            interaction_id: 'ai_error',
+            message: 'Provider stream broke mid-response',
+          },
+        },
+      ])
+    );
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await clickAiShortcut('Summarize');
+
+    await screen.findByText('Partial streamed output');
+    await waitFor(() => {
+      expect(
+        screen.getByText('Provider stream broke mid-response')
+      ).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText('Partial output was kept after the AI stream was interrupted.')
+    ).toBeInTheDocument();
   });
 
   it('shows document-level AI history in the sidebar', async () => {
@@ -1620,7 +1785,7 @@ describe('EditorPage save flow', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Make it clearer' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
+    await clickAiShortcut('Rewrite');
 
     await screen.findByText('AI rewritten document');
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
@@ -1786,7 +1951,7 @@ describe('EditorPage save flow', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Tighten this section' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
+    await clickAiShortcut('Rewrite');
 
     await screen.findByText('Sharper text');
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
@@ -1926,7 +2091,7 @@ describe('EditorPage save flow', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Make it clearer' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
+    await clickAiShortcut('Rewrite');
 
     await screen.findByText('AI rewritten document');
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
@@ -2074,7 +2239,7 @@ describe('EditorPage save flow', () => {
     fireEvent.change(screen.getByLabelText('Message'), {
       target: { value: 'Make it clearer' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Rewrite' }));
+    await clickAiShortcut('Rewrite');
 
     await screen.findByText('AI rewritten document');
     fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
@@ -2157,7 +2322,7 @@ describe('EditorPage save flow', () => {
     expect(
       screen.getByText('Your role can view this document, but it cannot run AI actions.')
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Summarize' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /shortcuts/i })).toBeDisabled();
   });
 
   it('shows when AI is disabled for the document', async () => {
@@ -2189,7 +2354,113 @@ describe('EditorPage save flow', () => {
     await screen.findByText('Draft');
 
     expect(screen.getByText('AI is disabled for this document.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Summarize' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /shortcuts/i })).toBeDisabled();
+  });
+
+  it('clears the AI chat and the AI history together', async () => {
+    let threadEntries = buildThreadEntries([
+      {
+        entry_id: 'thread_user_clear',
+        message_role: 'user',
+        entry_kind: 'chat_message',
+        feature_type: 'chat_assistant',
+        content: 'Help me tighten this paragraph.',
+      },
+      {
+        entry_id: 'thread_assistant_clear',
+        interaction_id: 'ai_clear_chat',
+        message_role: 'assistant',
+        entry_kind: 'chat_message',
+        feature_type: 'chat_assistant',
+        status: 'completed',
+        content: 'Here is a tighter version.',
+        review_only: true,
+        suggestion: null,
+      },
+    ]);
+    let historyItems = [
+      buildHistoryItem({
+        interaction_id: 'ai_clear_chat',
+        entry_kind: 'chat_message',
+        feature_type: 'chat_assistant',
+        status: 'completed',
+      }),
+    ];
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/ai/chat/thread' && !options) {
+        return Promise.resolve(threadEntries);
+      }
+
+      if (path === '/documents/1/ai/chat/thread' && options?.method === 'DELETE') {
+        threadEntries = [];
+        historyItems = [];
+        return Promise.resolve({
+          document_id: 1,
+          deleted_entry_count: 2,
+          cleared_at: '2026-01-01T00:00:00Z',
+        });
+      }
+
+      if (path === '/documents/1/ai/interactions') {
+        return Promise.resolve(historyItems);
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Here is a tighter version.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear AI chat' }));
+
+    await screen.findByText('AI chat cleared.');
+    expect(screen.queryByText('Here is a tighter version.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'AI History' }));
+    await screen.findByText('No AI interactions yet.');
+  });
+
+  it('lets the AI sidebar be resized wider on desktop', async () => {
+    const originalWidth = window.innerWidth;
+    window.innerWidth = 1400;
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+
+    const sidebar = screen.getByLabelText('AI Assistant');
+    const resizeHandle = screen.getByRole('separator', { name: 'Resize AI sidebar' });
+
+    expect(sidebar).toHaveStyle({
+      '--ai-sidebar-width': '360px',
+      '--ai-sidebar-min-width': '360px',
+    });
+
+    fireEvent.pointerDown(resizeHandle, { clientX: 1180 });
+    fireEvent.pointerMove(window, { clientX: 1040 });
+    fireEvent.pointerUp(window);
+
+    await waitFor(() => {
+      expect(sidebar).toHaveStyle({
+        '--ai-sidebar-width': '500px',
+        '--ai-sidebar-min-width': '500px',
+      });
+    });
+
+    window.innerWidth = originalWidth;
   });
 
   it('shows version history and restores an older version', async () => {
@@ -2729,6 +3000,77 @@ describe('EditorPage save flow', () => {
         })
       );
     });
+  });
+
+  it('keeps the selected-text awareness update when a cursor collapse follows immediately', async () => {
+    globalThis.WebSocket = MockWebSocket;
+
+    api.apiJSON.mockImplementation((path, options) => {
+      if (path === '/documents/1' && !options) {
+        return Promise.resolve(buildDocument());
+      }
+
+      if (path === '/auth/me') {
+        return Promise.resolve({
+          user_id: 1,
+          display_name: 'Owner',
+          email: 'user@example.com',
+        });
+      }
+
+      if (path === '/documents/1/sessions') {
+        return Promise.resolve({
+          session_id: 'sess_1',
+          session_token: 'socket-token',
+          document_id: 1,
+          revision: 0,
+          collab_version: 0,
+          content_snapshot: '<p>Initial body</p>',
+          line_spacing_snapshot: 1.15,
+          realtime_url: '/v1/documents/1/sessions/sess_1/ws',
+          resync_required: false,
+          missed_revision_count: 0,
+          active_collaborators: [],
+        });
+      }
+
+      throw new Error(`Unexpected apiJSON call: ${path}`);
+    });
+
+    renderEditorPage();
+
+    await screen.findByText('Draft');
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+    vi.useFakeTimers();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select text' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move cursor' }));
+
+    expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'selection_update',
+        from: 4,
+        to: 21,
+        direction: 'forward',
+        collab_version: 0,
+      })
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+
+    expect(MockWebSocket.instances[0].sentMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'selection_update',
+        from: 8,
+        to: 8,
+        direction: 'forward',
+        collab_version: 0,
+      })
+    );
   });
 
   it('applies remote collaborative steps without forcing a snapshot overwrite', async () => {

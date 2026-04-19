@@ -14,14 +14,28 @@ function formatLiveSummary(users, currentUserId) {
   return `Live: ${users.length} online`;
 }
 
-export default function PresenceBar({
+function formatRealtimeStatus(status) {
+  if (status === 'connected') {
+    return 'Realtime connected';
+  }
+  if (status === 'connecting') {
+    return 'Connecting…';
+  }
+  if (status === 'reconnecting') {
+    return 'Reconnecting…';
+  }
+  if (status === 'unsupported') {
+    return 'Realtime unsupported';
+  }
+  return 'Realtime offline';
+}
+
+export function PresenceSummary({
   users,
   currentUserId,
   realtimeStatus,
   realtimeMessage,
-  conflictState,
-  onAcceptRemote,
-  onKeepLocal,
+  variant = 'bar',
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -37,6 +51,8 @@ export default function PresenceBar({
     })),
     [currentUserId, users]
   );
+  const hasRealtimeStatus = !connectedAndSolo;
+  const hasContent = showLivePresence || hasRealtimeStatus || Boolean(realtimeMessage);
 
   useEffect(() => {
     if (!showLivePresence) {
@@ -55,64 +71,86 @@ export default function PresenceBar({
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, []);
 
+  if (!hasContent) {
+    return null;
+  }
+
   return (
-    <>
-      <div className="presence-bar">
-        <div className="presence-pill-group">
-          {showLivePresence ? (
-            <div className="presence-live-dropdown" ref={dropdownRef}>
-              <button
-                type="button"
-                className="presence-pill presence-pill-primary presence-live-trigger"
-                aria-expanded={isOpen}
-                aria-haspopup="list"
-                onClick={() => setIsOpen((current) => !current)}
-              >
-                <span>{formatLiveSummary(users, currentUserId)}</span>
-                <span aria-hidden="true" className="presence-live-chevron">▾</span>
-              </button>
-              {isOpen ? (
-                <div className="presence-live-menu" role="list" aria-label="Live collaborators">
-                  {liveUsers.map((user) => (
-                    <div key={user.session_id} className="presence-live-item" role="listitem">
-                      <span
-                        className="presence-live-swatch"
-                        style={{ backgroundColor: user.color }}
-                        aria-hidden="true"
-                      />
-                      <span className="presence-live-name" style={{ color: user.color }}>
-                        {user.label}
-                      </span>
-                      {user.isCurrentUser ? (
-                        <span className="presence-live-self">You</span>
-                      ) : null}
-                      {user.typing ? (
-                        <span className="presence-live-meta">typing…</span>
-                      ) : null}
-                    </div>
-                  ))}
+    <div className={`presence-pill-group ${variant === 'inline' ? 'presence-pill-group-inline' : ''}`}>
+      {showLivePresence ? (
+        <div className="presence-live-dropdown" ref={dropdownRef}>
+          <button
+            type="button"
+            className={`presence-pill presence-pill-primary presence-live-trigger ${variant === 'inline' ? 'presence-pill-inline' : ''}`}
+            aria-expanded={isOpen}
+            aria-haspopup="list"
+            onClick={() => setIsOpen((current) => !current)}
+          >
+            <span>{formatLiveSummary(users, currentUserId)}</span>
+            <span aria-hidden="true" className="presence-live-chevron">▾</span>
+          </button>
+          {isOpen ? (
+            <div className="presence-live-menu" role="list" aria-label="Live collaborators">
+              {liveUsers.map((user) => (
+                <div key={user.session_id} className="presence-live-item" role="listitem">
+                  <span
+                    className="presence-live-swatch"
+                    style={{ backgroundColor: user.color }}
+                    aria-hidden="true"
+                  />
+                  <span className="presence-live-name" style={{ color: user.color }}>
+                    {user.label}
+                  </span>
+                  {user.isCurrentUser ? (
+                    <span className="presence-live-self">You</span>
+                  ) : null}
+                  {user.typing ? (
+                    <span className="presence-live-meta">typing…</span>
+                  ) : null}
                 </div>
-              ) : null}
+              ))}
             </div>
           ) : null}
-          {!connectedAndSolo ? (
-            <span className={`presence-pill presence-pill-status presence-pill-status-${realtimeStatus}`}>
-              {realtimeStatus === 'connected'
-                ? 'Realtime connected'
-                : realtimeStatus === 'connecting'
-                  ? 'Connecting…'
-                  : realtimeStatus === 'reconnecting'
-                    ? 'Reconnecting…'
-                    : realtimeStatus === 'unsupported'
-                      ? 'Realtime unsupported'
-                      : 'Realtime offline'}
-            </span>
-          ) : null}
-          {realtimeMessage ? (
-            <span className="presence-pill">{realtimeMessage}</span>
-          ) : null}
         </div>
-      </div>
+      ) : null}
+      {hasRealtimeStatus ? (
+        <span
+          className={`presence-pill presence-pill-status presence-pill-status-${realtimeStatus} ${variant === 'inline' ? 'presence-pill-inline' : ''}`}
+        >
+          {formatRealtimeStatus(realtimeStatus)}
+        </span>
+      ) : null}
+      {realtimeMessage ? (
+        <span className={`presence-pill ${variant === 'inline' ? 'presence-pill-inline presence-pill-inline-message' : ''}`}>
+          {realtimeMessage}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+export default function PresenceBar({
+  users,
+  currentUserId,
+  realtimeStatus,
+  realtimeMessage,
+  conflictState,
+  onAcceptRemote,
+  onKeepLocal,
+  showSummary = true,
+}) {
+  return (
+    <>
+      {showSummary ? (
+        <div className="presence-bar">
+          <PresenceSummary
+            users={users}
+            currentUserId={currentUserId}
+            realtimeStatus={realtimeStatus}
+            realtimeMessage={realtimeMessage}
+          />
+        </div>
+      ) : null}
 
       {conflictState ? (
         <div className="conflict-banner">

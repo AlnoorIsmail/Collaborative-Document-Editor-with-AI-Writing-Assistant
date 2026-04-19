@@ -19,6 +19,12 @@ const DEFAULT_FEATURE_PARAMETERS = {
   restructure: { structure: 'clear_flow' },
 };
 
+const AI_SIDEBAR_WIDTH_STORAGE_KEY = 'ai_sidebar_width';
+const AI_SIDEBAR_DEFAULT_WIDTH = 360;
+const AI_SIDEBAR_MIN_WIDTH = 320;
+const AI_SIDEBAR_MAX_WIDTH = 760;
+const AI_SIDEBAR_DESKTOP_BREAKPOINT = 1080;
+
 function makeLocalId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -250,6 +256,14 @@ function buildQuickActionParameters(featureType) {
   };
 }
 
+function getSelectedTextSnapshot(scopeType, selectedText) {
+  if (scopeType !== 'selection') {
+    return undefined;
+  }
+
+  return selectedText;
+}
+
 export default function AISidebar({
   documentId,
   documentTitle,
@@ -271,7 +285,12 @@ export default function AISidebar({
   const [activeTab, setActiveTab] = useState('chat');
   const [composerMessage, setComposerMessage] = useState('');
   const [attachedSelection, setAttachedSelection] = useState(null);
-  const [isContextExpanded, setIsContextExpanded] = useState(false);
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(AI_SIDEBAR_DEFAULT_WIDTH);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(
+    typeof window !== 'undefined' ? window.innerWidth > AI_SIDEBAR_DESKTOP_BREAKPOINT : true
+  );
+  const [isResizing, setIsResizing] = useState(false);
   const [threadEntries, setThreadEntries] = useState([]);
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState('');
@@ -279,6 +298,7 @@ export default function AISidebar({
   const [errorMessage, setErrorMessage] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState('');
@@ -294,12 +314,30 @@ export default function AISidebar({
   const streamAbortRef = useRef(null);
   const currentInteractionIdRef = useRef('');
   const cancelRequestedRef = useRef(false);
+  const actionsDropdownRef = useRef(null);
+  const resizeStateRef = useRef(null);
 
   const canUseAI = aiEnabled && (role === 'owner' || role === 'editor');
   const canViewHistory = Boolean(documentId);
-  const isBusy = isRunning || isApplying || isUndoing || isCancelling;
+  const isBusy = isRunning || isApplying || isUndoing || isCancelling || isClearing;
+  const isComposerDisabled = !canUseAI || isApplying || isUndoing;
   const documentText = useMemo(() => htmlToPlainText(content), [content]);
   const contextScopeType = attachedSelection?.text?.trim() ? 'selection' : 'document';
+  const hasClearableChat = threadEntries.length > 0 || historyItems.length > 0;
+  const sidebarInlineStyle = isOpen && isDesktopViewport
+    ? {
+        '--ai-sidebar-width': `${sidebarWidth}px`,
+        '--ai-sidebar-min-width': `${sidebarWidth}px`,
+      }
+    : undefined;
+
+  const clampSidebarWidth = useCallback((nextWidth, viewportWidth = window.innerWidth) => {
+    const maxAllowed = Math.min(
+      AI_SIDEBAR_MAX_WIDTH,
+      Math.max(AI_SIDEBAR_MIN_WIDTH, viewportWidth - 320)
+    );
+    return Math.min(Math.max(nextWidth, AI_SIDEBAR_MIN_WIDTH), maxAllowed);
+  }, []);
 
   const loadThread = useCallback(
     async ({ silent = false } = {}) => {
@@ -419,19 +457,49 @@ export default function AISidebar({
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const storedWidth = Number(window.localStorage.getItem(AI_SIDEBAR_WIDTH_STORAGE_KEY));
+    if (Number.isFinite(storedWidth) && storedWidth > 0) {
+      setSidebarWidth(clampSidebarWidth(storedWidth, window.innerWidth));
+    } else {
+      setSidebarWidth(clampSidebarWidth(AI_SIDEBAR_DEFAULT_WIDTH, window.innerWidth));
+    }
+
+    function handleWindowResize() {
+      setIsDesktopViewport(window.innerWidth > AI_SIDEBAR_DESKTOP_BREAKPOINT);
+      setSidebarWidth((current) => clampSidebarWidth(current, window.innerWidth));
+    }
+
+    handleWindowResize();
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, [clampSidebarWidth]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isDesktopViewport) {
+      return;
+    }
+    window.localStorage.setItem(AI_SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [isDesktopViewport, sidebarWidth]);
+
+  useEffect(() => {
     streamAbortRef.current?.abort();
     currentInteractionIdRef.current = '';
     cancelRequestedRef.current = false;
     setActiveTab('chat');
     setComposerMessage('');
     setAttachedSelection(null);
-    setIsContextExpanded(false);
+    setIsActionsOpen(false);
     setThreadEntries([]);
     setThreadLoading(false);
-    setThreadError('');
-    setStatusMessage('');
-    setErrorMessage('');
-    setEditingEntryId('');
+      setThreadError('');
+      setStatusMessage('');
+      setErrorMessage('');
+      setIsClearing(false);
+      setEditingEntryId('');
     setEditedContent('');
     setHistoryItems([]);
     setHistoryLoading(false);
@@ -444,9 +512,47 @@ export default function AISidebar({
   useEffect(() => {
     if (selection?.text?.trim()) {
       setAttachedSelection(selection);
-      setIsContextExpanded(true);
     }
   }, [selection]);
+
+  useEffect(() => {
+    function handlePointerDown(event) {
+      if (!actionsDropdownRef.current?.contains(event.target)) {
+        setIsActionsOpen(false);
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizing) {
+      return undefined;
+    }
+
+    function handlePointerMove(event) {
+      if (!resizeStateRef.current) {
+        return;
+      }
+      const nextWidth = resizeStateRef.current.startWidth + (resizeStateRef.current.startX - event.clientX);
+      setSidebarWidth(clampSidebarWidth(nextWidth, window.innerWidth));
+    }
+
+    function handlePointerUp() {
+      resizeStateRef.current = null;
+      setIsResizing(false);
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+    }
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [clampSidebarWidth, isResizing]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -517,6 +623,7 @@ export default function AISidebar({
       scopeType,
       selectedRange,
       selectedText,
+      selectedTextSnapshot: getSelectedTextSnapshot(scopeType, selectedText),
       selectionSnapshot,
       surroundingContext: buildContext({
         scopeType,
@@ -540,77 +647,86 @@ export default function AISidebar({
     streamAbortRef.current = controller;
     appendThreadEntries([localUserEntry]);
 
-    const response = await apiFetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    try {
+      const response = await apiFetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
 
-    const contentType = response.headers?.get?.('content-type') || '';
-    if (!response.ok || !response.body || !contentType.includes('text/event-stream')) {
-      let errorData = null;
-      try {
-        errorData = await response.json();
-      } catch {
-        errorData = null;
-      }
-      throw new Error(getErrorMessage(errorData, `HTTP ${response.status}`));
-    }
-
-    await consumeSseStream(response, async ({ event, data }) => {
-      if (!isMountedRef.current) {
-        return;
+      const contentType = response.headers?.get?.('content-type') || '';
+      if (!response.ok || !response.body || !contentType.includes('text/event-stream')) {
+        let errorData = null;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = null;
+        }
+        throw new Error(getErrorMessage(errorData, `HTTP ${response.status}`));
       }
 
-      if (event === 'meta') {
-        currentInteractionIdRef.current = data.interaction_id;
-        selectedInteractionId = data.interaction_id;
-        appendThreadEntries([
-          {
-            ...assistantSeed,
-            entry_id: localAssistantId,
-            interaction_id: data.interaction_id,
+      await consumeSseStream(response, async ({ event, data }) => {
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        if (event === 'meta') {
+          currentInteractionIdRef.current = data.interaction_id;
+          selectedInteractionId = data.interaction_id;
+          appendThreadEntries([
+            {
+              ...assistantSeed,
+              entry_id: localAssistantId,
+              interaction_id: data.interaction_id,
+              status: 'processing',
+            },
+          ]);
+          return;
+        }
+
+        if (event === 'chunk') {
+          updateThreadEntry(localAssistantId, (entry) => ({
+            ...entry,
+            content: data.output ?? entry.content,
             status: 'processing',
-          },
-        ]);
-        return;
-      }
+          }));
+          return;
+        }
 
-      if (event === 'chunk') {
-        updateThreadEntry(localAssistantId, (entry) => ({
-          ...entry,
-          content: data.output ?? entry.content,
-          status: 'processing',
-        }));
-        return;
-      }
+        if (event === 'complete') {
+          selectedInteractionId = data.interaction_id;
+          updateThreadEntry(localAssistantId, buildThreadEntryFromDetail(data));
+          setStatusMessage(completionStatusMessage);
+          return;
+        }
 
-      if (event === 'complete') {
-        selectedInteractionId = data.interaction_id;
-        updateThreadEntry(localAssistantId, buildThreadEntryFromDetail(data));
-        setStatusMessage(completionStatusMessage);
-        return;
-      }
+        if (event === 'cancelled') {
+          updateThreadEntry(localAssistantId, (entry) => ({
+            ...entry,
+            status: 'failed',
+          }));
+          const abortError = new Error('AI generation canceled.');
+          abortError.name = 'AbortError';
+          throw abortError;
+        }
 
-      if (event === 'cancelled') {
-        updateThreadEntry(localAssistantId, { status: 'failed' });
-        const abortError = new Error('AI generation canceled.');
-        abortError.name = 'AbortError';
-        throw abortError;
+        if (event === 'error') {
+          updateThreadEntry(localAssistantId, (entry) => ({
+            ...entry,
+            status: 'failed',
+          }));
+          throw new Error(data.message || 'AI generation failed.');
+        }
+      });
+    } finally {
+      if (selectedInteractionId) {
+        await wait(0);
+        void loadThread({ silent: true });
+        void loadHistory({ selectedInteractionId, silent: true });
       }
-
-      if (event === 'error') {
-        throw new Error(data.message || 'AI generation failed.');
-      }
-    });
-
-    if (selectedInteractionId) {
-      await wait(0);
-      void loadThread({ silent: true });
-      void loadHistory({ selectedInteractionId, silent: true });
     }
   }
 
@@ -641,7 +757,7 @@ export default function AISidebar({
         source_revision: preparedRequest.prepared.revision,
         content: composerMessage.trim(),
         selected_range: preparedRequest.selectedRange,
-        selected_text_snapshot: preparedRequest.selectedText,
+        selected_text_snapshot: preparedRequest.selectedTextSnapshot ?? null,
         surrounding_context: preparedRequest.surroundingContext,
         reply_to_interaction_id: null,
         outcome: null,
@@ -655,7 +771,7 @@ export default function AISidebar({
           mode: 'chat',
           message: composerMessage.trim(),
           selected_range: preparedRequest.selectedRange,
-          selected_text_snapshot: preparedRequest.selectedText,
+          selected_text_snapshot: preparedRequest.selectedTextSnapshot,
           surrounding_context: preparedRequest.surroundingContext,
           base_revision: preparedRequest.prepared.revision,
         },
@@ -670,7 +786,7 @@ export default function AISidebar({
           source_revision: preparedRequest.prepared.revision,
           content: '',
           selected_range: preparedRequest.selectedRange,
-          selected_text_snapshot: preparedRequest.selectedText,
+          selected_text_snapshot: preparedRequest.selectedTextSnapshot ?? null,
           surrounding_context: preparedRequest.surroundingContext,
           reply_to_interaction_id: null,
           outcome: null,
@@ -727,7 +843,7 @@ export default function AISidebar({
         source_revision: preparedRequest.prepared.revision,
         content: composerMessage.trim(),
         selected_range: preparedRequest.selectedRange,
-        selected_text_snapshot: preparedRequest.selectedText,
+        selected_text_snapshot: preparedRequest.selectedTextSnapshot ?? null,
         surrounding_context: preparedRequest.surroundingContext,
         reply_to_interaction_id: null,
         outcome: null,
@@ -741,7 +857,7 @@ export default function AISidebar({
           mode: 'suggest_edit',
           message: composerMessage.trim(),
           selected_range: preparedRequest.selectedRange,
-          selected_text_snapshot: preparedRequest.selectedText,
+          selected_text_snapshot: preparedRequest.selectedTextSnapshot,
           surrounding_context: preparedRequest.surroundingContext,
           base_revision: preparedRequest.prepared.revision,
         },
@@ -756,7 +872,7 @@ export default function AISidebar({
           source_revision: preparedRequest.prepared.revision,
           content: '',
           selected_range: preparedRequest.selectedRange,
-          selected_text_snapshot: preparedRequest.selectedText,
+          selected_text_snapshot: preparedRequest.selectedTextSnapshot ?? null,
           surrounding_context: preparedRequest.surroundingContext,
           reply_to_interaction_id: null,
           outcome: null,
@@ -818,7 +934,7 @@ export default function AISidebar({
         source_revision: preparedRequest.prepared.revision,
         content: instruction,
         selected_range: preparedRequest.selectedRange,
-        selected_text_snapshot: preparedRequest.selectedText,
+        selected_text_snapshot: preparedRequest.selectedTextSnapshot ?? null,
         surrounding_context: preparedRequest.surroundingContext,
         reply_to_interaction_id: null,
         outcome: null,
@@ -832,7 +948,7 @@ export default function AISidebar({
           feature_type: featureType,
           scope_type: preparedRequest.scopeType,
           selected_range: preparedRequest.selectedRange,
-          selected_text_snapshot: preparedRequest.selectedText,
+          selected_text_snapshot: preparedRequest.selectedTextSnapshot,
           surrounding_context: preparedRequest.surroundingContext,
           user_instruction: composerMessage.trim() || undefined,
           base_revision: preparedRequest.prepared.revision,
@@ -849,7 +965,7 @@ export default function AISidebar({
           source_revision: preparedRequest.prepared.revision,
           content: '',
           selected_range: preparedRequest.selectedRange,
-          selected_text_snapshot: preparedRequest.selectedText,
+          selected_text_snapshot: preparedRequest.selectedTextSnapshot ?? null,
           surrounding_context: preparedRequest.surroundingContext,
           reply_to_interaction_id: null,
           outcome: null,
@@ -908,6 +1024,90 @@ export default function AISidebar({
         setIsCancelling(false);
       }
     }
+  }
+
+  async function handleClearChat() {
+    if (!documentId || !hasClearableChat || isBusy) {
+      return;
+    }
+
+    setErrorMessage('');
+    setStatusMessage('');
+    setIsClearing(true);
+
+    try {
+      await apiJSON(`/documents/${documentId}/ai/chat/thread`, {
+        method: 'DELETE',
+      });
+      if (!isMountedRef.current) {
+        return;
+      }
+      setThreadEntries([]);
+      setHistoryItems([]);
+      setSelectedHistoryId('');
+      setSelectedHistoryDetail(null);
+      setEditingEntryId('');
+      setEditedContent('');
+      setStatusMessage('AI chat cleared.');
+    } catch (error) {
+      if (isMountedRef.current) {
+        setErrorMessage(error.message || 'Failed to clear the AI chat.');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsClearing(false);
+      }
+    }
+  }
+
+  function handleComposerSubmit() {
+    if (isRunning) {
+      void handleCancelRun();
+      return;
+    }
+
+    void handleSend();
+  }
+
+  function handleComposerKeyDown(event) {
+    if (event.key !== 'Enter' || event.shiftKey) {
+      return;
+    }
+
+    if (isRunning || !composerMessage.trim() || isComposerDisabled) {
+      return;
+    }
+
+    event.preventDefault();
+    void handleSend();
+  }
+
+  function handleResizeStart(event) {
+    if (!isDesktopViewport || !isOpen) {
+      return;
+    }
+    event.preventDefault();
+    resizeStateRef.current = {
+      startX: event.clientX,
+      startWidth: sidebarWidth,
+    };
+    setIsResizing(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function handleResizeKeyDown(event) {
+    if (!isDesktopViewport || !isOpen) {
+      return;
+    }
+
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+      return;
+    }
+
+    event.preventDefault();
+    const delta = event.key === 'ArrowLeft' ? 24 : -24;
+    setSidebarWidth((current) => clampSidebarWidth(current + delta, window.innerWidth));
   }
 
   function isEntryStale(entry) {
@@ -1100,8 +1300,7 @@ export default function AISidebar({
   function renderSuggestionCard(entry) {
     const isEditing = editingEntryId === entry.entry_id;
     const entryStale = isEntryStale(entry);
-    const sourceLabel = entry.scope_type === 'selection' ? 'Selected text' : 'Document scope';
-
+    const hasPartialOutput = entry.status === 'failed' && Boolean(entry.content?.trim());
     return (
       <article key={entry.entry_id} className="ai-thread-card ai-thread-card-suggestion">
         <div className="ai-thread-card-top">
@@ -1115,15 +1314,6 @@ export default function AISidebar({
             {formatHistoryStatus(entry.status)}
           </span>
         </div>
-
-        {(entry.selected_text_snapshot || entry.scope_type === 'document') && (
-          <div className="ai-selection-preview ai-selection-preview-result">
-            <span className="ai-selection-label">{sourceLabel}</span>
-            <p className="ai-selection-text">
-              {truncateText(entry.selected_text_snapshot || documentText)}
-            </p>
-          </div>
-        )}
 
         {isEditing ? (
           <label className="field-label" htmlFor={`ai-edit-${entry.entry_id}`}>
@@ -1143,6 +1333,12 @@ export default function AISidebar({
         {entryStale && (
           <div className="ai-sidebar-notice ai-sidebar-notice-warning">
             This suggestion is stale because the document changed after it was generated.
+          </div>
+        )}
+
+        {hasPartialOutput && (
+          <div className="ai-sidebar-notice ai-sidebar-notice-warning">
+            Partial output was kept after the AI stream was interrupted.
           </div>
         )}
 
@@ -1216,11 +1412,18 @@ export default function AISidebar({
   }
 
   function renderThreadEntry(entry) {
+    const hasPartialOutput = entry.status === 'failed' && Boolean(entry.content?.trim());
     if (entry.message_role === 'user') {
       return (
         <article key={entry.entry_id} className="ai-thread-card ai-thread-card-user">
           <p className="ai-thread-meta">{formatTimestamp(entry.created_at)}</p>
           <p className="ai-thread-user-text">{entry.content}</p>
+          {entry.scope_type === 'selection' && entry.selected_text_snapshot && (
+            <div className="ai-selection-preview ai-selection-preview-user">
+              <span className="ai-selection-label">Selected context</span>
+              <p className="ai-selection-text">{truncateText(entry.selected_text_snapshot)}</p>
+            </div>
+          )}
         </article>
       );
     }
@@ -1239,34 +1442,55 @@ export default function AISidebar({
             {formatHistoryStatus(entry.status)}
           </span>
         </div>
-        {entry.selected_text_snapshot && (
-          <div className="ai-selection-preview ai-selection-preview-result">
-            <span className="ai-selection-label">Context</span>
-            <p className="ai-selection-text">{truncateText(entry.selected_text_snapshot)}</p>
+        <div className="ai-result-output">{entry.content || 'AI is still generating...'}</div>
+        {hasPartialOutput && (
+          <div className="ai-sidebar-notice ai-sidebar-notice-warning">
+            Partial output was kept after the AI stream was interrupted.
           </div>
         )}
-        <div className="ai-result-output">{entry.content || 'AI is still generating...'}</div>
       </article>
     );
   }
 
   return (
     <aside
-      className={`ai-sidebar ${isOpen ? 'ai-sidebar-open' : 'ai-sidebar-closed'}`}
+      className={`ai-sidebar ${isOpen ? 'ai-sidebar-open' : 'ai-sidebar-closed'} ${isResizing ? 'ai-sidebar-resizing' : ''}`}
       aria-label="AI Assistant"
       aria-hidden={!isOpen}
       data-state={isOpen ? 'open' : 'closed'}
+      style={sidebarInlineStyle}
     >
+      <div
+        className="ai-sidebar-resize-handle"
+        role="separator"
+        aria-label="Resize AI sidebar"
+        aria-orientation="vertical"
+        tabIndex={isDesktopViewport && isOpen ? 0 : -1}
+        onPointerDown={handleResizeStart}
+        onKeyDown={handleResizeKeyDown}
+      />
       <div className="ai-sidebar-header">
         <h2 className="ai-sidebar-title">AI Assistant</h2>
-        <button
-          type="button"
-          className="btn btn-ghost ai-sidebar-close"
-          onClick={onClose}
-          aria-label="Close AI sidebar"
-        >
-          Close
-        </button>
+        <div className="ai-sidebar-header-actions">
+          <button
+            type="button"
+            className="btn btn-ghost ai-sidebar-icon-btn"
+            onClick={() => void handleClearChat()}
+            aria-label="Clear AI chat"
+            title="Clear AI chat"
+            disabled={!hasClearableChat || isBusy || threadLoading}
+          >
+            🗑
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost ai-sidebar-close"
+            onClick={onClose}
+            aria-label="Close AI sidebar"
+          >
+            Close
+          </button>
+        </div>
       </div>
 
       <div className="ai-sidebar-tabs" role="tablist" aria-label="AI sidebar panels">
@@ -1300,70 +1524,75 @@ export default function AISidebar({
             )}
 
             <div className="ai-chat-toolbar">
-              <div className="ai-chat-actions" aria-label="AI quick actions">
-                {QUICK_ACTIONS.map((action) => (
+              <div className="ai-chat-toolbar-row">
+                <div className="ai-toolbar-dropdown" ref={actionsDropdownRef}>
                   <button
-                    key={action.value}
                     type="button"
-                    className="btn btn-secondary ai-quick-action"
-                    onClick={() => void handleQuickAction(action.value)}
+                    className="btn btn-secondary ai-toolbar-trigger"
+                    onClick={() => {
+                      setIsActionsOpen((current) => !current);
+                    }}
+                    aria-expanded={isActionsOpen}
+                    aria-haspopup="menu"
                     disabled={!canUseAI || isBusy}
                   >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="ai-chat-context">
-                <button
-                  type="button"
-                  className="ai-context-trigger"
-                  onClick={() => setIsContextExpanded((current) => !current)}
-                  aria-expanded={isContextExpanded}
-                  disabled={isBusy}
-                >
-                  <span className="ai-context-trigger-copy">
-                    <span className="ai-selection-label">Context</span>
-                    <span className="ai-context-value">
-                      {attachedSelection?.text?.trim()
-                        ? truncateText(attachedSelection.text, 72)
-                        : 'Whole document'}
+                    <span>Shortcuts</span>
+                    <span className="ai-toolbar-chevron" aria-hidden="true">
+                      {isActionsOpen ? '▾' : '▸'}
                     </span>
-                  </span>
-                  <span className="ai-context-chevron" aria-hidden="true">
-                    {isContextExpanded ? '▾' : '▸'}
-                  </span>
-                </button>
+                  </button>
 
-                {isContextExpanded && (
-                  <div className="ai-selection-preview">
+                  {isActionsOpen ? (
+                    <div className="ai-toolbar-menu" role="menu" aria-label="AI quick actions">
+                      {QUICK_ACTIONS.map((action) => (
+                        <button
+                          key={action.value}
+                          type="button"
+                          role="menuitem"
+                          className="btn btn-secondary ai-toolbar-menu-item"
+                          onClick={() => {
+                            setIsActionsOpen(false);
+                            void handleQuickAction(action.value);
+                          }}
+                          disabled={!canUseAI || isBusy}
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="ai-chat-context">
+                  <div className="ai-context-inline">
+                    <div className="ai-context-trigger-copy">
+                      <span className="ai-selection-label">Context</span>
+                      <span className="ai-context-value">
+                        {attachedSelection?.text?.trim()
+                          ? truncateText(attachedSelection.text, 48)
+                          : 'Whole document'}
+                      </span>
+                    </div>
+
                     {attachedSelection?.text?.trim() ? (
-                      <>
-                        <p className="ai-selection-text">{truncateText(attachedSelection.text)}</p>
-                        <div className="ai-chat-context-footer">
-                          <p className="ai-thread-meta">
-                            Range {attachedSelection.from}–{attachedSelection.to}
-                          </p>
-                          <button
-                            type="button"
-                            className="btn btn-ghost ai-context-clear"
-                            onClick={() => {
-                              setAttachedSelection(null);
-                              setIsContextExpanded(false);
-                            }}
-                            disabled={isBusy}
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="ai-selection-text">
-                        AI will use the current document as context.
-                      </p>
-                    )}
+                      <div className="ai-chat-context-footer">
+                        <p className="ai-thread-meta">
+                          Range {attachedSelection.from}–{attachedSelection.to}
+                        </p>
+                        <button
+                          type="button"
+                          className="btn btn-ghost ai-context-clear"
+                          onClick={() => {
+                            setAttachedSelection(null);
+                          }}
+                          disabled={isBusy}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                )}
+                </div>
               </div>
             </div>
 
@@ -1388,7 +1617,7 @@ export default function AISidebar({
                 ) : threadEntries.length === 0 ? (
                   <div className="ai-result-empty">
                     Ask a question, select text for focused context, or use one of the
-                    shortcut actions above.
+                    shortcut actions in the menu above.
                   </div>
                 ) : (
                   threadEntries.map(renderThreadEntry)
@@ -1397,45 +1626,34 @@ export default function AISidebar({
             </div>
 
             <div className="ai-chat-composer">
-              <label className="field-label" htmlFor="ai-chat-message">
-                Message
-                <textarea
-                  id="ai-chat-message"
-                  className="field-input ai-textarea"
-                  value={composerMessage}
-                  onChange={(event) => setComposerMessage(event.target.value)}
-                  placeholder="Ask AI about the document or the selected text..."
-                  disabled={!canUseAI || isBusy}
-                />
-              </label>
+              <textarea
+                id="ai-chat-message"
+                aria-label="Message"
+                className="field-input ai-textarea"
+                value={composerMessage}
+                onChange={(event) => setComposerMessage(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
+                placeholder="Ask AI about the document or the selected text..."
+                disabled={!canUseAI || isBusy}
+              />
 
-              <div className="ai-run-actions">
+              <div className="ai-run-actions ai-run-actions-single">
                 <button
                   type="button"
-                  className="btn btn-primary btn-full"
-                  onClick={() => void handleSend()}
-                  disabled={!canUseAI || isBusy || !composerMessage.trim()}
+                  className={`ai-composer-submit ${isRunning ? 'ai-composer-submit-running' : ''}`}
+                  onClick={handleComposerSubmit}
+                  disabled={
+                    isComposerDisabled
+                    || (!isRunning && !composerMessage.trim())
+                    || (isRunning && isCancelling)
+                  }
+                  aria-label={isRunning ? 'Stop AI generation' : 'Send message'}
+                  title={isRunning ? 'Stop AI generation' : 'Send message'}
                 >
-                  Send
+                  <span className="ai-composer-submit-icon" aria-hidden="true">
+                    {isRunning ? '■' : '↑'}
+                  </span>
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-full"
-                  onClick={() => void handleSuggestEdit()}
-                  disabled={!canUseAI || isBusy || !composerMessage.trim()}
-                >
-                  Suggest edit
-                </button>
-                {isRunning && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-full"
-                    onClick={() => void handleCancelRun()}
-                    disabled={isCancelling}
-                  >
-                    {isCancelling ? 'Cancelling...' : 'Cancel'}
-                  </button>
-                )}
               </div>
             </div>
           </div>

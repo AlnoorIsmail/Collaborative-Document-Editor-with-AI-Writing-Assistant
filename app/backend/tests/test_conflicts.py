@@ -236,4 +236,5 @@ def test_conflict_ai_merge_streams_a_reviewable_suggestion() -> None:
 
     assert response.status_code == 202
     assert "event: meta" in response.text
+    assert "event: chunk" in response.text
     assert "event: complete" in response.text

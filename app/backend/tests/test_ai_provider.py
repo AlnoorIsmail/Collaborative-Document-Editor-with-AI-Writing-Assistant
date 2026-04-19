@@ -1,4 +1,10 @@
-from app.backend.integrations.ai_provider import StubAIProviderClient
+import asyncio
+
+from app.backend.integrations.ai_provider import (
+    GeneratedSuggestionChunk,
+    GeneratedSuggestionComplete,
+    StubAIProviderClient,
+)
 
 
 def _prompt(
@@ -136,3 +142,31 @@ def test_stub_grammar_fix_polishes_text_without_changing_meaning() -> None:
     assert result.generated_output == (
         "I cannot join the meeting today please send me the notes after."
     )
+
+
+def test_stub_stream_suggestion_yields_incremental_chunks_before_completion() -> None:
+    provider = StubAIProviderClient()
+
+    async def collect_events():
+        return [
+            event
+            async for event in provider.stream_suggestion(
+                feature_type="summarize",
+                prompt=_prompt(
+                    feature_type="summarize",
+                    document_text=(
+                        "This is a longer document paragraph that should be "
+                        "returned in more than one streamed chunk so the SSE path "
+                        "can render progressive output clearly."
+                    ),
+                ),
+            )
+        ]
+
+    events = asyncio.run(collect_events())
+
+    assert len(events) >= 2
+    assert any(isinstance(event, GeneratedSuggestionChunk) for event in events[:-1])
+    assert isinstance(events[-1], GeneratedSuggestionComplete)
+    chunks = [event.delta for event in events if isinstance(event, GeneratedSuggestionChunk)]
+    assert "".join(chunks)

@@ -1,15 +1,18 @@
 """Service layer for suggestion-based AI endpoints."""
 
+from dataclasses import dataclass
 from http import HTTPStatus
 from threading import Lock
 
 from sqlalchemy.exc import IntegrityError
 
-from app.backend.core.contracts import parse_resource_id
+from app.backend.core.contracts import parse_resource_id, utc_now
 from app.backend.core.errors import ApiError, AppError
 from app.backend.core.security import AuthenticatedPrincipal
 from app.backend.integrations.ai_provider import (
     AIProviderClient,
+    GeneratedSuggestionComplete,
+    GeneratedSuggestionUsage,
     AIProviderTimeoutError,
     AIProviderUnavailableError,
 )
@@ -21,6 +24,7 @@ from app.backend.repositories.version_repository import VersionRepository
 from app.backend.schemas.ai import (
     AIChatMessageStreamRequest,
     AIChatMode,
+    AIChatThreadClearResponse,
     AIChatThreadEntryResponse,
     AIEntryKind,
     AIInteractionAcceptedResponse,
@@ -47,10 +51,22 @@ from app.backend.services.ai.prompt_builder import PromptTemplateRenderer
 AI_INTERACTION_QUOTA_PER_DOCUMENT_USER = 25
 
 
-class AIService:
-    _canceled_interactions: set[str] = set()
-    _cancel_lock = Lock()
+@dataclass(frozen=True)
+class AIStreamHandle:
+    interaction_id: str
+    stream: object
 
+
+@dataclass(frozen=True)
+class PreparedAIInteraction:
+    document_id: int
+    user_id: int
+    conversation_id: str
+    reply_to_interaction_id: str | None
+    prompt: str
+
+
+class AIService:
     def __init__(
         self,
         *,
@@ -70,6 +86,8 @@ class AIService:
             document_repository,
             permission_repository,
         )
+        self._canceled_interactions: set[str] = set()
+        self._cancel_lock = Lock()
 
     def create_interaction(
         self,
@@ -83,6 +101,10 @@ class AIService:
             principal=principal,
             payload=payload,
             entry_kind=AIEntryKind.SUGGESTION.value,
+        )
+        self._repository.complete_interaction(
+            interaction_id=record.interaction_id,
+            user_id=self._principal_user_id(principal),
         )
         return AIInteractionAcceptedResponse(
             interaction_id=record.interaction_id,
@@ -98,20 +120,41 @@ class AIService:
         document_id: str,
         principal: AuthenticatedPrincipal,
         payload: AIInteractionCreateRequest,
-    ) -> tuple[AIInteractionAcceptedResponse, str]:
-        record = self._build_interaction_record(
+    ) -> tuple[AIInteractionAcceptedResponse, AIStreamHandle]:
+        prepared = self._prepare_interaction(
             document_id=document_id,
             principal=principal,
             payload=payload,
             entry_kind=AIEntryKind.SUGGESTION.value,
         )
+        record = self._repository.create_interaction(
+            document_id=prepared.document_id,
+            user_id=prepared.user_id,
+            conversation_id=prepared.conversation_id,
+            entry_kind=AIEntryKind.SUGGESTION.value,
+            message_role=AIMessageRole.ASSISTANT.value,
+            reply_to_interaction_id=prepared.reply_to_interaction_id,
+            feature_type=payload.feature_type,
+            scope_type=payload.scope_type,
+            base_revision=payload.base_revision,
+            rendered_prompt=prepared.prompt,
+            selected_range_start=(
+                None if payload.selected_range is None else payload.selected_range.start
+            ),
+            selected_range_end=(
+                None if payload.selected_range is None else payload.selected_range.end
+            ),
+            selected_text_snapshot=payload.selected_text_snapshot,
+            surrounding_context=payload.surrounding_context,
+            user_instruction=payload.user_instruction,
+            parameters=payload.parameters,
+            generated_output="",
+            model_name="",
+            usage=None,
+        )
         user_id = self._principal_user_id(principal)
         processing_record = self._repository.mark_interaction_processing(
             interaction_id=record.interaction_id,
-            user_id=user_id,
-        )
-        suggestion = self._repository.get_prepared_suggestion(
-            interaction_id=processing_record.interaction_id,
             user_id=user_id,
         )
         return (
@@ -122,7 +165,13 @@ class AIService:
                 base_revision=processing_record.base_revision,
                 created_at=processing_record.created_at,
             ),
-            suggestion.generated_output,
+            AIStreamHandle(
+                interaction_id=processing_record.interaction_id,
+                stream=self._provider.stream_suggestion(
+                    feature_type=payload.feature_type,
+                    prompt=prepared.prompt,
+                ),
+            ),
         )
 
     def complete_stream_interaction(
@@ -130,9 +179,19 @@ class AIService:
         *,
         interaction_id: str,
         principal: AuthenticatedPrincipal,
+        generated_output: str,
+        model_name: str | None = None,
+        usage: GeneratedSuggestionUsage | None = None,
     ) -> AIInteractionDetailResponse:
         user_id = self._principal_user_id(principal)
         self.clear_stream_cancellation(interaction_id=interaction_id)
+        self._repository.update_interaction_output(
+            interaction_id=interaction_id,
+            user_id=user_id,
+            generated_output=generated_output,
+            model_name=model_name,
+            usage=self._to_usage_record(usage),
+        )
         self._repository.complete_interaction(
             interaction_id=interaction_id,
             user_id=user_id,
@@ -144,9 +203,16 @@ class AIService:
         *,
         interaction_id: str,
         principal: AuthenticatedPrincipal,
+        generated_output: str | None = None,
     ) -> AIInteractionCancelResponse:
         user_id = self._principal_user_id(principal)
         self.clear_stream_cancellation(interaction_id=interaction_id)
+        if generated_output is not None:
+            self._repository.update_interaction_output(
+                interaction_id=interaction_id,
+                user_id=user_id,
+                generated_output=generated_output,
+            )
         failed = self._repository.fail_interaction(
             interaction_id=interaction_id,
             user_id=user_id,
@@ -182,6 +248,23 @@ class AIService:
     def clear_stream_cancellation(self, *, interaction_id: str) -> None:
         with self._cancel_lock:
             self._canceled_interactions.discard(interaction_id)
+
+    def update_stream_interaction_output(
+        self,
+        *,
+        interaction_id: str,
+        principal: AuthenticatedPrincipal,
+        generated_output: str,
+        model_name: str | None = None,
+        usage: GeneratedSuggestionUsage | None = None,
+    ) -> None:
+        self._repository.update_interaction_output(
+            interaction_id=interaction_id,
+            user_id=self._principal_user_id(principal),
+            generated_output=generated_output,
+            model_name=model_name,
+            usage=self._to_usage_record(usage),
+        )
 
     def list_interactions(
         self,
@@ -236,13 +319,44 @@ class AIService:
         )
         return [self._to_thread_entry_response(record, access.current_revision) for record in records]
 
+    def clear_chat_thread(
+        self,
+        *,
+        document_id: str,
+        principal: AuthenticatedPrincipal,
+    ) -> AIChatThreadClearResponse:
+        user_id = self._principal_user_id(principal)
+        access = self._access_service.require_read_access(
+            document_id=document_id,
+            user_id=user_id,
+        )
+        interaction_ids = [
+            record.interaction_id
+            for record in self._repository.list_interactions(
+                document_id=access.document.id,
+                user_id=user_id,
+            )
+        ]
+        deleted_entry_count = self._repository.clear_thread(
+            document_id=access.document.id,
+            user_id=user_id,
+        )
+        with self._cancel_lock:
+            for interaction_id in interaction_ids:
+                self._canceled_interactions.discard(interaction_id)
+        return AIChatThreadClearResponse(
+            document_id=access.document.id,
+            deleted_entry_count=deleted_entry_count,
+            cleared_at=utc_now(),
+        )
+
     def start_stream_chat_message(
         self,
         *,
         document_id: str,
         principal: AuthenticatedPrincipal,
         payload: AIChatMessageStreamRequest,
-    ) -> tuple[AIInteractionAcceptedResponse, str]:
+    ) -> tuple[AIInteractionAcceptedResponse, AIStreamHandle]:
         feature_type = (
             "chat_assistant"
             if payload.mode == AIChatMode.CHAT
@@ -264,19 +378,44 @@ class AIService:
             if payload.mode == AIChatMode.CHAT
             else AIEntryKind.SUGGESTION.value
         )
-        record = self._build_interaction_record(
+        prepared = self._prepare_interaction(
             document_id=document_id,
             principal=principal,
             payload=interaction_payload,
             entry_kind=entry_kind,
         )
+        record = self._repository.create_interaction(
+            document_id=prepared.document_id,
+            user_id=prepared.user_id,
+            conversation_id=prepared.conversation_id,
+            entry_kind=entry_kind,
+            message_role=AIMessageRole.ASSISTANT.value,
+            reply_to_interaction_id=prepared.reply_to_interaction_id,
+            feature_type=interaction_payload.feature_type,
+            scope_type=interaction_payload.scope_type,
+            base_revision=interaction_payload.base_revision,
+            rendered_prompt=prepared.prompt,
+            selected_range_start=(
+                None
+                if interaction_payload.selected_range is None
+                else interaction_payload.selected_range.start
+            ),
+            selected_range_end=(
+                None
+                if interaction_payload.selected_range is None
+                else interaction_payload.selected_range.end
+            ),
+            selected_text_snapshot=interaction_payload.selected_text_snapshot,
+            surrounding_context=interaction_payload.surrounding_context,
+            user_instruction=interaction_payload.user_instruction,
+            parameters=interaction_payload.parameters,
+            generated_output="",
+            model_name="",
+            usage=None,
+        )
         user_id = self._principal_user_id(principal)
         processing_record = self._repository.mark_interaction_processing(
             interaction_id=record.interaction_id,
-            user_id=user_id,
-        )
-        suggestion = self._repository.get_prepared_suggestion(
-            interaction_id=processing_record.interaction_id,
             user_id=user_id,
         )
         return (
@@ -287,7 +426,13 @@ class AIService:
                 base_revision=processing_record.base_revision,
                 created_at=processing_record.created_at,
             ),
-            suggestion.generated_output,
+            AIStreamHandle(
+                interaction_id=processing_record.interaction_id,
+                stream=self._provider.stream_suggestion(
+                    feature_type=interaction_payload.feature_type,
+                    prompt=prepared.prompt,
+                ),
+            ),
         )
 
     def get_interaction(
@@ -587,6 +732,67 @@ class AIService:
         payload: AIInteractionCreateRequest,
         entry_kind: str,
     ):
+        prepared = self._prepare_interaction(
+            document_id=document_id,
+            principal=principal,
+            payload=payload,
+            entry_kind=entry_kind,
+        )
+
+        try:
+            suggestion = self._provider.generate_suggestion(
+                feature_type=payload.feature_type,
+                prompt=prepared.prompt,
+            )
+        except AIProviderTimeoutError as exc:
+            raise AppError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                error_code=ErrorCode.PROVIDER_TIMEOUT,
+                message="The AI provider timed out. Please retry.",
+                retryable=True,
+            ) from exc
+        except AIProviderUnavailableError as exc:
+            raise AppError(
+                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
+                message="The AI provider is temporarily unavailable. Please retry.",
+                retryable=True,
+            ) from exc
+
+        return self._repository.create_interaction(
+            document_id=prepared.document_id,
+            user_id=prepared.user_id,
+            conversation_id=prepared.conversation_id,
+            entry_kind=entry_kind,
+            message_role=AIMessageRole.ASSISTANT.value,
+            reply_to_interaction_id=prepared.reply_to_interaction_id,
+            feature_type=payload.feature_type,
+            scope_type=payload.scope_type,
+            base_revision=payload.base_revision,
+            rendered_prompt=prepared.prompt,
+            selected_range_start=(
+                None if payload.selected_range is None else payload.selected_range.start
+            ),
+            selected_range_end=(
+                None if payload.selected_range is None else payload.selected_range.end
+            ),
+            selected_text_snapshot=payload.selected_text_snapshot,
+            surrounding_context=payload.surrounding_context,
+            user_instruction=payload.user_instruction,
+            parameters=payload.parameters,
+            generated_output=suggestion.generated_output,
+            model_name=suggestion.model_name,
+            usage=self._to_usage_record(suggestion.usage),
+        )
+
+    def _prepare_interaction(
+        self,
+        *,
+        document_id: str,
+        principal: AuthenticatedPrincipal,
+        payload: AIInteractionCreateRequest,
+        entry_kind: str,
+    ) -> PreparedAIInteraction:
         user_id = self._principal_user_id(principal)
         access = self._access_service.require_ai_access(
             document_id=document_id,
@@ -643,52 +849,13 @@ class AIService:
                 ),
             }
         )
-
-        try:
-            prompt = self._prompt_renderer.render(enriched_payload)
-            suggestion = self._provider.generate_suggestion(
-                feature_type=payload.feature_type,
-                prompt=prompt,
-            )
-        except AIProviderTimeoutError as exc:
-            raise AppError(
-                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-                error_code=ErrorCode.PROVIDER_TIMEOUT,
-                message="The AI provider timed out. Please retry.",
-                retryable=True,
-            ) from exc
-        except AIProviderUnavailableError as exc:
-            raise AppError(
-                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-                error_code=ErrorCode.PROVIDER_UNAVAILABLE,
-                message="The AI provider is temporarily unavailable. Please retry.",
-                retryable=True,
-            ) from exc
-
-        return self._repository.create_interaction(
+        prompt = self._prompt_renderer.render(enriched_payload)
+        return PreparedAIInteraction(
             document_id=access.document.id,
             user_id=user_id,
             conversation_id=conversation_id,
-            entry_kind=entry_kind,
-            message_role=AIMessageRole.ASSISTANT.value,
             reply_to_interaction_id=reply_to_interaction_id,
-            feature_type=payload.feature_type,
-            scope_type=payload.scope_type,
-            base_revision=payload.base_revision,
-            rendered_prompt=prompt,
-            selected_range_start=(
-                None if payload.selected_range is None else payload.selected_range.start
-            ),
-            selected_range_end=(
-                None if payload.selected_range is None else payload.selected_range.end
-            ),
-            selected_text_snapshot=payload.selected_text_snapshot,
-            surrounding_context=payload.surrounding_context,
-            user_instruction=payload.user_instruction,
-            parameters=payload.parameters,
-            generated_output=suggestion.generated_output,
-            model_name=suggestion.model_name,
-            usage=self._to_usage_record(suggestion.usage),
+            prompt=prompt,
         )
 
     def _to_thread_entry_response(

@@ -154,4 +154,44 @@ describe('TiptapEditor', () => {
       expect(container.querySelector('.editor-remote-selection')).toBeTruthy();
     });
   });
+
+  it('normalizes remote awareness positions to valid text selections', async () => {
+    const { container, rerender } = render(
+      <TiptapEditor
+        content="<p>Draft body</p>"
+        remoteAwareness={[
+          {
+            sessionId: 'sess-boundary',
+            from: 0,
+            to: 0,
+            color: '#2563eb',
+            label: 'Boundary user',
+          },
+        ]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.editor-remote-caret')).toBeTruthy();
+    });
+
+    rerender(
+      <TiptapEditor
+        content="<p>Draft body</p>"
+        remoteAwareness={[
+          {
+            sessionId: 'sess-range',
+            from: 0,
+            to: 999,
+            color: '#db2777',
+            label: 'Range user',
+          },
+        ]}
+      />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.editor-remote-selection')).toBeTruthy();
+    });
+  });
 });

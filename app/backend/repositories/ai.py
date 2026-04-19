@@ -83,6 +83,10 @@ class AIRepository(ABC):
         """List a per-document AI transcript for one user."""
 
     @abstractmethod
+    def clear_thread(self, *, document_id: int, user_id: int) -> int:
+        """Delete the persisted AI transcript and related interactions for one document/user."""
+
+    @abstractmethod
     def get_interaction(
         self, *, interaction_id: str, user_id: int
     ) -> AIInteractionRecord:
@@ -105,6 +109,18 @@ class AIRepository(ABC):
         self, *, interaction_id: str, user_id: int
     ) -> AIInteractionRecord:
         """Mark an AI interaction as actively streaming/processing."""
+
+    @abstractmethod
+    def update_interaction_output(
+        self,
+        *,
+        interaction_id: str,
+        user_id: int,
+        generated_output: str,
+        model_name: str | None = None,
+        usage: AIUsageRecord | None = None,
+    ) -> AIInteractionRecord:
+        """Persist incremental or final streamed output for an interaction."""
 
     @abstractmethod
     def complete_interaction(
@@ -309,7 +325,7 @@ class StubAIRepository(AIRepository):
                     else record.suggestion.usage.total_tokens
                 ),
             )
-            for record in self._complete_matching_interactions(
+            for record in self._matching_interactions(
                 document_id=document_id,
                 user_id=user_id,
             )
@@ -319,18 +335,34 @@ class StubAIRepository(AIRepository):
     def list_thread(
         self, *, document_id: int, user_id: int
     ) -> list[AIChatThreadEntryRecord]:
-        self._complete_matching_interactions(document_id=document_id, user_id=user_id)
         entry_ids = self._thread_entry_ids_by_document_user.get((document_id, user_id), [])
         return [
             self._thread_entries[entry_id]
             for entry_id in entry_ids
         ]
 
+    def clear_thread(self, *, document_id: int, user_id: int) -> int:
+        interaction_ids = self._matching_interaction_ids(document_id=document_id, user_id=user_id)
+        for interaction_id in interaction_ids:
+            record = self._interactions.pop(interaction_id, None)
+            self._prepared_suggestions.pop(interaction_id, None)
+            assistant_entry_id = self._assistant_thread_entry_by_interaction.pop(interaction_id, None)
+            if assistant_entry_id is not None:
+                self._thread_entries.pop(assistant_entry_id, None)
+            if record is not None and record.suggestion is not None:
+                self._suggestion_to_interaction.pop(record.suggestion.suggestion_id, None)
+
+        entry_ids = self._thread_entry_ids_by_document_user.pop((document_id, user_id), [])
+        for entry_id in entry_ids:
+            self._thread_entries.pop(entry_id, None)
+
+        return len(entry_ids)
+
     def get_interaction(
         self, *, interaction_id: str, user_id: int
     ) -> AIInteractionRecord:
         self._ensure_owned_interaction(interaction_id=interaction_id, user_id=user_id)
-        return self._complete_interaction(interaction_id)
+        return self._interactions[interaction_id]
 
     def get_interaction_for_suggestion(
         self, *, suggestion_id: str, user_id: int
@@ -356,6 +388,32 @@ class StubAIRepository(AIRepository):
             self._interactions[interaction_id] = record
             self._update_assistant_thread_entry(interaction_id, status="processing")
         return record
+
+    def update_interaction_output(
+        self,
+        *,
+        interaction_id: str,
+        user_id: int,
+        generated_output: str,
+        model_name: str | None = None,
+        usage: AIUsageRecord | None = None,
+    ) -> AIInteractionRecord:
+        self._ensure_owned_interaction(interaction_id=interaction_id, user_id=user_id)
+        suggestion = self._prepared_suggestions[interaction_id]
+        next_suggestion = replace(
+            suggestion,
+            generated_output=generated_output,
+            model_name=model_name if model_name is not None else suggestion.model_name,
+            usage=usage if usage is not None else suggestion.usage,
+        )
+        self._prepared_suggestions[interaction_id] = next_suggestion
+        self._update_assistant_thread_entry(
+            interaction_id,
+            status=self._interactions[interaction_id].status,
+            suggestion=next_suggestion,
+            content=generated_output,
+        )
+        return self._interactions[interaction_id]
 
     def complete_interaction(
         self, *, interaction_id: str, user_id: int
@@ -454,29 +512,31 @@ class StubAIRepository(AIRepository):
             new_revision=interaction.base_revision + 1,
         )
 
-    def _complete_matching_interactions(
+    def _matching_interactions(
         self,
         *,
         document_id: int,
         user_id: int,
     ) -> list[AIInteractionRecord]:
-        matching_ids = [
+        return [
+            self._interactions[interaction_id]
+            for interaction_id in self._matching_interaction_ids(
+                document_id=document_id,
+                user_id=user_id,
+            )
+        ]
+
+    def _matching_interaction_ids(
+        self,
+        *,
+        document_id: int,
+        user_id: int,
+    ) -> list[str]:
+        return [
             interaction_id
             for interaction_id, record in self._interactions.items()
             if record.document_id == document_id and record.user_id == user_id
         ]
-        return [
-            self._complete_interaction(interaction_id)
-            for interaction_id in matching_ids
-        ]
-
-    def _complete_interaction(self, interaction_id: str) -> AIInteractionRecord:
-        record = self._interactions[interaction_id]
-        if record.status == "pending":
-            return self._finalize_interaction(interaction_id)
-        if record.status in {"completed", "failed", "processing"}:
-            return record
-        return record
 
     def _finalize_interaction(self, interaction_id: str) -> AIInteractionRecord:
         record = self._interactions[interaction_id]
@@ -486,7 +546,7 @@ class StubAIRepository(AIRepository):
         completed = replace(
             record,
             status="completed",
-            completed_at=record.created_at + timedelta(seconds=2),
+            completed_at=utc_now(),
             suggestion=self._prepared_suggestions[interaction_id],
         )
         self._interactions[interaction_id] = completed
@@ -525,7 +585,7 @@ class StubAIRepository(AIRepository):
             )
 
         self._ensure_owned_interaction(interaction_id=interaction_id, user_id=user_id)
-        return self._complete_interaction(interaction_id)
+        return self._interactions[interaction_id]
 
     def _record_outcome(
         self,
@@ -573,6 +633,7 @@ class StubAIRepository(AIRepository):
         status: str,
         suggestion: AISuggestionRecord | None = None,
         outcome: str | None = None,
+        content: str | None = None,
     ) -> None:
         entry_id = self._assistant_thread_entry_by_interaction.get(interaction_id)
         if entry_id is None:
@@ -582,6 +643,7 @@ class StubAIRepository(AIRepository):
         self._thread_entries[entry_id] = replace(
             entry,
             status=status,
+            content=content if content is not None else entry.content,
             suggestion=next_suggestion,
             outcome=outcome if outcome is not None else entry.outcome,
         )

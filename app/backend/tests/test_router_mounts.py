@@ -21,7 +21,7 @@ EXPECTED_PATHS = {
     "/v1/documents/{documentId}/sessions": {"post"},
     "/v1/documents/{documentId}/ai/interactions": {"get", "post"},
     "/v1/documents/{documentId}/ai/interactions/stream": {"post"},
-    "/v1/documents/{documentId}/ai/chat/thread": {"get"},
+    "/v1/documents/{documentId}/ai/chat/thread": {"delete", "get"},
     "/v1/documents/{documentId}/ai/chat/messages/stream": {"post"},
     "/v1/ai/interactions/{interactionId}": {"get"},
     "/v1/ai/interactions/{interactionId}/cancel": {"post"},

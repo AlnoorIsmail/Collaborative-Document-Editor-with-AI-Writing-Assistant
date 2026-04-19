@@ -7,7 +7,7 @@ import ShareModal from '../components/ShareModal';
 import AISidebar from '../components/AISidebar';
 import DocumentHistoryModal from '../components/DocumentHistoryModal';
 import ExportModal from '../components/ExportModal';
-import PresenceBar from '../components/PresenceBar';
+import PresenceBar, { PresenceSummary } from '../components/PresenceBar';
 import ConflictResolutionTray from '../components/ConflictResolutionTray';
 import {
   buildRealtimeSocketUrl,
@@ -799,13 +799,44 @@ export default function EditorPage() {
       return;
     }
 
-    queuedSelectionPayloadRef.current = {
+    const nextPayload = {
       type: 'selection_update',
       from,
       to,
       direction: nextSelection?.direction === 'backward' ? 'backward' : 'forward',
       collab_version: collabVersionRef.current ?? 0,
     };
+    const signature = `${nextPayload.from}:${nextPayload.to}:${nextPayload.direction}:${nextPayload.collab_version}`;
+    const sendSelectionPayload = (payload) => {
+      if (
+        !payload
+        || typeof WebSocket === 'undefined'
+        || socketRef.current?.readyState !== WebSocket.OPEN
+      ) {
+        return false;
+      }
+
+      const payloadSignature = `${payload.from}:${payload.to}:${payload.direction}:${payload.collab_version}`;
+      if (payloadSignature === lastSentSelectionSignatureRef.current) {
+        return false;
+      }
+
+      lastSentSelectionSignatureRef.current = payloadSignature;
+      socketRef.current.send(JSON.stringify(payload));
+      return true;
+    };
+
+    if (nextSelection?.text?.trim()) {
+      queuedSelectionPayloadRef.current = null;
+      if (selectionPublishTimerRef.current) {
+        window.clearTimeout(selectionPublishTimerRef.current);
+        selectionPublishTimerRef.current = null;
+      }
+      sendSelectionPayload(nextPayload);
+      return;
+    }
+
+    queuedSelectionPayloadRef.current = nextPayload;
 
     if (selectionPublishTimerRef.current) {
       return;
@@ -821,14 +852,7 @@ export default function EditorPage() {
       ) {
         return;
       }
-
-      const signature = `${nextPayload.from}:${nextPayload.to}:${nextPayload.direction}:${nextPayload.collab_version}`;
-      if (signature === lastSentSelectionSignatureRef.current) {
-        return;
-      }
-
-      lastSentSelectionSignatureRef.current = signature;
-      socketRef.current.send(JSON.stringify(nextPayload));
+      sendSelectionPayload(nextPayload);
     }, SELECTION_AWARENESS_DELAY);
   }
 
@@ -1717,6 +1741,15 @@ export default function EditorPage() {
         user={user}
         isAiOpen={isAiOpen}
         onToggleAi={() => setIsAiOpen((current) => !current)}
+        presenceSummary={
+          <PresenceSummary
+            users={presence}
+            currentUserId={user?.user_id ?? user?.id ?? null}
+            realtimeStatus={realtimeStatus}
+            realtimeMessage={realtimeMessage}
+            variant="inline"
+          />
+        }
       />
 
       {isReadOnly && (
@@ -1733,6 +1766,7 @@ export default function EditorPage() {
         conflictState={conflictState}
         onAcceptRemote={applyRemoteConflictVersion}
         onKeepLocal={keepLocalDraft}
+        showSummary={false}
       />
 
       <div

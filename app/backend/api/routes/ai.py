@@ -1,6 +1,5 @@
 """Routes for suggestion-based AI interaction workflows."""
 
-import asyncio
 import json
 from typing import Annotated
 
@@ -10,8 +9,13 @@ from fastapi.responses import StreamingResponse
 
 from app.backend.api.deps import get_ai_service, get_current_principal
 from app.backend.core.security import AuthenticatedPrincipal
+from app.backend.integrations.ai_provider import (
+    GeneratedSuggestionChunk,
+    GeneratedSuggestionComplete,
+)
 from app.backend.schemas.ai import (
     AIChatMessageStreamRequest,
+    AIChatThreadClearResponse,
     AIChatThreadEntryResponse,
     AIInteractionAcceptedResponse,
     AIInteractionCancelResponse,
@@ -28,37 +32,10 @@ from app.backend.services.ai.ai_service import AIService
 
 router = APIRouter(tags=["ai"])
 
-STREAM_CHUNK_SIZE = 48
-STREAM_CHUNK_DELAY_SECONDS = 0.04
-
 
 def _encode_sse(event: str, data: object) -> str:
     payload = json.dumps(jsonable_encoder(data))
     return f"event: {event}\ndata: {payload}\n\n"
-
-
-def _chunk_text(text: str, chunk_size: int = STREAM_CHUNK_SIZE) -> list[str]:
-    if not text:
-        return [""]
-
-    chunks: list[str] = []
-    cursor = 0
-    while cursor < len(text):
-        window = text[cursor : cursor + chunk_size]
-        if cursor + chunk_size >= len(text):
-            chunks.append(window)
-            break
-
-        split_at = window.rfind(" ")
-        if split_at <= 0:
-            split_at = len(window)
-        chunks.append(text[cursor : cursor + split_at])
-        cursor += split_at
-        while cursor < len(text) and text[cursor] == " ":
-            cursor += 1
-
-    return chunks
-
 
 @router.post(
     "/documents/{documentId}/ai/interactions",
@@ -89,14 +66,14 @@ async def stream_ai_interaction(
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     service: Annotated[AIService, Depends(get_ai_service)],
 ) -> StreamingResponse:
-    accepted_response, generated_output = service.start_stream_interaction(
+    accepted_response, stream_handle = service.start_stream_interaction(
         document_id=documentId,
         principal=principal,
         payload=payload,
     )
     return _stream_response(
         accepted_response=accepted_response,
-        generated_output=generated_output,
+        stream_handle=stream_handle,
         request=request,
         principal=principal,
         service=service,
@@ -119,6 +96,22 @@ def get_ai_chat_thread(
     )
 
 
+@router.delete(
+    "/documents/{documentId}/ai/chat/thread",
+    response_model=AIChatThreadClearResponse,
+    status_code=status.HTTP_200_OK,
+)
+def clear_ai_chat_thread(
+    documentId: str,
+    principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
+    service: Annotated[AIService, Depends(get_ai_service)],
+) -> AIChatThreadClearResponse:
+    return service.clear_chat_thread(
+        document_id=documentId,
+        principal=principal,
+    )
+
+
 @router.post(
     "/documents/{documentId}/ai/chat/messages/stream",
     status_code=status.HTTP_202_ACCEPTED,
@@ -130,14 +123,14 @@ async def stream_ai_chat_message(
     principal: Annotated[AuthenticatedPrincipal, Depends(get_current_principal)],
     service: Annotated[AIService, Depends(get_ai_service)],
 ) -> StreamingResponse:
-    accepted_response, generated_output = service.start_stream_chat_message(
+    accepted_response, stream_handle = service.start_stream_chat_message(
         document_id=documentId,
         principal=principal,
         payload=payload,
     )
     return _stream_response(
         accepted_response=accepted_response,
-        generated_output=generated_output,
+        stream_handle=stream_handle,
         request=request,
         principal=principal,
         service=service,
@@ -147,7 +140,7 @@ async def stream_ai_chat_message(
 def _stream_response(
     *,
     accepted_response: AIInteractionAcceptedResponse,
-    generated_output: str,
+    stream_handle,
     request: Request,
     principal: AuthenticatedPrincipal,
     service: AIService,
@@ -156,15 +149,18 @@ def _stream_response(
     async def event_stream():
         interaction_id = accepted_response.interaction_id
         accumulated_output = ""
+        model_name: str | None = None
+        usage = None
 
         try:
             yield _encode_sse("meta", accepted_response)
 
-            for chunk in _chunk_text(generated_output):
+            async for provider_event in stream_handle.stream:
                 if await request.is_disconnected():
                     service.fail_stream_interaction(
                         interaction_id=interaction_id,
                         principal=principal,
+                        generated_output=accumulated_output,
                     )
                     return
 
@@ -172,30 +168,45 @@ def _stream_response(
                     canceled = service.fail_stream_interaction(
                         interaction_id=interaction_id,
                         principal=principal,
+                        generated_output=accumulated_output,
                     )
                     yield _encode_sse("cancelled", canceled)
                     return
 
-                accumulated_output += chunk
-                yield _encode_sse(
-                    "chunk",
-                    {
-                        "interaction_id": interaction_id,
-                        "delta": chunk,
-                        "output": accumulated_output,
-                    },
-                )
-                await asyncio.sleep(STREAM_CHUNK_DELAY_SECONDS)
+                if isinstance(provider_event, GeneratedSuggestionChunk):
+                    accumulated_output += provider_event.delta
+                    service.update_stream_interaction_output(
+                        interaction_id=interaction_id,
+                        principal=principal,
+                        generated_output=accumulated_output,
+                    )
+                    yield _encode_sse(
+                        "chunk",
+                        {
+                            "interaction_id": interaction_id,
+                            "delta": provider_event.delta,
+                            "output": accumulated_output,
+                        },
+                    )
+                    continue
+
+                if isinstance(provider_event, GeneratedSuggestionComplete):
+                    model_name = provider_event.model_name
+                    usage = provider_event.usage
 
             detail = service.complete_stream_interaction(
                 interaction_id=interaction_id,
                 principal=principal,
+                generated_output=accumulated_output,
+                model_name=model_name,
+                usage=usage,
             )
             yield _encode_sse("complete", detail)
         except Exception as exc:
             service.fail_stream_interaction(
                 interaction_id=accepted_response.interaction_id,
                 principal=principal,
+                generated_output=accumulated_output,
             )
             yield _encode_sse(
                 "error",

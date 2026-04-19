@@ -1,7 +1,10 @@
 """Provider seam for future AI model integration."""
 
 from abc import ABC, abstractmethod
+import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
+import json
 import math
 import re
 
@@ -44,6 +47,8 @@ TRANSLATION_FALLBACKS: dict[str, dict[str, str]] = {
     },
 }
 
+STUB_STREAM_CHUNK_DELAY_SECONDS = 0.03
+
 FORMAL_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     (r"\bi cannot attend\b", "I am unable to attend"),
     (r"\bbecause I am sick\b", "because I am unwell"),
@@ -79,6 +84,17 @@ class GeneratedSuggestionUsage:
     estimated_cost_usd: float | None = None
 
 
+@dataclass(frozen=True)
+class GeneratedSuggestionChunk:
+    delta: str
+
+
+@dataclass(frozen=True)
+class GeneratedSuggestionComplete:
+    model_name: str
+    usage: GeneratedSuggestionUsage | None = None
+
+
 class AIProviderClient(ABC):
     @abstractmethod
     def generate_suggestion(
@@ -86,9 +102,33 @@ class AIProviderClient(ABC):
     ) -> GeneratedSuggestion:
         """Generate a reviewable suggestion from an external AI provider."""
 
+    @abstractmethod
+    async def stream_suggestion(
+        self, *, feature_type: str, prompt: str
+    ) -> AsyncIterator[GeneratedSuggestionChunk | GeneratedSuggestionComplete]:
+        """Stream a suggestion incrementally from an external AI provider."""
+
 
 class StubAIProviderClient(AIProviderClient):
     def generate_suggestion(
+        self, *, feature_type: str, prompt: str
+    ) -> GeneratedSuggestion:
+        return self._generate_suggestion(feature_type=feature_type, prompt=prompt)
+
+    async def stream_suggestion(
+        self, *, feature_type: str, prompt: str
+    ) -> AsyncIterator[GeneratedSuggestionChunk | GeneratedSuggestionComplete]:
+        generated = self._generate_suggestion(feature_type=feature_type, prompt=prompt)
+        for chunk in self._chunk_output(generated.generated_output):
+            if chunk:
+                yield GeneratedSuggestionChunk(delta=chunk)
+                await asyncio.sleep(STUB_STREAM_CHUNK_DELAY_SECONDS)
+        yield GeneratedSuggestionComplete(
+            model_name=generated.model_name,
+            usage=generated.usage,
+        )
+
+    def _generate_suggestion(
         self, *, feature_type: str, prompt: str
     ) -> GeneratedSuggestion:
         normalized_feature = feature_type.strip().lower().replace("-", "_")
@@ -154,6 +194,26 @@ class StubAIProviderClient(AIProviderClient):
             model_name="local-rewrite-fallback",
             usage=self._estimate_usage(prompt=prompt, completion=output),
         )
+
+    def _chunk_output(self, text: str, chunk_size: int = 24) -> list[str]:
+        if not text:
+            return [""]
+
+        chunks: list[str] = []
+        cursor = 0
+        while cursor < len(text):
+            next_cursor = min(cursor + chunk_size, len(text))
+            if next_cursor < len(text):
+                split_at = text.rfind(" ", cursor, next_cursor)
+                if split_at > cursor:
+                    next_cursor = split_at
+            chunk = text[cursor:next_cursor]
+            if chunk:
+                chunks.append(chunk)
+            cursor = next_cursor
+            while cursor < len(text) and text[cursor] == " ":
+                cursor += 1
+        return chunks or [text]
 
     def _summarize(self, prompt: str) -> str:
         source_text = self._extract_source_text(prompt)
@@ -429,24 +489,8 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
             with httpx.Client(timeout=self._timeout_seconds) as client:
                 response = client.post(
                     self._api_url,
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self._model_name,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": self._system_instruction(feature_type),
-                            },
-                            {
-                                "role": "user",
-                                "content": prompt,
-                            },
-                        ],
-                        "temperature": 0.2,
-                    },
+                    headers=self._request_headers(),
+                    json=self._request_payload(feature_type=feature_type, prompt=prompt),
                 )
         except httpx.TimeoutException as exc:
             raise AIProviderTimeoutError from exc
@@ -472,6 +516,102 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
             model_name=str(payload.get("model") or self._model_name),
             usage=self._extract_usage(payload, prompt=prompt, completion=generated_output),
         )
+
+    async def stream_suggestion(
+        self, *, feature_type: str, prompt: str
+    ) -> AsyncIterator[GeneratedSuggestionChunk | GeneratedSuggestionComplete]:
+        accumulated_output = ""
+        streamed_model_name = self._model_name
+        usage_payload: dict | None = None
+
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
+                async with client.stream(
+                    "POST",
+                    self._api_url,
+                    headers=self._request_headers(),
+                    json=self._request_payload(
+                        feature_type=feature_type,
+                        prompt=prompt,
+                        stream=True,
+                    ),
+                ) as response:
+                    if response.status_code >= 500:
+                        raise AIProviderUnavailableError
+                    if response.status_code >= 400:
+                        raise AIProviderUnavailableError
+
+                    async for line in response.aiter_lines():
+                        stripped = line.strip()
+                        if not stripped or not stripped.startswith("data:"):
+                            continue
+
+                        payload_text = stripped[5:].strip()
+                        if payload_text == "[DONE]":
+                            break
+
+                        try:
+                            payload = json.loads(payload_text)
+                        except ValueError as exc:
+                            raise AIProviderUnavailableError from exc
+
+                        streamed_model_name = str(payload.get("model") or streamed_model_name)
+                        delta = self._extract_delta_text(payload)
+                        if delta:
+                            accumulated_output += delta
+                            yield GeneratedSuggestionChunk(delta=delta)
+
+                        if isinstance(payload.get("usage"), dict):
+                            usage_payload = payload["usage"]
+        except httpx.TimeoutException as exc:
+            raise AIProviderTimeoutError from exc
+        except httpx.RequestError as exc:
+            raise AIProviderUnavailableError from exc
+
+        usage = (
+            self._extract_usage(
+                {"usage": usage_payload},
+                prompt=prompt,
+                completion=accumulated_output,
+            )
+            if usage_payload
+            else self._extract_usage({}, prompt=prompt, completion=accumulated_output)
+        )
+        yield GeneratedSuggestionComplete(
+            model_name=streamed_model_name,
+            usage=usage,
+        )
+
+    def _request_headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _request_payload(
+        self,
+        *,
+        feature_type: str,
+        prompt: str,
+        stream: bool = False,
+    ) -> dict:
+        payload = {
+            "model": self._model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": self._system_instruction(feature_type),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            "temperature": 0.2,
+        }
+        if stream:
+            payload["stream"] = True
+        return payload
 
     def _system_instruction(self, feature_type: str) -> str:
         normalized_feature = feature_type.strip().lower().replace("-", "_")
@@ -542,6 +682,28 @@ class OpenAICompatibleAIProviderClient(AIProviderClient):
                     if isinstance(text, str) and text.strip():
                         parts.append(text.strip())
             return "\n".join(parts).strip()
+
+        return ""
+
+    def _extract_delta_text(self, payload: dict) -> str:
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return ""
+
+        delta = choices[0].get("delta", {})
+        content = delta.get("content", "")
+
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "".join(parts)
 
         return ""
 
